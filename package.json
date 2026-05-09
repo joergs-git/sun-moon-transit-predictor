@@ -5,15 +5,15 @@
   "type": "module",
   "private": true,
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "main": "src/index.js",
   "exports": {
     ".": "./src/index.js"
   },
   "scripts": {
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "NODE_OPTIONS=\"--experimental-sqlite --no-warnings=ExperimentalWarning\" vitest run",
+    "test:watch": "NODE_OPTIONS=\"--experimental-sqlite --no-warnings=ExperimentalWarning\" vitest"
   },
   "dependencies": {
     "astronomy-engine": "^2.1.19"
