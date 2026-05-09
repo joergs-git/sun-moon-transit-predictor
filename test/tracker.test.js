@@ -110,6 +110,35 @@ describe('findTransits', () => {
     expect(findTransits(RHEINE, [ac], t0)).toEqual([]);
   });
 
+  it('extrapolates from receivedAtMs, not nowMs (stale-sample correction)', () => {
+    const t0 = new Date('2026-06-21T11:30:00Z').getTime();
+    const sun = sunAzEl(RHEINE, new Date(t0));
+    // Where the aircraft IS NOW (t0): on the Sun line of sight.
+    const here = aircraftAtBodyLineOfSight(RHEINE, sun, 11000);
+
+    // The aircraft sample we received was 20 s ago, when the aircraft was
+    // 20 s × 250 m/s = 5 km west of `here` (track 90° = east-bound).
+    const ageS = 20;
+    const gs = 250;
+    const DEG_PER_M_LON = (1 / 6371008.8) * (180 / Math.PI) / Math.cos(here.lat * DEG);
+    const recordedLon = here.lon - (ageS * gs) * DEG_PER_M_LON;
+
+    const ac = makeAircraft({
+      lat: here.lat,
+      lon: recordedLon,
+      altMmsl: 11000,
+      groundSpeedMs: gs,
+      trackDeg: 90,
+      receivedAtMs: t0 - ageS * 1000,
+    });
+
+    const candidates = findTransits(RHEINE, [ac], t0);
+    expect(candidates.length).toBe(1);
+    // With the bug, separation at sample.tSec=0 would be ~26° (5 km / 11 km
+    // → ~25°). With the fix it must be near zero at the now-instant.
+    expect(candidates[0].closestApproachSepDeg).toBeLessThan(0.2);
+  });
+
   it('does not flag a far-away aircraft', () => {
     const t0 = new Date('2026-06-21T11:30:00Z').getTime();
     const ac = makeAircraft({

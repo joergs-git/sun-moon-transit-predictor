@@ -76,9 +76,16 @@ function candidateForBody(observer, ac, body, samples, thresholdDeg, nowMs) {
   let entersT = null;
   let leavesT = null;
 
+  // Aircraft sample is stamped at ac.receivedAtMs (back-calculated from
+  // dump1090's seen_pos). Project from that timestamp forward to the
+  // sample time, not just by sample.tSec from "now" — otherwise a 20 s
+  // stale 250 m/s aircraft is plotted ~5 km behind its actual position
+  // and the tracker silently misses or fakes transits.
+  const ageS = Math.max(0, (nowMs - ac.receivedAtMs) / 1000);
+
   for (const sample of samples) {
     if (!isObservable(sample.azel)) continue;
-    const projected = extrapolate(ac, sample.tSec);
+    const projected = extrapolate(ac, ageS + sample.tSec);
     const acAzEl = aircraftAzEl(observer, projected.lat, projected.lon, projected.altMmsl);
     if (acAzEl.elevationDeg <= 0) continue;
     const sep = angularSeparationDeg(acAzEl, sample.azel);
