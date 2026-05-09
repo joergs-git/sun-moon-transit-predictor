@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sun-Moon Transit Predictor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Sun-Moon Transit Predictor</h1>
+    <div id="status" class="status">connecting…</div>
+  </header>
+
+  <section>
+    <h2>Sky now</h2>
+    <table id="sky">
+      <thead><tr><th>Body</th><th>Az</th><th>El</th><th>Observable</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Upcoming candidates</h2>
+    <p class="hint">Live extrapolation, threshold 0.3°. ETA refreshes every 2 s.</p>
+    <table id="candidates">
+      <thead>
+        <tr>
+          <th>ETA</th><th>Body</th><th>Flight</th><th>ICAO</th>
+          <th>Route</th><th>Alt</th><th>Speed</th><th>Sep</th><th>Dur</th>
+        </tr>
+      </thead>
+      <tbody><tr class="empty"><td colspan="9">No candidates within 60 s.</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>History</h2>
+    <p class="hint">Persisted notifications (early + precise stages).</p>
+    <table id="history">
+      <thead>
+        <tr>
+          <th>Recorded</th><th>Stage</th><th>Body</th><th>Flight</th>
+          <th>ICAO</th><th>Route</th><th>Alt</th><th>Speed</th><th>Sep</th>
+        </tr>
+      </thead>
+      <tbody><tr class="empty"><td colspan="9">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
+  <footer>
+    <span id="observer"></span>
+  </footer>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
