@@ -3,7 +3,7 @@
 
 import { createServer } from 'node:http';
 import { promises as fs } from 'node:fs';
-import { extname, join, resolve } from 'node:path';
+import { extname, join, resolve, sep } from 'node:path';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -31,7 +31,9 @@ async function serveStatic(req, res, webRoot) {
   if (path === '/' || path === '') path = '/index.html';
   const root = resolve(webRoot);
   const safe = resolve(join(root, path));
-  if (!safe.startsWith(root)) {
+  // Compare with a separator-aware boundary so a sibling directory
+  // like `<root>-secret/` cannot satisfy a naive `startsWith(root)`.
+  if (safe !== root && !safe.startsWith(root + sep)) {
     res.writeHead(403); res.end('forbidden'); return;
   }
   try {

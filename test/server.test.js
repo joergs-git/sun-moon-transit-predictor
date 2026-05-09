@@ -1,8 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { request as httpRequest } from 'node:http';
 import { createHttpServer } from '../src/server.js';
 import { HistoryStore } from '../src/store.js';
+
+function rawGet(port, path) {
+  return new Promise((resolveP, rejectP) => {
+    const req = httpRequest({ host: '127.0.0.1', port, path, method: 'GET' }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolveP({ status: res.statusCode, body }));
+    });
+    req.on('error', rejectP);
+    req.end();
+  });
+}
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -77,5 +92,39 @@ describe('HTTP server', () => {
   it('returns 404 for unknown paths', async () => {
     const res = await fetch(`${baseUrl}/does-not-exist.txt`);
     expect(res.status).toBe(404);
+  });
+
+  it('rejects encoded traversal into a sibling directory that shares the prefix', async () => {
+    // Setup: a webRoot at .../site and a sibling .../site-secret/leak.txt.
+    // Naive `safe.startsWith(root)` would treat
+    // .../site-secret/leak.txt as inside .../site (no separator boundary
+    // check). The fixed server must reject this.
+    const base = mkdtempSync(join(tmpdir(), 'stp-traversal-'));
+    const isoWebRoot = join(base, 'site');
+    const sibling = join(base, 'site-secret');
+    mkdirSync(isoWebRoot, { recursive: true });
+    mkdirSync(sibling, { recursive: true });
+    writeFileSync(join(isoWebRoot, 'index.html'), '<html>ok</html>');
+    writeFileSync(join(sibling, 'leak.txt'), 'TOPSECRET');
+
+    const localStore = new HistoryStore(':memory:');
+    const localServer = createHttpServer({
+      port: 0, host: '127.0.0.1',
+      getState: () => fakeState, store: localStore, webRoot: isoWebRoot,
+    });
+    const { port } = await localServer.start();
+    try {
+      // The slashes in the traversal are themselves URL-encoded so the
+      // WHATWG URL parser does not collapse the '..' segment. After
+      // decodeURIComponent the path becomes literal "/../site-secret/leak.txt"
+      // and resolves under <root>-secret. The fixed prefix check rejects it.
+      const r = await rawGet(port, '/%2e%2e%2fsite-secret%2fleak.txt');
+      expect(r.status).toBe(403);
+      expect(r.body).not.toContain('TOPSECRET');
+    } finally {
+      await localServer.stop();
+      localStore.close();
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });
