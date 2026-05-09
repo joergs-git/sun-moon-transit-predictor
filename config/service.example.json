@@ -1,0 +1,31 @@
+{
+  "adsb": {
+    "url": "http://localhost:8080/data/aircraft.json",
+    "pollIntervalMs": 2000
+  },
+  "tracker": {
+    "horizonS": 60,
+    "stepS": 1,
+    "thresholdDeg": 0.3,
+    "bodies": ["Sun", "Moon"]
+  },
+  "pushover": {
+    "token": "PASTE_PUSHOVER_APP_TOKEN_HERE",
+    "user":  "PASTE_PUSHOVER_USER_KEY_HERE",
+    "device": "",
+    "enabled": false
+  },
+  "server": {
+    "port": 8081,
+    "host": "0.0.0.0",
+    "publicUrl": ""
+  },
+  "store": {
+    "path": "./data/history.db"
+  },
+  "routes": {
+    "enabled": true,
+    "ttlMs": 3600000,
+    "negativeTtlMs": 300000
+  }
+}

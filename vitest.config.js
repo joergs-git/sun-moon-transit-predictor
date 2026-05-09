@@ -5,5 +5,6 @@ export default defineConfig({
     globals: false,
     environment: 'node',
     include: ['test/**/*.test.js'],
+    pool: 'forks',
   },
 });

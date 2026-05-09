@@ -4,3 +4,7 @@ dist/
 .vite/
 *.log
 .DS_Store
+
+# Runtime state — created by the service on first start
+data/
+config/service.json
