@@ -1,0 +1,27 @@
+[Unit]
+Description=Sun-Moon Transit Predictor
+Documentation=https://github.com/joergs-git/sun-moon-transit-predictor
+After=network-online.target dump1090-fa.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__INSTALL_DIR__
+ExecStart=/usr/bin/node --experimental-sqlite __INSTALL_DIR__/bin/stp.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=NODE_ENV=production
+
+# Light sandboxing — service does not need root or write access outside its dir.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__INSTALL_DIR__/data
+
+[Install]
+WantedBy=multi-user.target
