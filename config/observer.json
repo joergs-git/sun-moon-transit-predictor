@@ -1,0 +1,9 @@
+{
+  "name": "Rheine",
+  "latitudeDeg": 52.2833,
+  "longitudeDeg": 7.4406,
+  "elevationM": 50.0,
+  "temperatureC": 10.0,
+  "pressureMbar": 1010.0,
+  "_note": "PLACEHOLDER values for Rheine. Replace with your real coordinates and elevation. Elevation is mean sea level (MSL); for M2 it is treated as WGS84 ellipsoidal height (geoid undulation in Rheine ~46 m is documented as a known limitation)."
+}
