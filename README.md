@@ -1,86 +1,130 @@
 # sun-moon-transit-predictor
 
-Predicts and detects aircraft transits across the **sun and moon disc** from a
-fixed observer location (Rheine, Germany), so the camera at the telescope can
-be armed in time. End-to-end runs on a single **Raspberry Pi 5** (Raspberry
-Pi OS Lite, 64-bit) alongside `dump1090-fa`, with a small browser UI and
-Pushover notifications in two stages: an early candidate alert and a precise
-T-minus alert once live ADS-B has nailed down the transit time.
-
-## Overview
+Sagt Flugzeug-Transits vor Sonnen- und Mondscheibe vorher und sendet
+Pushover-Notifications, damit die Hochgeschwindigkeitskamera am Teleskop
+rechtzeitig scharfgestellt werden kann. Läuft auf einem Raspberry Pi 5
+neben `dump1090-fa` als systemd-Service mit Web-UI und SQLite-Historie.
 
 ```
-[ADS-B antenna] → [dump1090-fa]   ─┐
-                  aircraft.json    │ poll 2 s
-                                   ▼
-                            [stp service]
-                              tracker   → 60 s linear extrapolation
-                              geometry  → topocentric Az/El (Sun/Moon)
-                              notifier  → two-stage Pushover
-                              store     → SQLite history
-                              server    → /api/* + web UI on :8081
+[ADS-B-Antenne] → [dump1090-fa]      port 8080
+                       │
+                       ▼ poll 2 s
+                  [stp.service]      port 8081 (Web UI + JSON-API)
+                       │                     ↘
+                       ▼                      → SQLite history
+                  [Pushover]                  → Pushover (early + precise)
 ```
 
-## Status
+## Wichtige URLs
 
-| Milestone | Scope | Status |
-|---|---|---|
-| M1 | Pi receiver setup (dump1090-fa) | hardware task, out of repo |
-| M2 | Geometry core (Az/El, Sun/Moon, separation) | done |
-| M3 | Live tracker (`aircraft.json` polling, extrapolation, candidates) | done |
-| M4 | Pushover notifier, two-stage messages with flight details | done |
-| M5 | adsbdb.com route lookup (origin / destination / IATA flight number) | done |
-| M6 | Web UI on the Pi (live list + persistent history) | done |
-| M7 | Bash install script for Pi 5 (Raspberry Pi OS, ARM64) | done |
+| Was | URL |
+|---|---|
+| Repo | https://github.com/joergs-git/sun-moon-transit-predictor |
+| Pull Request M2–M7 | https://github.com/joergs-git/sun-moon-transit-predictor/pull/1 |
+| Web-UI auf dem Pi | `http://<pi-ip>:8081/` (z. B. `http://sunmoontransiter.local:8081/`) |
+| dump1090-fa SkyAware-Karte | `http://<pi-ip>:8080/` |
+| Roh-`aircraft.json` | `http://<pi-ip>:8080/data/aircraft.json` |
+| STP `/api/state` (live JSON) | `http://<pi-ip>:8081/api/state` |
+| STP `/api/history` | `http://<pi-ip>:8081/api/history?limit=100` |
+| STP `/api/health` | `http://<pi-ip>:8081/api/health` |
+| Pushover-App-Token anlegen | https://pushover.net/apps/build |
+| Pushover-User-Key | https://pushover.net/ (oben rechts "Your User Key") |
+| FlightAware PiAware Install | https://www.flightaware.com/adsb/piaware/install |
+| adsbdb.com (Callsign→Route, free) | https://api.adsbdb.com/v0/callsign/{callsign} |
+| Astronomy Engine (Sonne/Mond) | https://github.com/cosinekitty/astronomy |
+| Raspberry Pi Imager | https://www.raspberrypi.com/software/ |
 
-## Quick install on the Pi 5
+---
 
-Recommended OS image: **Raspberry Pi OS Lite (64-bit)** via the Pi Imager
-(set hostname, SSH key, and Wi-Fi in the Imager's "Edit Settings" before
-flashing). Then on the Pi:
+## TL;DR — Operator-Befehle
 
 ```bash
-git clone https://github.com/joergs-git/sun-moon-transit-predictor.git
-cd sun-moon-transit-predictor
-bash scripts/install-pi5.sh
+# Start / Stop / Restart
+sudo systemctl start  stp.service
+sudo systemctl stop   stp.service
+sudo systemctl restart stp.service
+
+# Live-Logs
+journalctl -u stp.service -f
+
+# Status (Service + letzte 5 Logzeilen)
+systemctl status stp.service
+
+# Bei Boot starten / nicht starten
+sudo systemctl enable  stp.service
+sudo systemctl disable stp.service
+
+# Genauso für dump1090-fa
+sudo systemctl restart dump1090-fa
+journalctl -u dump1090-fa -n 30 --no-pager
 ```
 
-The script:
+## Dateien — wo liegt was
 
-1. installs Node.js 22 from NodeSource if it isn't already present,
-2. runs `npm install --omit=dev`,
-3. prompts for observer coordinates and Pushover credentials and writes
-   `config/observer.json` + `config/service.json`,
-4. installs and starts a `stp.service` systemd unit (with light
-   sandboxing — `ProtectSystem=strict`, `ReadWritePaths=…/data`).
+Standard-Installations-Pfad: `/home/sunmoon/sun-moon-transit-predictor/`
+(angepasst, wenn du den Repo woanders hin geklont hast).
 
-After it finishes, browse to `http://<pi-ip>:8081/`. Logs:
-`journalctl -u stp.service -f`.
+| Pfad | Inhalt |
+|---|---|
+| `config/observer.json` | Standort (Lat/Lon/Höhe, Temp/Druck für Refraktion). Fest committed mit Rheine-Defaults. **Nach erstem Install anpassen.** |
+| `config/service.json` | Laufzeit-Config (URLs, Pushover-Keys, Port, DB-Pfad). Wird beim Install interaktiv erzeugt. **Nicht in Git** (`.gitignore`). |
+| `config/service.example.json` | Vorlage zum Hand-Editieren, falls man das Install-Script umgehen will. |
+| `data/history.db` | SQLite-Historie aller `early`/`precise`-Notifications. Vom systemd-Sandboxing als einzige beschreibbare Stelle freigegeben (`ReadWritePaths`). |
+| `bin/stp.js` | Service-Entry-Point (`node --experimental-sqlite bin/stp.js`). |
+| `web/` | Statisches Frontend (HTML+CSS+ES-Module-JS, kein Build-Step). |
+| `src/` | Service-Code (geometry, tracker, notifier, store, server, …). |
+| `test/` | Vitest-Suite, 53 Cases. |
+| `scripts/install-pi5.sh` | Idempotenter Installer (Node, npm install, Configs, systemd). |
+| `systemd/stp.service` | Unit-Template. Bei Install nach `/etc/systemd/system/stp.service` mit User/Pfad-Substitution. |
+| `/etc/systemd/system/stp.service` | Aktive Unit-Datei nach Install. |
 
-Re-running the script keeps existing config files. Use
-`bash scripts/install-pi5.sh --overwrite` to force re-prompting.
+## Gewohnte Operationen
 
-## Manual run (development / non-Pi)
+### Beobachterstandort ändern
+
+```bash
+sudo systemctl stop stp.service
+nano config/observer.json
+sudo systemctl start stp.service
+```
+
+### Pushover- oder ADS-B-URL ändern
+
+Variante A: Service-Config neu prompten (interaktiv):
+```bash
+bash scripts/install-pi5.sh --overwrite
+```
+
+Variante B: direkt editieren:
+```bash
+sudo systemctl stop stp.service
+nano config/service.json
+sudo systemctl start stp.service
+```
+
+### Update aus Git pullen
+
+```bash
+cd /home/sunmoon/sun-moon-transit-predictor
+git pull
+npm install --omit=dev
+sudo systemctl restart stp.service
+```
+
+### Historie inspizieren (ohne UI)
+
+```bash
+sqlite3 data/history.db 'SELECT datetime(recorded_at_ms/1000,"unixepoch","localtime"), stage, body, flight, origin, destination, closest_sep_deg FROM transit_history ORDER BY recorded_at_ms DESC LIMIT 20;'
+```
+
+### Tests laufen lassen (auf Dev-Maschine, nicht Pi)
 
 ```bash
 npm install
-cp config/service.example.json config/service.json   # then edit
-node --experimental-sqlite bin/stp.js
+npm test           # 53 Cases, Vitest
 ```
 
-`--experimental-sqlite` is needed on Node 22; on Node 24+ the flag becomes a
-no-op since `node:sqlite` is stable.
-
-## Tests
-
-```bash
-npm test
-```
-
-53 vitest cases cover geometry, ADS-B parsing, tracker, Pushover client,
-notifier, route lookup with TTL cache, history store, and the HTTP server.
-
-## Configuration
+## Konfigurations-Felder
 
 ### `config/observer.json`
 
@@ -95,96 +139,194 @@ notifier, route lookup with TTL cache, history store, and the HTTP server.
 }
 ```
 
-`elevationM` is mean sea level (MSL); see *Assumptions* below for how it is
-treated.
+`elevationM` wird als WGS84-h interpretiert (Geoid-Undulation Rheine ~46 m
+ist als bekannte Limitation akzeptiert; im Az/El-Fehler liegt das im
+einstelligen Bogensekunden-Bereich).
 
-### `config/service.json` (see `service.example.json`)
+### `config/service.json`
 
 ```json
 {
   "adsb":     { "url": "http://localhost:8080/data/aircraft.json", "pollIntervalMs": 2000 },
   "tracker":  { "horizonS": 60, "stepS": 1, "thresholdDeg": 0.3, "bodies": ["Sun", "Moon"] },
-  "pushover": { "token": "...", "user": "...", "enabled": true },
-  "server":   { "port": 8081, "host": "0.0.0.0", "publicUrl": "" },
-  "store":    { "path": "./data/history.db" },
+  "pushover": { "token": "...", "user": "...", "device": "", "enabled": true },
+  "server":   { "port": 8081, "host": "0.0.0.0", "publicUrl": "http://<pi-ip>:8081/" },
+  "store":    { "path": "/home/sunmoon/sun-moon-transit-predictor/data/history.db" },
   "routes":   { "enabled": true, "ttlMs": 3600000, "negativeTtlMs": 300000 }
 }
 ```
 
-`thresholdDeg` (default 0.3°) is the maximum line-of-sight separation that
-triggers a candidate. The Sun's angular radius is ~0.27°, so 0.3° catches
-near-misses too — tighten if you only want centred transits.
+| Schlüssel | Default | Wirkung |
+|---|---|---|
+| `tracker.horizonS` | 60 | Wie weit in die Zukunft extrapoliert wird (s). |
+| `tracker.stepS` | 1 | Auflösung der Vorhersage-Stützpunkte (s). |
+| `tracker.thresholdDeg` | 0.3 | Max. Winkelabstand für einen Kandidaten. Sonnenradius ≈ 0.27°, also 0.3° = grenznah. Strenger setzen für nur zentrierte Transits. |
+| `tracker.bodies` | `["Sun","Moon"]` | Auf `["Sun"]` reduzieren, wenn Mond uninteressant. |
+| `pushover.enabled` | `true` wenn token+user vorhanden, sonst `false` | Push deaktivierbar ohne Codeänderung. |
+| `routes.enabled` | `true` | adsbdb.com-Lookups für Origin/Destination. Bei `false` kommt die Notification ohne Routendaten. |
 
-## HTTP API
+## Zwei-Stufen-Notifications
 
-| Path | Description |
+Pro `(icao, body)`-Paar:
+
+1. **early** — beim ersten Auftauchen des Kandidaten. Pushover-Priority 0.
+2. **precise** — sobald `closestApproachAtMs` in ±30 s vom jetzigen Zeitpunkt liegt. Priority 1.
+
+State pro Paar wird nach 5 min ohne Wiedersichten gedroppt. Beide Stufen
+landen mit vollem Payload (Callsign, IATA-Flugnummer, Airline, Origin/Dest,
+Höhe, Speed, min. Sep, Dauer, ETA) zusätzlich in der SQLite-Historie.
+
+## Beobachtbarkeitsschwelle
+
+Sonne und Mond zählen erst ab **>20° Elevation** als „relevant". Unterhalb
+liefert `isObservable()` `false` und der Tracker überspringt diesen Body
+beim aktuellen Tick. In der Web-UI erkennst du das am `—` in der
+"OBSERVABLE"-Spalte.
+
+## Troubleshooting
+
+### UI zeigt 0 aircraft trotz Empfang
+
+- `curl http://localhost:8080/data/aircraft.json` liefert Einträge ohne `lat`/`lon`?
+  → Erwartetes Verhalten. STP filtert Targets ohne Position-Fix raus, da
+  Az/El-Geometrie ohne Koordinaten nicht möglich ist. Sobald dump1090
+  Position-Frames dekodiert (typisch <60 s nach erstem Sichten), erscheint
+  der Eintrag.
+
+### dump1090 läuft, aber 0.0 msgs/sec
+
+Wahrscheinlichste Ursachen, in absteigender Häufigkeit:
+
+1. **Falscher Tuner.** Im Log nach `Found … tuner` schauen.
+   - `R820T` / `R820T2` → richtig für 1090 MHz.
+   - `FC0013` / `FC0012` / `E4000` → kann 1090 MHz nicht oder nur sehr schlecht. Anderen Stick einsetzen (Original RadarBox FlightStick, FlightAware Pro Stick Plus, Nooelec NESDR Smart).
+2. **Antenne lose** oder schlechte Position. SkyAware-Karte unter `:8080/` zeigt RSSI; bei -45 dB und schlechter ist der RF-Pfad gestört.
+3. **DVB-Treiber klaut den Stick.** `lsmod | grep rtl` zeigt geladene Module; dump1090 detacht zur Laufzeit, aber Race-Conditions gibt's. Blacklist:
+   ```bash
+   sudo tee /etc/modprobe.d/blacklist-rtl-sdr.conf >/dev/null <<'EOF'
+   blacklist dvb_usb_rtl28xxu
+   blacklist rtl2832
+   blacklist rtl2830
+   blacklist rtl2832_sdr
+   EOF
+   sudo update-initramfs -u
+   sudo reboot
+   ```
+
+### `Error: Unable to locate package dump1090-fa`
+
+FlightAware-Repo nicht eingerichtet. Mit Bookworm:
+```bash
+cd /tmp
+wget https://www.flightaware.com/adsb/piaware/files/packages/pool/piaware/p/piaware-support/piaware-repository_10.2_all.deb
+sudo dpkg -i piaware-repository_10.2_all.deb
+sudo apt update
+sudo apt install -y dump1090-fa
+sudo reboot
+```
+
+### Pushover kommt nicht an
+
+```bash
+journalctl -u stp.service -n 50 | grep -i push
+```
+Prüfe in der Service-Log-Ausgabe nach „Pushover error". `pushover.enabled:true` + gültige Tokens vorausgesetzt; bei `disabled` läuft alles, Notifications werden nur lokal in der Historie aufgezeichnet.
+
+### Service startet nicht
+
+```bash
+journalctl -u stp.service -n 50 --no-pager
+```
+Häufige Ursachen:
+- `node:sqlite` nicht verfügbar → Node-Version unter 22. Mit `node -v` prüfen.
+- Port 8081 belegt → in `service.json` ändern.
+- `data/`-Verzeichnis nicht beschreibbar → systemd `ReadWritePaths` zeigt nur `…/data`. Repo-Owner muss `sunmoon` sein (oder der User aus der Unit-Datei).
+
+## Pi 5 Erstinstall — kompletter Pfad
+
+1. Pi Imager → "Raspberry Pi OS Lite (64-bit)" (Bookworm — **nicht Trixie**, FlightAware-Repo unterstützt Trixie noch nicht).
+2. Imager → "Edit Settings": Hostname (z. B. `sunmoontransiter`), SSH + Key, Wi-Fi/Country, User, Locale.
+3. SD-Karte boot, SSH rein.
+4. dump1090-fa installieren:
+   ```bash
+   cd /tmp
+   wget https://www.flightaware.com/adsb/piaware/files/packages/pool/piaware/p/piaware-support/piaware-repository_10.2_all.deb
+   sudo dpkg -i piaware-repository_10.2_all.deb
+   sudo apt update
+   sudo apt install -y dump1090-fa git
+   sudo reboot
+   ```
+5. STP installieren:
+   ```bash
+   cd ~
+   git clone https://github.com/joergs-git/sun-moon-transit-predictor.git
+   cd sun-moon-transit-predictor
+   bash scripts/install-pi5.sh
+   ```
+6. Beobachterstandort prüfen/anpassen (`config/observer.json`).
+7. Browser → `http://<pi-ip>:8081/`. Fertig.
+
+Re-Run `bash scripts/install-pi5.sh --overwrite` neu prompt jederzeit
+möglich; Standard-Re-Run ohne Flag lässt vorhandene Configs unangetastet.
+
+## HTTP-API
+
+| Pfad | Beschreibung |
 |---|---|
-| `GET /api/state`    | Current observer, sky (Sun/Moon Az/El + observability), aircraft count, candidates within the horizon. Refreshes every poll. |
-| `GET /api/history?limit=…` | Past notifications (early + precise stages) from the SQLite store, newest first. Default limit 100, max 500. |
-| `GET /api/health`   | Liveness probe. |
-| `GET /` etc.        | Static web app from `web/`. |
+| `GET /api/state`                  | Aktueller Snapshot: Observer, Sky-now (Sonne/Mond Az/El + Observable), Aircraft-Count, Kandidaten innerhalb des Horizonts. Refresh per UI alle 2 s. |
+| `GET /api/history?limit=N`        | Historie (Default 100, max 500), neueste zuerst. |
+| `GET /api/health`                 | Liveness-Probe. |
+| `GET /` etc.                      | Statisches Web-UI aus `web/`. |
 
-## Two-stage notifications
+## Annahmen und bekannte Limits
 
-For each `(icao, body)` pair the notifier emits:
+- Geometrie: 0° = N, 90° = E. WGS84 → ECEF → ENU für Flugzeug-Az/El.
+- Refraktion: Standard-Astronomy-Engine `'normal'`-Modell. Über 20° irrelevant (<0.05°).
+- Aircraft-Höhe: bevorzugt `alt_geom`, Fallback `alt_baro`. Beides als MSL → direkt als WGS84-h verwendet.
+- Extrapolation: linear, lokale Tangentenebene, 60 s Horizont. Fehler vs. Geodäte unter 1 m bei realistischen Speeds.
+- ADS-B-Latenz: `seen_pos` wird auf `receivedAtMs` zurückdatiert, der Tracker projiziert ab tatsächlichem Sample-Zeitpunkt.
+- Geoid-Undulation Rheine ~46 m wird ignoriert.
+- Kein Kamera-Trigger — STP pusht, du armierst die Kamera selbst.
 
-1. **Early** — first time we see the candidate. Priority 0.
-2. **Precise** — once `closestApproachAtMs` lands within ±30 s of `now`.
-   Priority 1.
+## Status
 
-Each notification carries: callsign, IATA flight number (if adsbdb resolves
-it), airline, origin/destination, altitude (ft), ground speed (kt), minimum
-separation, transit duration, ETA. Same payload is recorded in the SQLite
-history table.
+| Milestone | Inhalt | Status |
+|---|---|---|
+| M1 | Pi-Empfänger-Setup (`dump1090-fa`) | Hardware, außerhalb Repo |
+| M2 | Geometrie-Kern (Az/El, Sonne/Mond, Separation) | done |
+| M3 | Live-Tracker (`aircraft.json`-Polling, Extrapolation, Kandidaten) | done |
+| M4 | Pushover-Notifier (zwei-stufig, mit Flugdaten) | done |
+| M5 | adsbdb.com Route-Lookup (Origin/Destination/IATA-Flugnummer) | done |
+| M6 | Web-UI auf dem Pi (Live-Liste + persistente Historie) | done |
+| M7 | Bash-Installer für Pi 5 (Raspberry Pi OS, ARM64) | done |
 
-## Assumptions and limitations
-
-- **Geometry**: 0° = N, 90° = E. WGS84 → ECEF → ENU for aircraft Az/El.
-- **Refraction**: on by default (`'normal'` model from astronomy-engine).
-  Above the 20° observability threshold the residual is well below 0.05°.
-- **Observability**: `isObservable` returns `true` only for `el > 20°`.
-  Tracker skips bodies that never rise above 20° within the horizon.
-- **Aircraft altitude**: prefers `alt_geom`, falls back to `alt_baro`.
-  Treated as MSL → fed straight in as WGS84 ellipsoidal h. Geoid undulation
-  in Rheine ~46 m is documented and accepted; can be corrected later if it
-  ever matters at the budget.
-- **Extrapolation**: linear, locally-flat tangent plane, 60 s horizon. Error
-  versus geodesic is well under 1 m at our typical speeds.
-- **ADS-B latency**: `seen_pos` is back-stamped onto `receivedAtMs` so the
-  tracker projects from the actual sample time, not from "now".
-- **No camera trigger**: explicitly out of scope. We push, you arm the camera.
-
-## Project layout
+## Layout
 
 ```
 .
-├── package.json                src deps + npm scripts
-├── vitest.config.js            test runner config
-├── bin/stp.js                  service entry point
+├── package.json              src deps + npm-Scripts
+├── vitest.config.js          Test-Runner-Config
+├── bin/stp.js                Service-Entry-Point
 ├── config/
-│   ├── observer.json           location (placeholder values)
-│   └── service.example.json    URLs, intervals, Pushover, …
+│   ├── observer.json         Standort
+│   └── service.example.json  Vorlage für service.json
 ├── src/
-│   ├── geometry.js             topocentric Az/El + great-circle separation
-│   ├── adsb.js                 fetch + normalise dump1090 aircraft.json
-│   ├── tracker.js              extrapolation + transit detection
-│   ├── pushover.js             Pushover REST client
-│   ├── notifier.js             two-stage dispatch + dedup
-│   ├── adsbdb.js               callsign → route, in-memory TTL cache
-│   ├── store.js                SQLite history (node:sqlite)
-│   ├── server.js               HTTP server (built-in, no framework)
-│   ├── service.js              orchestrator (the polling loop)
-│   ├── config.js               loadObserver()
-│   └── index.js                public re-exports
+│   ├── geometry.js           topozentrische Az/El + Großkreis-Separation
+│   ├── adsb.js               fetch + normalise dump1090 aircraft.json
+│   ├── tracker.js            Extrapolation + Transit-Detektion
+│   ├── pushover.js           Pushover-REST-Client
+│   ├── notifier.js           zwei-stufige Dispatch + Dedup
+│   ├── adsbdb.js             Callsign→Route, In-Memory TTL-Cache
+│   ├── store.js              SQLite-Historie (node:sqlite)
+│   ├── server.js             HTTP-Server (Built-in, kein Framework)
+│   ├── service.js            Orchestrator (Polling-Loop)
+│   ├── config.js             loadObserver()
+│   └── index.js              Public Re-Exports
 ├── web/
-│   ├── index.html              live + history UI
-│   ├── app.js                  vanilla-JS poller
-│   └── style.css               dark theme
-├── scripts/install-pi5.sh      idempotent installer
-├── systemd/stp.service         unit template
-└── test/                       8 vitest files, 53 cases
+│   ├── index.html            Live + History UI
+│   ├── app.js                Vanilla-JS-Poller
+│   └── style.css             Dark-Theme
+├── scripts/install-pi5.sh    idempotenter Installer
+├── systemd/stp.service       Unit-Template
+└── test/                     8 Vitest-Files, 53 Cases
 ```
-
-## License
-
-TBD.
