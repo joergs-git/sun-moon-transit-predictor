@@ -67,7 +67,19 @@ export function createHttpServer(opts) {
       }
       if (url.pathname === '/api/history') {
         const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') ?? '100')));
-        return jsonResponse(res, 200, { events: store.recent({ limit }) });
+        // Parse the persisted payload_json so the frontend can consume the
+        // candidate + route as a structured object (needed by the FOV sketch
+        // popup for aircraftAtClosest / bodyAtClosest / transitPath). Rows
+        // written before this field existed simply yield payload = null.
+        const events = store.recent({ limit }).map((row) => {
+          let payload = null;
+          if (row.payload_json) {
+            try { payload = JSON.parse(row.payload_json); } catch { /* drop */ }
+          }
+          const { payload_json, ...rest } = row;
+          return { ...rest, payload };
+        });
+        return jsonResponse(res, 200, { events });
       }
       if (url.pathname === '/api/health') {
         return jsonResponse(res, 200, { ok: true, time: new Date().toISOString() });

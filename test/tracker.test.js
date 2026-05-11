@@ -235,6 +235,49 @@ describe('findTransits', () => {
     expect(cands).toEqual([]);
   });
 
+  it('emits a transitPath with up-to-5 samples around closest approach', () => {
+    // A moving aircraft that crosses the Sun line of sight gives a clean
+    // ±60 s window where both sides stay observable, so all five offsets
+    // should make it through the filter.
+    const t0 = new Date('2026-06-21T11:30:00Z').getTime();
+    const sun = sunAzEl(RHEINE, new Date(t0));
+    const pos = aircraftAtBodyLineOfSight(RHEINE, sun, 11000);
+    const groundSpeed = 230;
+    // Wind position back along an eastbound track so the aircraft is east of
+    // the LoS now, and arrives at the LoS at t0 + ~2 s — keeps closest
+    // approach inside the sampling horizon for all offsets.
+    const dWest = groundSpeed * 2;
+    const dLon = -(dWest / (EARTH_R * Math.cos(pos.lat * DEG))) * RAD;
+    const ac = makeAircraft({
+      lat: pos.lat,
+      lon: pos.lon + dLon,
+      altMmsl: 11000,
+      groundSpeedMs: groundSpeed,
+      trackDeg: 90,
+      receivedAtMs: t0,
+    });
+    const cands = findTransits(RHEINE, [ac], t0);
+    expect(cands.length).toBe(1);
+    const path = cands[0].transitPath;
+    expect(Array.isArray(path)).toBe(true);
+    expect(path.length).toBe(5);
+    // Offsets monotonically increase and cover the ±60 s span symmetrically.
+    expect(path.map(p => p.tOffsetMs)).toEqual([-60_000, -30_000, 0, 30_000, 60_000]);
+    // At tOffsetMs=0 the aircraft-body separation should approximately match
+    // the reported closestApproachSepDeg (sub-step discretisation aside).
+    const mid = path[2];
+    const sepMid = Math.hypot(
+      (mid.aircraftAz - mid.bodyAz) * Math.cos(mid.bodyEl * DEG),
+      mid.aircraftEl - mid.bodyEl,
+    );
+    expect(Math.abs(sepMid - cands[0].closestApproachSepDeg)).toBeLessThan(0.2);
+    // All samples must be above the horizon for both sides.
+    for (const s of path) {
+      expect(s.aircraftEl).toBeGreaterThan(0);
+      expect(s.bodyEl).toBeGreaterThan(0);
+    }
+  });
+
   it('applies geoidUndulationM for barometric altitudes only', () => {
     // For a barometric source at "10000 m MSL", a 46 m geoid offset shifts
     // the apparent HAE up by 46 m, which moves the aircraft Az/El upward by

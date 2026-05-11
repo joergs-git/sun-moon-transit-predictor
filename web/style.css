@@ -104,3 +104,64 @@ footer {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* Clickable rows in the tracking + history tables. The hover tint matches the
+   existing imminent/candidate row tints so the affordance reads as "select"
+   rather than as a status change. */
+tr.sketchable { cursor: pointer; }
+tr.sketchable:hover td { background: rgba(95, 208, 127, 0.08); }
+tr.sketchable.row-imminent:hover td { background: rgba(240, 160, 32, 0.16); }
+
+/* FOV sketch modal. Centered card with a dim backdrop; closes on backdrop
+   click, the × button, or Escape (handled in app.js). */
+.sketch-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sketch-modal[hidden] { display: none; }
+.sketch-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 10, 14, 0.78);
+  backdrop-filter: blur(2px);
+}
+.sketch-card {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px 14px 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  max-width: calc(100vw - 32px);
+}
+.sketch-close {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.sketch-close:hover { color: var(--fg); }
+.sketch-hint {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 6px 2px 0;
+  max-width: 420px;
+  line-height: 1.4;
+}
+.sketch-empty {
+  color: var(--muted);
+  padding: 24px;
+  width: 420px;
+  text-align: center;
+  font-size: 13px;
+}
