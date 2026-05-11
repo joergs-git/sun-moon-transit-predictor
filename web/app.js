@@ -1,7 +1,15 @@
+import { buildSketchSvg, fromHistoryRow, fromLifecycleEntry } from './sketch.js';
+
 const STATE_INTERVAL_MS = 2000;
 const HISTORY_INTERVAL_MS = 15000;
 
 const $ = (sel) => document.querySelector(sel);
+
+// Latest data the renderers saw — kept in module scope so click handlers can
+// look up the full entry by row index without re-fetching. Cheaper than
+// JSON-stringifying the entry onto a data-* attribute on every render tick.
+let lastLifecycle = [];
+let lastHistory = [];
 
 function fmtCountdown(ms) {
   if (ms <= 0) return 'now';
@@ -47,13 +55,16 @@ function renderTracking(state) {
   const tbody = $('#tracking tbody');
   tbody.innerHTML = '';
   const rows = state.lifecycle ?? [];
+  lastLifecycle = rows;
   if (rows.length === 0) {
     tbody.innerHTML = '<tr class="empty"><td colspan="10">Tracking list empty.</td></tr>';
     return;
   }
-  for (const e of rows) {
+  for (const [i, e] of rows.entries()) {
     const tr = document.createElement('tr');
-    tr.className = `row-${e.status}`;
+    tr.className = `row-${e.status} sketchable`;
+    tr.dataset.source = 'live';
+    tr.dataset.index = String(i);
     const meta = STATUS_LABELS[e.status] ?? { icon: '', label: e.status };
     const eta = e.etaMs > 0 ? fmtCountdownLong(e.etaMs)
               : Math.abs(e.etaMs) < 60_000 ? 'now'
@@ -94,12 +105,16 @@ function fmtCountdownLong(ms) {
 function renderHistory(events) {
   const tbody = $('#history tbody');
   tbody.innerHTML = '';
+  lastHistory = events ?? [];
   if (!events || events.length === 0) {
     tbody.innerHTML = '<tr class="empty"><td colspan="11">No history yet.</td></tr>';
     return;
   }
-  for (const e of events) {
+  for (const [i, e] of events.entries()) {
     const tr = document.createElement('tr');
+    tr.className = 'sketchable';
+    tr.dataset.source = 'history';
+    tr.dataset.index = String(i);
     tr.innerHTML = `
       <td class="stage-${e.stage}">${fmtTime(e.closest_at_ms)}</td>
       <td>${fmtTime(e.recorded_at_ms)}</td>
@@ -149,6 +164,47 @@ async function pollHistory() {
     renderHistory(events);
   } catch { /* ignore */ }
 }
+
+// ---- FOV sketch popup --------------------------------------------------------
+// Delegated click handler on document.body so it survives table re-renders
+// without needing to re-attach listeners every poll tick.
+const modal = $('#sketch-modal');
+const modalBody = $('#sketch-body');
+
+function openSketchFor(source, index) {
+  const idx = Number(index);
+  let input = null;
+  if (source === 'live') {
+    const entry = lastLifecycle[idx];
+    input = entry ? fromLifecycleEntry(entry) : null;
+  } else if (source === 'history') {
+    const row = lastHistory[idx];
+    input = row ? fromHistoryRow(row) : null;
+  }
+  if (!input) {
+    modalBody.innerHTML =
+      '<p class="sketch-empty">No geometry available for this row yet — wait for the next live update, ' +
+      'or this entry pre-dates the FOV sketch feature.</p>';
+  } else {
+    modalBody.innerHTML = buildSketchSvg(input);
+  }
+  modal.hidden = false;
+}
+
+function closeSketch() {
+  modal.hidden = true;
+  modalBody.innerHTML = '';
+}
+
+document.body.addEventListener('click', (ev) => {
+  const t = ev.target;
+  if (t.closest('[data-close="1"]')) { closeSketch(); return; }
+  const row = t.closest('tr.sketchable');
+  if (row) openSketchFor(row.dataset.source, row.dataset.index);
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && !modal.hidden) closeSketch();
+});
 
 pollState();
 pollHistory();

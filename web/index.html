@@ -67,6 +67,19 @@
     <span id="observer"></span>
   </footer>
 
+  <!-- FOV sketch modal. Hidden until a tracking/history row is clicked.
+       Click on the dim backdrop or the close button to dismiss. -->
+  <div id="sketch-modal" class="sketch-modal" hidden role="dialog" aria-modal="true" aria-labelledby="sketch-title">
+    <div class="sketch-backdrop" data-close="1"></div>
+    <div class="sketch-card">
+      <button type="button" class="sketch-close" data-close="1" aria-label="Close">×</button>
+      <div id="sketch-body"></div>
+      <p class="sketch-hint" id="sketch-title">
+        Aircraft silhouette is generic (≈36 m wingspan); FOV assumes 500 mm focal length on a ZWO ASI174MM sensor (1936×1216 px).
+      </p>
+    </div>
+  </div>
+
   <script src="app.js" type="module"></script>
 </body>
 </html>

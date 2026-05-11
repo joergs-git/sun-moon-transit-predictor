@@ -32,6 +32,15 @@ const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
 
 /**
+ * @typedef {Object} TransitPathSample
+ * @property {number} tOffsetMs    - ms relative to closestApproachAtMs (negative = before).
+ * @property {number} aircraftAz   - degrees, 0 = N.
+ * @property {number} aircraftEl   - degrees.
+ * @property {number} bodyAz       - degrees, 0 = N.
+ * @property {number} bodyEl       - degrees.
+ */
+
+/**
  * @typedef {Object} TransitCandidate
  * @property {string} icao
  * @property {string|null} callsign
@@ -48,8 +57,18 @@ const RAD = 180 / Math.PI;
  * @property {number} durationMs
  * @property {{ azimuthDeg: number, elevationDeg: number, rangeM: number|null }} aircraftAtClosest
  * @property {{ azimuthDeg: number, elevationDeg: number, rangeM: number|null }} bodyAtClosest
+ * @property {TransitPathSample[]} transitPath  - sparse samples of aircraft + body
+ *                                                Az/El around closest approach (±60/30/0 s),
+ *                                                used by the UI to render the aircraft's
+ *                                                apparent path across the body's FOV.
  * @property {import('./adsb.js').Aircraft} aircraft
  */
+
+// Sparse offsets used to sample the apparent transit path around closest
+// approach. Five points is enough resolution to draw a straight line +
+// arrowhead in the FOV sketch without bloating payload_json. Symmetric around
+// 0 so the rendered line is centred on the closest-approach point.
+const PATH_OFFSETS_SEC = [-60, -30, 0, 30, 60];
 
 /**
  * Linear-extrapolate an aircraft `dtSec` seconds forward from the *fix time*
@@ -127,6 +146,38 @@ function parabolicVertex(sepA, sepB, sepC, stepS) {
   const dt = delta * stepS;
   const sep = sepB - 0.25 * (sepA - sepC) * delta;
   return { dt, sep };
+}
+
+/**
+ * Build the transit-path samples used by the UI sketch. Computes aircraft +
+ * body Az/El at fixed offsets around the refined closest-approach time. Drops
+ * samples where either side falls below observability so the sketch never
+ * draws a horizon-clipped artefact. Body ephemeris is geometric (no refraction)
+ * for consistency with the rest of the pipeline.
+ */
+function sampleTransitPath(observer, obsEcef, ac, body, closestApproachAtMs, geoidUndulationM) {
+  const lat0 = observer.latitudeDeg;
+  const lon0 = observer.longitudeDeg;
+  /** @type {TransitPathSample[]} */
+  const path = [];
+  for (const dtSec of PATH_OFFSETS_SEC) {
+    const tMs = closestApproachAtMs + dtSec * 1000;
+    const dtFromFixS = (tMs - (ac.receivedAtMs ?? tMs)) / 1000;
+    const proj = extrapolate(ac, dtFromFixS);
+    const altHae = altHaeOf({ ...ac, altMmsl: proj.altMmsl }, geoidUndulationM);
+    const acAzEl = aircraftAzElFromObsEcef(obsEcef, lat0, lon0, proj.lat, proj.lon, altHae);
+    if (acAzEl.elevationDeg <= 0) continue;
+    const bAzEl = bodyAzEl(observer, body, new Date(tMs), { applyRefraction: false });
+    if (!isObservable(bAzEl)) continue;
+    path.push({
+      tOffsetMs: dtSec * 1000,
+      aircraftAz: acAzEl.azimuthDeg,
+      aircraftEl: acAzEl.elevationDeg,
+      bodyAz: bAzEl.azimuthDeg,
+      bodyEl: bAzEl.elevationDeg,
+    });
+  }
+  return path;
 }
 
 function candidateForBody(ac, body, acTrajectory, bodySamples, thresholdDeg, looseThresholdDeg, nowMs, stepS) {
@@ -272,7 +323,12 @@ export function findTransits(observer, aircraftList, nowMs, opts = {}) {
         ac, body, acTrajectory, samples,
         thresholdDeg, looseThresholdDeg, nowMs, stepS,
       );
-      if (cand) candidates.push(cand);
+      if (cand) {
+        cand.transitPath = sampleTransitPath(
+          observer, obsEcef, ac, body, cand.closestApproachAtMs, geoidUndulationM,
+        );
+        candidates.push(cand);
+      }
     }
   }
   candidates.sort((a, b) => a.closestApproachAtMs - b.closestApproachAtMs);
