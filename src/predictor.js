@@ -182,10 +182,13 @@ export function upcomingExpected(watchlist, nowMs, lookAheadMs = DAY_MS) {
 export function observationsFromHistory(store, opts = {}) {
   const { daysBack = 14, nowMs = Date.now() } = opts;
   const sinceMs = nowMs - daysBack * DAY_MS;
+  // 'imminent' is the v0.4.0 stage name for what was previously 'precise'.
+  // Older rows are migrated at startup (see store.js), so this filter alone
+  // is enough — we never read both names from the same DB.
   const rows = store.db.prepare(`
     SELECT flight, body, closest_at_ms
     FROM transit_history
-    WHERE recorded_at_ms >= ? AND flight IS NOT NULL AND stage = 'precise'
+    WHERE recorded_at_ms >= ? AND flight IS NOT NULL AND stage = 'imminent'
   `).all(sinceMs);
   return rows.map(r => ({
     flight: r.flight,

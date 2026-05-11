@@ -77,6 +77,7 @@ without a monitor, keyboard, or any client connected.
 | M8 | Accuracy pass: latency back-stamp, sub-step vertex refinement, geoid offset, refraction-frame alignment | done |
 | M9 | Zero-touch operations: gitignored personal config, `--non-interactive` install, nightly auto-update timer | done |
 | M10 | History-based predictor (24 h "Expected today" panel) + optional OpenSky schedule augmentation | done |
+| M11 | Lifecycle pipeline: planned → radio → candidate → imminent → stale, with `horizonS=300` default, unified UI panel | done |
 
 ## Quick install on the Pi 5
 
@@ -372,11 +373,13 @@ STP_CONFIG=/etc/stp/service.prod.json     \
 npm test
 ```
 
-71 vitest cases cover geometry, ADS-B parsing, tracker (including the
-ADS-B latency back-stamp, sub-step vertex refinement, and barometric geoid
-offset added in M8), Pushover client, notifier, route lookup with TTL
-cache, history store, the HTTP server, the history-based predictor, and
-the OpenSky REST client (M10).
+84 vitest cases cover geometry, ADS-B parsing, tracker (including the
+ADS-B latency back-stamp, sub-step vertex refinement, barometric geoid
+offset from M8, and the level=candidate/radio split from M11), Pushover
+client, notifier (3-stage pipeline with minStage filter), route lookup
+with TTL cache, history store (with the M11 stage-rename migration), the
+HTTP server, the history-based predictor, the OpenSky REST client (M10),
+and the lifecycle state machine (M11).
 
 ## Configuration
 
@@ -430,7 +433,7 @@ or `http://192.168.1.42:8081/`.
 | Method & path              | Description |
 |---|---|
 | `GET /`                    | Web UI (live state + history table). |
-| `GET /api/state`           | Current observer, Sun/Moon Az/El + observability, aircraft count, transit candidates inside the look-ahead horizon, and **`expected[]`** — predicted recurring transits in the next 24 h (see *Predictive watchlist*). Refreshed every poll. |
+| `GET /api/state`           | Current observer, Sun/Moon Az/El + observability, aircraft count, `lifecycle[]` (unified per-`(icao, body)` tracking list with status enum, M11 — primary feed for the new UI), plus `candidates[]` (live tracker output, backward compat) and `expected[]` (history-based 24 h watchlist, backward compat). Refreshed every poll. |
 | `GET /api/history?limit=…` | Past notifications (early + precise stages) from SQLite, newest first. Default 100, max 500. |
 | `GET /api/health`          | Liveness probe — always returns `{ ok: true, time: <ISO> }`. |
 
@@ -487,18 +490,58 @@ open     http://<host>:8081/        # macOS
 `observable: false` on a body means it is below the 20° horizon floor — any
 aircraft passing in front of it is *not* reported, by design.
 
-## Two-stage notifications
+## Candidate lifecycle (planned → radio → candidate → imminent → stale)
 
-For each `(icao, body)` pair the notifier emits:
+Every `(icao, body)` entry the service tracks goes through up to four
+**status** transitions during its lifetime. They show up in the UI as a
+single dynamic list — the user requested an "approach radar"-style flow
+rather than two disjoint tables — and the notifier turns three of them
+into Pushover messages:
 
-1. **Early** — first time we see the candidate. Priority 0.
-2. **Precise** — once `closestApproachAtMs` lands within ±30 s of `now`.
-   Priority 1.
+| Status | Trigger | Push priority | Typical lead time |
+|---|---|---|---|
+| **planned** 📅 | predictor watchlist (recurring history) says a flight is expected within `lifecycle.plannedWindowMs` (default 1 h) | none (UI only) | minutes to hours |
+| **radio** 📡 | tracker projects `[thresholdDeg, looseThresholdDeg]` separation (default 0.3°–5°) within `horizonS` (default 5 min) | 0 | up to 5 min |
+| **candidate** ✈️ | tracker projects `≤ thresholdDeg` separation (default 0.3°) within `horizonS`, more than `imminentWindowMs` away | 0 | 30 s – 5 min |
+| **imminent** 🎯 | closest approach within ±`imminentWindowMs` (default ±30 s) | 1 | ≤ 30 s |
+| **stale** ❌ | was tracked last tick, gone from the tracker output now — held visible for `lifecycle.staleGraceMs` (default 10 s) before drop | none (UI only) | — |
+
+Stage rules:
+
+- **Subsumption.** Higher stages "consume" the lower ones — an aircraft
+  that appears directly on the line of sight fires `candidate` (or
+  `imminent`) on the first sighting and does *not* retroactively emit
+  `radio`. Each stage fires at most once per `(icao, body)` per detection
+  cycle, then dedupes for 5 min before forgetting state.
+- **Subscription control.** `pushover.minStage` (default `radio`) is the
+  earliest stage that may push. Set to `candidate` to silence the wide-net
+  early-warning stage if it gets too chatty; `imminent` for "alert me only
+  at the last 30 s".
+- **What goes into SQLite.** Only `radio`, `candidate` and `imminent` are
+  persisted to `transit_history`. `planned` is regenerated from the
+  watchlist each tick; `stale` is a UI-only display state.
 
 Each notification carries: callsign, IATA flight number (if adsbdb resolves
 it), airline, origin/destination, altitude (ft), ground speed (kt), minimum
 separation, transit duration, ETA. Same payload is recorded in the SQLite
 history table.
+
+### Tuning the live look-ahead
+
+`tracker.horizonS` (default 300 s) is the window the live tracker linearly
+extrapolates each aircraft over. Bigger window = earlier warning, but
+linear extrapolation degrades past ~2 min (turns, ATC vectoring, wind).
+Clamped to `[10, 600]` in code. Typical settings:
+
+| Use case | `horizonS` | What you get |
+|---|---|---|
+| Maximum precision | 60 | First-detection at ~T-60 s; lowest false-positive rate. |
+| **Default** | **300** | First-detection at ~T-5 min; a few false-positives from in-cruise turns. |
+| Wide net | 600 | First-detection at ~T-10 min; many false-positives, but no transit ever sneaks up on you. |
+
+`tracker.looseThresholdDeg` (default 5°) is the **radio band** width — set
+to the same value as `thresholdDeg` to disable the radio stage entirely
+and fall back to the old two-stage flow.
 
 ## Pushover setup & test push
 
@@ -649,17 +692,17 @@ fewer false-positive watchlist entries.
 
 `http://<host>:8081/` ships a single-page UI with two panels:
 
-- **Live** — observer info, current Sun/Moon Az/El (with the observability
-  flag), aircraft count, and the table of active transit candidates inside
-  the 60 s look-ahead horizon. Polls `/api/state` continuously, so each row
-  is the *prediction* for the next minute, not a historical record.
-- **Expected today** — 24 h preview from the predictor (see *Predictive
-  watchlist* above). Each row is `ETA · Time · Body · Flight · Seen · Days · Spread`.
-  Refreshes whenever `/api/state` does; the underlying watchlist is rebuilt
-  hourly.
+- **Sky now** — current Sun/Moon Az/El with the observability flag.
+- **Tracking** — the unified lifecycle list (see *Candidate lifecycle*
+  above). One row per `(icao, body)` or `(flight, body)`, sorted by status
+  urgency then ETA. Status pill on the left with the icon (📅 📡 ✈️ 🎯 ❌);
+  whole-row tint for `imminent` / `candidate` so urgent rows draw the eye.
+  Polls `/api/state` every 2 s — rows transition status in real time as
+  the tracker sees them appear, converge, and (sometimes) drop.
 - **History** — paginated list backed by `/api/history`, showing every
-  dispatched notification (early + precise) with callsign, IATA flight,
-  origin / destination, body, minimum separation, ETA, altitude and speed.
+  persisted notification (radio + candidate + imminent stages) with
+  Transit time, callsign, IATA flight, origin / destination, body, minimum
+  separation, altitude and speed.
 
 The page is plain vanilla JS — no build step. The files in `web/` are
 served directly; `style.css` is dark-themed.
@@ -724,6 +767,7 @@ from the notifier — happy to add that as a config switch if useful.
 │   ├── service.js                orchestrator (the polling loop)
 │   ├── predictor.js              history-based 24 h watchlist (M10)
 │   ├── opensky.js                OpenSky Network REST client (M10, opt-in)
+│   ├── lifecycle.js              candidate state machine: planned→radio→candidate→imminent→stale (M11)
 │   ├── config.js                 loadObserver()
 │   └── index.js                  public re-exports
 ├── web/
@@ -739,7 +783,7 @@ from the notifier — happy to add that as a config switch if useful.
 │   ├── stp.service               main service unit template
 │   ├── stp-update.service        auto-update oneshot template
 │   └── stp-update.timer          nightly schedule (03:30 ±15 min)
-└── test/                         10 vitest files, 71 cases
+└── test/                         11 vitest files, 84 cases
 ```
 
 ## License

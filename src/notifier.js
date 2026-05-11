@@ -1,15 +1,26 @@
-// Two-stage Pushover notifier with per-(icao, body) dedup.
+// Three-stage Pushover notifier with per-(icao, body) dedup.
 //
 // Stage rules:
-//   - 'early':   first detection of a (icao, body) candidate. Sent once.
-//   - 'precise': sent once when closestApproachAtMs is within
-//                preciseWindowMs of nowMs (default 30 s).
+//   - 'radio':    first time we see a (icao, body) at level='radio' (loose
+//                 band, wider net, early warning). Sent once. Skip with
+//                 minStage='candidate' or 'imminent'.
+//   - 'candidate': first time we see a (icao, body) at level='candidate'
+//                  (tight 0.3° threshold met). Sent once.
+//   - 'imminent': sent once when closestApproachAtMs is within
+//                 imminentWindowMs of nowMs (default 30 s). Highest priority.
+//
+// Stages fire in order: radio → candidate → imminent. Skipping is allowed
+// (an aircraft that's directly on the line of sight with no prior 'radio'
+// detection will fire 'candidate' on first sighting). Each stage is
+// independent; sending one does not prevent the next.
 //
 // State for a candidate is dropped automatically once its closest approach
 // is older than `forgetAfterMs` (default 5 min).
 
-const DEFAULT_PRECISE_WINDOW_MS = 30_000;
+const DEFAULT_IMMINENT_WINDOW_MS = 30_000;
 const DEFAULT_FORGET_AFTER_MS = 5 * 60_000;
+
+const STAGE_ORDER = { radio: 0, candidate: 1, imminent: 2 };
 
 function fmtAlt(altMmsl) {
   const ft = Math.round(altMmsl * 3.28084 / 100) * 100;
@@ -44,7 +55,13 @@ function buildPayload(stage, candidate, route, nowMs, baseUrl) {
   const dur = (candidate.durationMs / 1000).toFixed(1);
   const bodySym = candidate.body === 'Sun' ? 'Sun' : 'Moon';
 
-  const titlePrefix = stage === 'precise' ? `[!] ${bodySym} TRANSIT` : `${bodySym} candidate`;
+  // Title prefix per stage. 'imminent' gets the alarm prefix; 'candidate'
+  // is the tight-window match; 'radio' is the wide-net early warning.
+  const titlePrefix = stage === 'imminent'
+    ? `[!] ${bodySym} TRANSIT`
+    : stage === 'candidate'
+      ? `${bodySym} candidate`
+      : `${bodySym} approach`;
   const title = `${titlePrefix} T-${eta}: ${flight}`;
 
   const lines = [
@@ -54,17 +71,17 @@ function buildPayload(stage, candidate, route, nowMs, baseUrl) {
   ];
   if (route?.airline?.name) lines.unshift(route.airline.name);
 
-  // Pushover renders `timestamp` as the moment the event happened; for an
-  // early alert the closest approach is in the *future*, so omit it. On
-  // 'precise' alerts the closest approach is within ±30 s of now, which is
+  // Pushover renders `timestamp` as the moment the event happened; for the
+  // earlier stages the closest approach is in the *future*, so omit it. On
+  // 'imminent' alerts the closest approach is within ±30 s of now, which is
   // close enough that stamping it gives the user a useful "T-0" anchor.
   /** @type {import('./pushover.js').PushoverMessage} */
   const msg = {
     title,
     message: lines.join('\n'),
-    priority: stage === 'precise' ? 1 : 0,
+    priority: stage === 'imminent' ? 1 : 0,
   };
-  if (stage === 'precise') {
+  if (stage === 'imminent') {
     msg.timestamp = Math.round(candidate.closestApproachAtMs / 1000);
   }
   if (baseUrl) {
@@ -85,8 +102,9 @@ export class Notifier {
    *   routeLookup?: (callsign: string) => Promise<object|null>,
    *   onEvent?: (evt: { stage: string, candidate: any, route: object|null,
    *                     payload: any, sent: boolean, error?: any }) => void,
-   *   preciseWindowMs?: number,
+   *   imminentWindowMs?: number,
    *   forgetAfterMs?: number,
+   *   minStage?: 'radio'|'candidate'|'imminent',  - opt out of earlier stages
    *   baseUrl?: string,
    * }} opts
    */
@@ -94,12 +112,21 @@ export class Notifier {
     this.pushover = opts.pushover;
     this.routeLookup = opts.routeLookup ?? (async () => null);
     this.onEvent = opts.onEvent ?? (() => {});
-    this.preciseWindowMs = opts.preciseWindowMs ?? DEFAULT_PRECISE_WINDOW_MS;
+    this.imminentWindowMs = opts.imminentWindowMs ?? DEFAULT_IMMINENT_WINDOW_MS;
     this.forgetAfterMs = opts.forgetAfterMs ?? DEFAULT_FORGET_AFTER_MS;
+    this.minStage = opts.minStage ?? 'radio';      // default: send all stages
     this.baseUrl = opts.baseUrl;
-    /** @type {Map<string, { earlySent: boolean, preciseSent: boolean,
-     *                       lastClosestMs: number }>} */
+    /** @type {Map<string, { radioSent: boolean, candidateSent: boolean,
+     *                       imminentSent: boolean, lastClosestMs: number }>} */
     this.state = new Map();
+  }
+
+  /**
+   * Whether the given stage should be dispatched given the configured minStage.
+   * @param {'radio'|'candidate'|'imminent'} stage
+   */
+  _stageAllowed(stage) {
+    return STAGE_ORDER[stage] >= STAGE_ORDER[this.minStage];
   }
 
   /**
@@ -117,18 +144,41 @@ export class Notifier {
       const key = candidateKey(cand);
       let st = this.state.get(key);
       if (!st) {
-        st = { earlySent: false, preciseSent: false, lastClosestMs: cand.closestApproachAtMs };
+        st = {
+          radioSent: false, candidateSent: false, imminentSent: false,
+          lastClosestMs: cand.closestApproachAtMs,
+        };
         this.state.set(key, st);
       }
       st.lastClosestMs = cand.closestApproachAtMs;
 
       const tMs = cand.closestApproachAtMs - nowMs;
-      const stage = !st.earlySent
-        ? 'early'
-        : !st.preciseSent && tMs <= this.preciseWindowMs && tMs > -this.preciseWindowMs
-          ? 'precise'
-          : null;
+      const level = cand.level ?? 'candidate';   // back-compat for old callers
+      const inImminentWindow = tMs <= this.imminentWindowMs && tMs > -this.imminentWindowMs;
+
+      // Pick the next stage to fire for this candidate. Stages progress
+      // monotonically: once a stage is sent, it is never re-sent. Higher
+      // stages can fire even if lower ones never did (e.g. an aircraft that
+      // appears straight on the line of sight skips 'radio' entirely).
+      let stage = null;
+      if (!st.imminentSent && inImminentWindow) {
+        stage = 'imminent';
+      } else if (!st.candidateSent && level === 'candidate') {
+        stage = 'candidate';
+      } else if (!st.radioSent && (level === 'radio' || level === 'candidate')) {
+        // 'candidate'-level matches also count as having entered the radio
+        // band, so we don't double-fire 'radio' for them retroactively.
+        stage = 'radio';
+      }
       if (!stage) continue;
+      if (!this._stageAllowed(stage)) {
+        // Mark as "sent" (and all lower stages, by subsumption) so we don't
+        // reconsider on the next tick; the user has explicitly opted out.
+        if (stage === 'radio') st.radioSent = true;
+        if (stage === 'candidate') { st.radioSent = true; st.candidateSent = true; }
+        if (stage === 'imminent')  { st.radioSent = true; st.candidateSent = true; st.imminentSent = true; }
+        continue;
+      }
 
       // Prefer a pre-enriched route on the candidate (set by the service so
       // /api/state and the notifier share the same lookup). Fall back to our
@@ -153,8 +203,19 @@ export class Notifier {
       } catch (e) {
         err = e;
       }
-      if (stage === 'early') st.earlySent = true;
-      if (stage === 'precise') st.preciseSent = true;
+      // Higher stages subsume lower ones — firing 'imminent' implies the
+      // aircraft also passed through 'candidate' and 'radio' bands, so we
+      // never retroactively emit those on a later tick.
+      if (stage === 'radio') {
+        st.radioSent = true;
+      } else if (stage === 'candidate') {
+        st.radioSent = true;
+        st.candidateSent = true;
+      } else if (stage === 'imminent') {
+        st.radioSent = true;
+        st.candidateSent = true;
+        st.imminentSent = true;
+      }
 
       const evt = { stage, candidate: cand, route, payload, sent, error: err };
       this.onEvent(evt);

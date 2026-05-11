@@ -189,6 +189,52 @@ describe('findTransits', () => {
     expect(Math.abs(closestSec - Math.round(closestSec))).toBeGreaterThan(0.05);
   });
 
+  it('reports level=candidate for tight matches and level=radio for near-misses', () => {
+    const t0 = new Date('2026-06-21T11:30:00Z').getTime();
+    const sun = sunAzEl(RHEINE, new Date(t0));
+    // Tight: on the line of sight → 'candidate' (sep ≈ 0)
+    const tightPos = aircraftAtBodyLineOfSight(RHEINE, sun, 11000);
+    const tightAc = makeAircraft({
+      ...tightPos, altMmsl: 11000,
+      groundSpeedMs: 0, trackDeg: 0,
+      receivedAtMs: t0, icao: 'tightAA',
+    });
+    // Radio: offset ~6° in azimuth so the projected sep stays well above
+    // the 0.3° tight threshold even after the sun's ~1.25°/5min motion, but
+    // comfortably inside the 10° radio band.
+    const radioPos = aircraftAtBodyLineOfSight(
+      RHEINE, { azimuthDeg: sun.azimuthDeg + 6, elevationDeg: sun.elevationDeg, rangeM: null }, 11000,
+    );
+    const radioAc = makeAircraft({
+      ...radioPos, altMmsl: 11000,
+      groundSpeedMs: 0, trackDeg: 0,
+      receivedAtMs: t0, icao: 'radioBB',
+    });
+    const cands = findTransits(RHEINE, [tightAc, radioAc], t0, {
+      thresholdDeg: 0.3, looseThresholdDeg: 10.0, horizonS: 60,
+    });
+    expect(cands.length).toBe(2);
+    const byIcao = Object.fromEntries(cands.map(c => [c.icao, c]));
+    expect(byIcao.tightAA.level).toBe('candidate');
+    expect(byIcao.tightAA.closestApproachSepDeg).toBeLessThan(0.3);
+    expect(byIcao.radioBB.level).toBe('radio');
+    expect(byIcao.radioBB.closestApproachSepDeg).toBeGreaterThan(0.3);
+    expect(byIcao.radioBB.closestApproachSepDeg).toBeLessThan(10.0);
+  });
+
+  it('returns no candidate when the projected min is outside both thresholds', () => {
+    const t0 = new Date('2026-06-21T11:30:00Z').getTime();
+    const ac = makeAircraft({
+      lat: 53.0, lon: 9.0, altMmsl: 11000,
+      groundSpeedMs: 230, trackDeg: 270,
+      receivedAtMs: t0,
+    });
+    const cands = findTransits(RHEINE, [ac], t0, {
+      thresholdDeg: 0.3, looseThresholdDeg: 1.0,
+    });
+    expect(cands).toEqual([]);
+  });
+
   it('applies geoidUndulationM for barometric altitudes only', () => {
     // For a barometric source at "10000 m MSL", a 46 m geoid offset shifts
     // the apparent HAE up by 46 m, which moves the aircraft Az/El upward by

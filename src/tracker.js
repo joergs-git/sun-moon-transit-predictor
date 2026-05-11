@@ -36,10 +36,15 @@ const RAD = 180 / Math.PI;
  * @property {string} icao
  * @property {string|null} callsign
  * @property {'Sun'|'Moon'} body
+ * @property {'candidate'|'radio'} level   - 'candidate' = min sep ≤ thresholdDeg
+ *                                          (will pass close to disc); 'radio' =
+ *                                          min sep ≤ looseThresholdDeg only
+ *                                          (in the area but not a tight match,
+ *                                          useful as an early-warning stage).
  * @property {number} closestApproachAtMs
  * @property {number} closestApproachSepDeg
- * @property {number} entersAtMs            - first time ≤ threshold
- * @property {number} leavesAtMs            - last time ≤ threshold
+ * @property {number} entersAtMs            - first time ≤ effective threshold (loose for radio, tight for candidate)
+ * @property {number} leavesAtMs            - last time ≤ effective threshold
  * @property {number} durationMs
  * @property {{ azimuthDeg: number, elevationDeg: number, rangeM: number|null }} aircraftAtClosest
  * @property {{ azimuthDeg: number, elevationDeg: number, rangeM: number|null }} bodyAtClosest
@@ -124,11 +129,13 @@ function parabolicVertex(sepA, sepB, sepC, stepS) {
   return { dt, sep };
 }
 
-function candidateForBody(ac, body, acTrajectory, bodySamples, thresholdDeg, nowMs, stepS) {
+function candidateForBody(ac, body, acTrajectory, bodySamples, thresholdDeg, looseThresholdDeg, nowMs, stepS) {
   let minSep = Infinity;
   let minIdx = -1;
-  let entersIdx = -1;
-  let leavesIdx = -1;
+  let tightEnters = -1;
+  let tightLeaves = -1;
+  let looseEnters = -1;
+  let looseLeaves = -1;
 
   // bodySamples and acTrajectory share the same indexing (same step + horizon).
   for (let i = 0; i < bodySamples.length; i++) {
@@ -136,17 +143,27 @@ function candidateForBody(ac, body, acTrajectory, bodySamples, thresholdDeg, now
     const ac_i = acTrajectory[i];
     if (!ac_i || ac_i.acAzEl.elevationDeg <= 0) continue;
     const sep = angularSeparationDeg(ac_i.acAzEl, bodySamples[i].azel);
-    if (sep < minSep) {
-      minSep = sep;
-      minIdx = i;
-    }
+    if (sep < minSep) { minSep = sep; minIdx = i; }
     if (sep <= thresholdDeg) {
-      if (entersIdx === -1) entersIdx = i;
-      leavesIdx = i;
+      if (tightEnters === -1) tightEnters = i;
+      tightLeaves = i;
+    }
+    if (sep <= looseThresholdDeg) {
+      if (looseEnters === -1) looseEnters = i;
+      looseLeaves = i;
     }
   }
 
-  if (entersIdx === -1) return null;
+  const level = tightEnters !== -1 ? 'candidate'
+              : looseEnters !== -1 ? 'radio'
+              : null;
+  if (!level) return null;
+
+  // Window timestamps reported at the effective level: tight band for
+  // 'candidate', looser band for 'radio'. The closest-approach time itself is
+  // always the global minimum (refined below).
+  const entersIdx = level === 'candidate' ? tightEnters : looseEnters;
+  const leavesIdx = level === 'candidate' ? tightLeaves : looseLeaves;
 
   // Sub-step refinement for time and separation. Use the discrete sample for
   // aircraft / body Az/El at closest — the geometric refinement of those
@@ -171,6 +188,7 @@ function candidateForBody(ac, body, acTrajectory, bodySamples, thresholdDeg, now
     icao: ac.icao,
     callsign: ac.callsign,
     body,
+    level,
     closestApproachAtMs: nowMs + refinedTSec * 1000,
     closestApproachSepDeg: refinedSep,
     entersAtMs: nowMs + bodySamples[entersIdx].tSec * 1000,
@@ -199,12 +217,17 @@ export function findTransits(observer, aircraftList, nowMs, opts = {}) {
     bodies = ['Sun', 'Moon'],
     geoidUndulationM = observer.geoidUndulationM ?? 0,
   } = opts;
+  // Loose threshold defines the 'radio' (approach) detection band: aircraft
+  // whose projected min separation lands inside [thresholdDeg, looseThresholdDeg]
+  // are still reported so the UI / Pushover pipeline can give a much earlier
+  // heads-up. Set loose=tight (or omit) to disable the radio stage.
+  const looseThresholdDeg = Math.max(thresholdDeg, opts.looseThresholdDeg ?? thresholdDeg);
   // Clamp horizon to sane bounds. Linear extrapolation is meter-accurate at
   // 60 s; well past 5 min the assumption breaks (turns, climbs, wind shift)
   // and the prediction is mostly noise. Allow up to 600 s for users who
   // explicitly want a wider net but cap the upper end so a typo in
   // service.json can't blow up the per-tick CPU budget.
-  const horizonS = Math.min(600, Math.max(10, opts.horizonS ?? 60));
+  const horizonS = Math.min(600, Math.max(10, opts.horizonS ?? 300));
 
   // Body trajectories — geometric (un-refracted) for like-for-like comparison.
   const trajectories = new Map();
@@ -245,7 +268,10 @@ export function findTransits(observer, aircraftList, nowMs, opts = {}) {
     }
 
     for (const [body, samples] of trajectories) {
-      const cand = candidateForBody(ac, body, acTrajectory, samples, thresholdDeg, nowMs, stepS);
+      const cand = candidateForBody(
+        ac, body, acTrajectory, samples,
+        thresholdDeg, looseThresholdDeg, nowMs, stepS,
+      );
       if (cand) candidates.push(cand);
     }
   }

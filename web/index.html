@@ -21,34 +21,26 @@
   </section>
 
   <section>
-    <h2>Upcoming candidates</h2>
-    <p class="hint">Live extrapolation, threshold 0.3°. ETA refreshes every 2 s.</p>
-    <table id="candidates">
-      <thead>
-        <tr>
-          <th>ETA</th><th>Body</th><th>Flight</th><th>ICAO</th>
-          <th>Route</th><th>Alt</th><th>Speed</th><th>Sep</th><th>Dur</th>
-        </tr>
-      </thead>
-      <tbody><tr class="empty"><td colspan="9">No candidates within 60 s.</td></tr></tbody>
-    </table>
-  </section>
-
-  <section>
-    <h2>Expected today</h2>
+    <h2>Tracking</h2>
     <p class="hint">
-      Predicted from past transits — flights that hit the same body at roughly
-      the same time on multiple recent days. ETA is a best-guess; the live
-      table above remains the authoritative source.
+      Unified list, sorted by urgency. Status transitions in real time as
+      flights are detected, projected, and either confirmed or dropped:
     </p>
-    <table id="expected">
+    <ul class="legend">
+      <li><span class="status status-planned">📅 planned</span> watchlist entry expected within ~1 h; no live ADS-B match yet.</li>
+      <li><span class="status status-radio">📡 radio</span> in ADS-B range, projected to pass within ~5° of the body — early-warning band.</li>
+      <li><span class="status status-candidate">✈️ candidate</span> projected to pass within 0.3° (tight transit band); camera-prep.</li>
+      <li><span class="status status-imminent">🎯 imminent</span> closest approach within ±30 s; press the shutter.</li>
+      <li><span class="status status-stale">❌ stale</span> was a contact, no longer matches — held briefly so you see it drop out.</li>
+    </ul>
+    <table id="tracking">
       <thead>
         <tr>
-          <th>ETA</th><th>Time</th><th>Body</th><th>Flight</th>
-          <th>Seen</th><th>Days</th><th>Spread</th>
+          <th>Status</th><th>ETA</th><th>Time</th><th>Body</th><th>Flight</th>
+          <th>ICAO</th><th>Route</th><th>Alt</th><th>Speed</th><th>Sep</th>
         </tr>
       </thead>
-      <tbody><tr class="empty"><td colspan="7">Watchlist empty (need ≥2 distinct-day hits).</td></tr></tbody>
+      <tbody><tr class="empty"><td colspan="10">Tracking list empty.</td></tr></tbody>
     </table>
   </section>
 

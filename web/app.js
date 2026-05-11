@@ -34,43 +34,51 @@ function renderSky(state) {
   }
 }
 
-function renderCandidates(state) {
-  const tbody = $('#candidates tbody');
+const STATUS_LABELS = {
+  planned:   { icon: '📅', label: 'planned' },
+  radio:     { icon: '📡', label: 'radio' },
+  candidate: { icon: '✈️', label: 'candidate' },
+  imminent:  { icon: '🎯', label: 'imminent' },
+  stale:     { icon: '❌', label: 'stale' },
+};
+
+function renderTracking(state) {
+  const tbody = $('#tracking tbody');
   tbody.innerHTML = '';
-  const cands = state.candidates ?? [];
-  if (cands.length === 0) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="9">No candidates within 60 s.</td></tr>';
+  const rows = state.lifecycle ?? [];
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr class="empty"><td colspan="10">Tracking list empty.</td></tr>';
     return;
   }
-  for (const c of cands) {
-    const ac = c.aircraft;
-    const eta = fmtCountdown(c.closestApproachAtMs - state.nowMs);
+  for (const e of rows) {
     const tr = document.createElement('tr');
+    tr.className = `row-${e.status}`;
+    const meta = STATUS_LABELS[e.status] ?? { icon: '', label: e.status };
+    const eta = e.etaMs > 0 ? fmtCountdownLong(e.etaMs)
+              : Math.abs(e.etaMs) < 60_000 ? 'now'
+              : `−${fmtCountdownLong(-e.etaMs)}`;
+    const ac = e.candidate?.aircraft;
+    const route = e.route ?? e.candidate?.route;
     tr.innerHTML = `
+      <td><span class="status status-${e.status}" title="${meta.label}">${meta.icon} ${meta.label}</span></td>
       <td>${eta}</td>
-      <td class="body-${c.body}">${c.body}</td>
-      <td>${c.route?.flight ?? c.callsign ?? ''}</td>
-      <td>${c.icao.toUpperCase()}</td>
-      <td>${fmtRoute(c.route?.origin?.iata ?? c.route?.origin?.icao, c.route?.destination?.iata ?? c.route?.destination?.icao)}</td>
-      <td>${fmtAlt(ac.altMmsl)}</td>
-      <td>${fmtSpeed(ac.groundSpeedMs)}</td>
-      <td>${fmtSep(c.closestApproachSepDeg)}</td>
-      <td>${fmtDuration(c.durationMs)}</td>
+      <td>${fmtTime(e.closestApproachAtMs)}</td>
+      <td class="body-${e.body}">${e.body}</td>
+      <td>${e.flight ?? e.callsign ?? '—'}</td>
+      <td>${e.icao ? e.icao.toUpperCase() : '—'}</td>
+      <td>${fmtRoute(route?.origin?.iata ?? route?.origin?.icao, route?.destination?.iata ?? route?.destination?.icao)}</td>
+      <td>${fmtAlt(ac?.altMmsl)}</td>
+      <td>${fmtSpeed(ac?.groundSpeedMs)}</td>
+      <td>${e.closestApproachSepDeg !== null ? fmtSep(e.closestApproachSepDeg) : '—'}</td>
     `;
     tbody.appendChild(tr);
   }
 }
 
-function fmtSpreadMs(ms) {
-  if (ms == null) return '—';
-  const m = Math.round(ms / 60_000);
-  if (m < 60) return `±${m}m`;
-  const h = Math.floor(m / 60);
-  return `±${h}h${m % 60 ? ` ${m % 60}m` : ''}`;
-}
-
 function fmtCountdownLong(ms) {
   if (ms <= 0) return 'now';
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
   const totalMin = Math.round(ms / 60_000);
   if (totalMin < 60) return `${totalMin}m`;
   const h = Math.floor(totalMin / 60);
@@ -78,29 +86,6 @@ function fmtCountdownLong(ms) {
   if (h < 24) return `${h}h${m ? ` ${m}m` : ''}`;
   const d = Math.floor(h / 24);
   return `${d}d ${h % 24}h`;
-}
-
-function renderExpected(state) {
-  const tbody = document.querySelector('#expected tbody');
-  tbody.innerHTML = '';
-  const rows = state.expected ?? [];
-  if (rows.length === 0) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="7">Watchlist empty (need ≥2 distinct-day hits).</td></tr>';
-    return;
-  }
-  for (const e of rows) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${fmtCountdownLong(e.etaMs)}</td>
-      <td>${fmtTime(e.expectedAtMs)}</td>
-      <td class="body-${e.body}">${e.body}</td>
-      <td>${e.flight}</td>
-      <td>${e.observations}</td>
-      <td>${e.distinctDays}</td>
-      <td>${fmtSpreadMs(e.stdevMs)}</td>
-    `;
-    tbody.appendChild(tr);
-  }
 }
 
 function renderHistory(events) {
@@ -134,8 +119,7 @@ async function pollState() {
     if (!res.ok) throw new Error(res.status);
     const state = await res.json();
     renderSky(state);
-    renderCandidates(state);
-    renderExpected(state);
+    renderTracking(state);
     const status = $('#status');
     const age = Math.round((Date.now() - state.lastUpdateMs) / 1000);
     status.textContent = `live · ${age}s ago · ${state.aircraftCount ?? 0} aircraft`;
