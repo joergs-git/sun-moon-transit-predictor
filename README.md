@@ -76,6 +76,7 @@ without a monitor, keyboard, or any client connected.
 | M7 | Bash install script for Pi 5 (Raspberry Pi OS, ARM64) | done |
 | M8 | Accuracy pass: latency back-stamp, sub-step vertex refinement, geoid offset, refraction-frame alignment | done |
 | M9 | Zero-touch operations: gitignored personal config, `--non-interactive` install, nightly auto-update timer | done |
+| M10 | History-based predictor (24 h "Expected today" panel) + optional OpenSky schedule augmentation | done |
 
 ## Quick install on the Pi 5
 
@@ -371,10 +372,11 @@ STP_CONFIG=/etc/stp/service.prod.json     \
 npm test
 ```
 
-56 vitest cases cover geometry, ADS-B parsing, tracker (including the
+71 vitest cases cover geometry, ADS-B parsing, tracker (including the
 ADS-B latency back-stamp, sub-step vertex refinement, and barometric geoid
 offset added in M8), Pushover client, notifier, route lookup with TTL
-cache, history store, and the HTTP server.
+cache, history store, the HTTP server, the history-based predictor, and
+the OpenSky REST client (M10).
 
 ## Configuration
 
@@ -428,7 +430,7 @@ or `http://192.168.1.42:8081/`.
 | Method & path              | Description |
 |---|---|
 | `GET /`                    | Web UI (live state + history table). |
-| `GET /api/state`           | Current observer, Sun/Moon Az/El + observability, aircraft count, transit candidates inside the look-ahead horizon. Refreshed every poll. |
+| `GET /api/state`           | Current observer, Sun/Moon Az/El + observability, aircraft count, transit candidates inside the look-ahead horizon, and **`expected[]`** — predicted recurring transits in the next 24 h (see *Predictive watchlist*). Refreshed every poll. |
 | `GET /api/history?limit=…` | Past notifications (early + precise stages) from SQLite, newest first. Default 100, max 500. |
 | `GET /api/health`          | Liveness probe — always returns `{ ok: true, time: <ISO> }`. |
 
@@ -561,6 +563,88 @@ sudo systemctl restart stp.service
 journalctl -u stp.service -f | grep -iE 'push|notif'
 ```
 
+## Predictive watchlist (24 h preview)
+
+The live tracker only sees ~60 seconds into the future (linear ADS-B
+extrapolation). The **predictor** complements it with a 24 h preview built
+from past transits: any `(flight, body)` pair that hit ≥ 2 distinct days in
+the last 14 produces a watchlist entry, and the next expected occurrence is
+surfaced in `state.expected`. The "Expected today" panel in the web UI
+renders this list as `ETA · Time · Body · Flight · Seen · Days · Spread`.
+"Spread" is the standard deviation of the observed time-of-day across days
+— think of it as a confidence proxy: `±5m` means the flight is reliably on
+schedule, `±45m` means highly variable.
+
+Defaults (override under `predictor` in `config/service.json`):
+
+| Key                  | Default          | Meaning |
+|---|---|---|
+| `enabled`            | `true`           | Master switch. |
+| `daysBack`           | `14`             | History window scanned for repeats. |
+| `minRepeats`         | `2`              | Min number of distinct UTC days an entry must hit. |
+| `bucketMinutes`      | `60`             | Time-of-day binning width — coarse enough to absorb day-to-day jitter, fine enough that the median predicted time is meaningful to ~1 h. |
+| `rebuildIntervalMs`  | `3600000` (1 h)  | Cadence for re-scanning the history table. |
+| `lookAheadMs`        | `86400000` (24 h)| Window into the future the predictor surfaces. |
+
+The predictor is **fully local** — it reads only `data/history.db` and
+needs no external API. The watchlist warms up over the first 1–2 weeks of
+operation as the same scheduled flights repeat. Entries decay automatically
+as observations age out of `daysBack`.
+
+## Schedule augmentation (OpenSky, optional)
+
+For faster watchlist warm-up, or coverage of flights your local ADS-B
+receiver missed (offline, low signal, terrain-shadowed), you can pull
+historical arrivals + departures from
+[OpenSky Network](https://opensky-network.org/) at airports near you and
+feed them into the predictor as additional observations.
+
+Off by default. Enable with two changes in `config/service.json`:
+
+```json
+"opensky": {
+  "enabled": true,
+  "airports": ["EDDF", "EDDL", "EHAM"],
+  "lookbackDays": 7
+}
+```
+
+(Or set `STP_OPENSKY_AIRPORTS=EDDF,EDDL,EHAM` before running the
+installer in `--non-interactive` mode — the script writes the section for
+you and flips `enabled`.)
+
+Then run the fetcher manually to populate `data/history.db`:
+
+```bash
+node --experimental-sqlite scripts/refresh-schedule.js
+```
+
+Output:
+
+```
+[EDDF] arrival   day -0: 142 flights
+[EDDF] departure day -0: 138 flights
+…
+refresh-schedule done: inserted=1840 skipped(no body)=120 pruned=0
+```
+
+`pruned` removes rows older than `lookbackDays` so the table stays bounded.
+The job is **idempotent** — re-running over the same window inserts zero
+new rows (`UNIQUE(source, flight, timestamp_ms)` constraint).
+
+For nightly automation, drop a unit + timer pair next to the existing
+auto-update timer (the runner is `node scripts/refresh-schedule.js`).
+Anonymous OpenSky has a generous 4000 req/day quota; one nightly run for
+3–5 nearby airports is well under that limit.
+
+**Caveat.** OpenSky tells us *that* a flight existed at a given airport,
+not *whether it overflew our observer*. The predictor groups observations
+by `(flight, body, time-of-day)`, so an arriving flight at FRA at 11:00 UTC
+becomes a "11:00 ± 1 h Sun watchlist entry" — useful as a heads-up, but
+your local ADS-B history remains the ground truth for transit timing.
+Don't enable OpenSky if you only fly low priority on accuracy and want
+fewer false-positive watchlist entries.
+
 ## Web UI
 
 `http://<host>:8081/` ships a single-page UI with two panels:
@@ -569,6 +653,10 @@ journalctl -u stp.service -f | grep -iE 'push|notif'
   flag), aircraft count, and the table of active transit candidates inside
   the 60 s look-ahead horizon. Polls `/api/state` continuously, so each row
   is the *prediction* for the next minute, not a historical record.
+- **Expected today** — 24 h preview from the predictor (see *Predictive
+  watchlist* above). Each row is `ETA · Time · Body · Flight · Seen · Days · Spread`.
+  Refreshes whenever `/api/state` does; the underlying watchlist is rebuilt
+  hourly.
 - **History** — paginated list backed by `/api/history`, showing every
   dispatched notification (early + precise) with callsign, IATA flight,
   origin / destination, body, minimum separation, ETA, altitude and speed.
@@ -634,21 +722,24 @@ from the notifier — happy to add that as a config switch if useful.
 │   ├── store.js                  SQLite history (node:sqlite)
 │   ├── server.js                 HTTP server (built-in, no framework)
 │   ├── service.js                orchestrator (the polling loop)
+│   ├── predictor.js              history-based 24 h watchlist (M10)
+│   ├── opensky.js                OpenSky Network REST client (M10, opt-in)
 │   ├── config.js                 loadObserver()
 │   └── index.js                  public re-exports
 ├── web/
-│   ├── index.html                live + history UI
+│   ├── index.html                live + expected + history UI
 │   ├── app.js                    vanilla-JS poller
 │   └── style.css                 dark theme
 ├── scripts/
 │   ├── install-pi5.sh            idempotent installer (interactive or --non-interactive)
 │   ├── auto-update.sh            git pull → npm install → restart, with config backup
+│   ├── refresh-schedule.js       OpenSky daily fetcher (M10, opt-in)
 │   └── test-push.js              one-shot Pushover sanity check
 ├── systemd/
 │   ├── stp.service               main service unit template
 │   ├── stp-update.service        auto-update oneshot template
 │   └── stp-update.timer          nightly schedule (03:30 ±15 min)
-└── test/                         8 vitest files, 56 cases
+└── test/                         10 vitest files, 71 cases
 ```
 
 ## License

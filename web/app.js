@@ -61,6 +61,48 @@ function renderCandidates(state) {
   }
 }
 
+function fmtSpreadMs(ms) {
+  if (ms == null) return '—';
+  const m = Math.round(ms / 60_000);
+  if (m < 60) return `±${m}m`;
+  const h = Math.floor(m / 60);
+  return `±${h}h${m % 60 ? ` ${m % 60}m` : ''}`;
+}
+
+function fmtCountdownLong(ms) {
+  if (ms <= 0) return 'now';
+  const totalMin = Math.round(ms / 60_000);
+  if (totalMin < 60) return `${totalMin}m`;
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h < 24) return `${h}h${m ? ` ${m}m` : ''}`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
+}
+
+function renderExpected(state) {
+  const tbody = document.querySelector('#expected tbody');
+  tbody.innerHTML = '';
+  const rows = state.expected ?? [];
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr class="empty"><td colspan="7">Watchlist empty (need ≥2 distinct-day hits).</td></tr>';
+    return;
+  }
+  for (const e of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${fmtCountdownLong(e.etaMs)}</td>
+      <td>${fmtTime(e.expectedAtMs)}</td>
+      <td class="body-${e.body}">${e.body}</td>
+      <td>${e.flight}</td>
+      <td>${e.observations}</td>
+      <td>${e.distinctDays}</td>
+      <td>${fmtSpreadMs(e.stdevMs)}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
 function renderHistory(events) {
   const tbody = $('#history tbody');
   tbody.innerHTML = '';
@@ -92,6 +134,7 @@ async function pollState() {
     const state = await res.json();
     renderSky(state);
     renderCandidates(state);
+    renderExpected(state);
     const status = $('#status');
     const age = Math.round((Date.now() - state.lastUpdateMs) / 1000);
     status.textContent = `live · ${age}s ago · ${state.aircraftCount ?? 0} aircraft`;

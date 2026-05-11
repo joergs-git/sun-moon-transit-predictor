@@ -194,12 +194,17 @@ function candidateForBody(ac, body, acTrajectory, bodySamples, thresholdDeg, now
  */
 export function findTransits(observer, aircraftList, nowMs, opts = {}) {
   const {
-    horizonS = 60,
     stepS = 0.5,
     thresholdDeg = 0.3,
     bodies = ['Sun', 'Moon'],
     geoidUndulationM = observer.geoidUndulationM ?? 0,
   } = opts;
+  // Clamp horizon to sane bounds. Linear extrapolation is meter-accurate at
+  // 60 s; well past 5 min the assumption breaks (turns, climbs, wind shift)
+  // and the prediction is mostly noise. Allow up to 600 s for users who
+  // explicitly want a wider net but cap the upper end so a typo in
+  // service.json can't blow up the per-tick CPU budget.
+  const horizonS = Math.min(600, Math.max(10, opts.horizonS ?? 60));
 
   // Body trajectories — geometric (un-refracted) for like-for-like comparison.
   const trajectories = new Map();
