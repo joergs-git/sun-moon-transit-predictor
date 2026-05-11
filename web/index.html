@@ -54,15 +54,20 @@
 
   <section>
     <h2>History</h2>
-    <p class="hint">Persisted notifications (early + precise stages).</p>
+    <p class="hint">
+      Persisted notifications (early + precise stages). <b>Transit</b> = the
+      predicted closest-approach time (camera-ready moment). <b>Recorded</b>
+      = when the notification fired (always ≤ Transit for early stage, ≈
+      Transit for precise stage).
+    </p>
     <table id="history">
       <thead>
         <tr>
-          <th>Recorded</th><th>Stage</th><th>Body</th><th>Flight</th>
+          <th>Transit</th><th>Recorded</th><th>Stage</th><th>Body</th><th>Flight</th>
           <th>ICAO</th><th>Route</th><th>Alt</th><th>Speed</th><th>Sep</th>
         </tr>
       </thead>
-      <tbody><tr class="empty"><td colspan="9">Loading…</td></tr></tbody>
+      <tbody><tr class="empty"><td colspan="10">Loading…</td></tr></tbody>
     </table>
   </section>
 

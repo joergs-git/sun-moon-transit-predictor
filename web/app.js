@@ -107,12 +107,13 @@ function renderHistory(events) {
   const tbody = $('#history tbody');
   tbody.innerHTML = '';
   if (!events || events.length === 0) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="9">No history yet.</td></tr>';
+    tbody.innerHTML = '<tr class="empty"><td colspan="10">No history yet.</td></tr>';
     return;
   }
   for (const e of events) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
+      <td class="stage-${e.stage}">${fmtTime(e.closest_at_ms)}</td>
       <td>${fmtTime(e.recorded_at_ms)}</td>
       <td class="stage-${e.stage}">${e.stage}</td>
       <td class="body-${e.body}">${e.body}</td>
