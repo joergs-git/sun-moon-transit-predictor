@@ -170,6 +170,12 @@ sudo systemctl daemon-reload
 
 ### Auto-update is on by default
 
+**What triggers an update?** Every commit pushed (or merged) to the
+`main` branch on `github.com/joergs-git/sun-moon-transit-predictor`. The
+Pi tracks `origin/main` directly — GitHub *Releases* / tags are *not*
+required and are ignored. Latency: up to 24 hours (the next 03:30 timer
+firing). To pull immediately, see *Manual update* below.
+
 The installer drops `scripts/auto-update.sh` plus a systemd timer
 (`stp-update.timer`) that fires nightly at **03:30 ± 15 min**. Each run:
 
@@ -183,6 +189,10 @@ The installer drops `scripts/auto-update.sh` plus a systemd timer
    `package*.json`, `systemd/stp.service`, `config/service.example.json`)
    changed. Frontend-only commits don't restart — the browser picks them
    up on the next refresh.
+
+The restart is graceful (~5 s downtime; SIGTERM → flush SQLite → exit →
+systemd respawn). No interactive prompt, no SSH session needed, no manual
+intervention on the Pi.
 
 Inspect / probe / disable:
 
@@ -231,6 +241,49 @@ are written once by the installer and never overwritten by `git pull`,
 The schema reference lives at `config/observer.example.json` and
 `config/service.example.json` — diff your real files against those when a
 release notes a new field.
+
+### One-time migration from v0.1.x → v0.2.0
+
+Earlier versions tracked `config/observer.json` in git. Pulling v0.2.0+ on
+top of an older checkout will refuse with
+`error: Your local changes ... would be overwritten by merge` (which is
+git protecting your real coordinates). Run this exact sequence once, on
+each existing Pi, the first time you update:
+
+```bash
+cd ~/sun-moon-transit-predictor
+
+# 1. Back up the real coords (still intact on disk)
+cp config/observer.json /tmp/observer.json.bak
+
+# 2. Reset the working-tree file to HEAD so the pull's deletion can apply
+git checkout -- config/observer.json
+
+# 3. Pull — succeeds now and removes the old tracked file
+git pull --ff-only
+
+# 4. Restore the real config; observer.json is now gitignored, so git
+#    will never touch it again
+cp /tmp/observer.json.bak config/observer.json
+rm /tmp/observer.json.bak
+
+# 5. Verify
+cat config/observer.json
+
+# 6. Re-run the installer. Your config is kept (no prompts) — the only
+#    new artefact is the nightly auto-update timer + sudoers fragment.
+bash scripts/install-pi5.sh
+
+# 7. Sanity check
+systemctl status stp.service
+systemctl list-timers | grep stp-update
+curl -s http://localhost:8081/api/health
+node scripts/test-push.js          # optional: confirm Pushover end-to-end
+```
+
+After this one-time step, **every subsequent push to `main` rolls onto the
+Pi automatically** the next night via `auto-update.sh`, with the same
+backup/restore guard built in. You will never need to repeat steps 1–4.
 
 ### Push-driven updates (GitHub webhook)
 
