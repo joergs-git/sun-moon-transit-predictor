@@ -114,7 +114,7 @@ describe('updateLifecycle', () => {
     expect(Array.from(second.values())[0].status).toBe('stale');
   });
 
-  it('drops stale entries once the grace period elapses', () => {
+  it('drops stale entries once the grace period elapses (when staleGraceMs > 0)', () => {
     const first = updateLifecycle({
       prev: new Map(),
       nowMs: NOW,
@@ -131,6 +131,28 @@ describe('updateLifecycle', () => {
       staleGraceMs: 10_000,
     });
     expect(second.size).toBe(0);
+  });
+
+  it('keeps stale entries indefinitely when staleGraceMs is 0 (default)', () => {
+    const first = updateLifecycle({
+      prev: new Map(),
+      nowMs: NOW,
+      trackerCandidates: [trackerCand()],
+      expected: [],
+      liveAircraft: [],
+    });
+    // Simulate a full hour without further activity — entry must still be
+    // present and flagged stale; the only way it leaves the panel is via
+    // the 20-cap (covered by a separate test below).
+    const later = updateLifecycle({
+      prev: first,
+      nowMs: NOW + 3600_000,
+      trackerCandidates: [],
+      expected: [],
+      liveAircraft: [],
+    });
+    expect(later.size).toBe(1);
+    expect(Array.from(later.values())[0].status).toBe('stale');
   });
 
   it('preserves firstSeenMs across promotions', () => {

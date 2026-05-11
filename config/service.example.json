@@ -20,7 +20,7 @@
   "lifecycle": {
     "plannedWindowMs": 3600000,
     "imminentWindowMs": 30000,
-    "staleGraceMs": 60000,
+    "staleGraceMs": 0,
     "maxEntries": 20
   },
   "server": {

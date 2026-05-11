@@ -156,7 +156,7 @@ if [ ! -f "$SERVICE_FILE_LOCAL" ] || [ "$OVERWRITE_CONFIG" -eq 1 ]; then
   "store":     { "path": "$REPO_DIR/data/history.db" },
   "routes":    { "enabled": true, "ttlMs": 3600000, "negativeTtlMs": 300000 },
   "predictor": { "enabled": true, "daysBack": 14, "minRepeats": 2, "bucketMinutes": 60, "rebuildIntervalMs": 3600000, "lookAheadMs": 86400000 },
-  "lifecycle": { "plannedWindowMs": 3600000, "imminentWindowMs": 30000, "staleGraceMs": 60000, "maxEntries": 20 },
+  "lifecycle": { "plannedWindowMs": 3600000, "imminentWindowMs": 30000, "staleGraceMs": 0, "maxEntries": 20 },
   "opensky":   { "enabled": $OPENSKY_ENABLED, "airports": $OPENSKY_AIRPORTS_JSON, "lookbackDays": 7 }
 }
 EOF
