@@ -24,7 +24,8 @@
 const HOUR_MS = 3600_000;
 const DEFAULT_PLANNED_WINDOW_MS = HOUR_MS;
 const DEFAULT_IMMINENT_WINDOW_MS = 30_000;
-const DEFAULT_STALE_GRACE_MS = 10_000;
+const DEFAULT_STALE_GRACE_MS = 60_000;        // 1 min — lets the user see drops
+const DEFAULT_MAX_ENTRIES = 20;               // cap on the UI panel; FIFO on stale
 
 /**
  * @typedef {Object} LifecycleEntry
@@ -57,6 +58,12 @@ function keyForExpected(e) {
  * Merge live tracker candidates, predictor expected events, and the previous
  * tick's lifecycle map into the next lifecycle map.
  *
+ * The returned map is capped at `maxEntries`: when the total would exceed
+ * the cap, the *oldest stale* entries (by `lastUpdateMs`) are dropped first.
+ * Active statuses (planned / radio / candidate / imminent) are always kept,
+ * even past the cap — the cap is purely a UI / memory guard for slow
+ * decommissioning of dropped contacts.
+ *
  * @param {{
  *   prev: Map<string, LifecycleEntry>,
  *   nowMs: number,
@@ -66,6 +73,7 @@ function keyForExpected(e) {
  *   imminentWindowMs?: number,
  *   plannedWindowMs?: number,
  *   staleGraceMs?: number,
+ *   maxEntries?: number,
  * }} args
  * @returns {Map<string, LifecycleEntry>}
  */
@@ -78,6 +86,7 @@ export function updateLifecycle({
   imminentWindowMs = DEFAULT_IMMINENT_WINDOW_MS,
   plannedWindowMs = DEFAULT_PLANNED_WINDOW_MS,
   staleGraceMs = DEFAULT_STALE_GRACE_MS,
+  maxEntries = DEFAULT_MAX_ENTRIES,
 }) {
   /** @type {Map<string, LifecycleEntry>} */
   const next = new Map();
@@ -176,6 +185,33 @@ export function updateLifecycle({
       status: 'stale',
       lastUpdateMs: prevEntry.lastUpdateMs,
     });
+  }
+
+  // ---------- 4. Cap the map: drop oldest stale entries first ----------
+  if (next.size > maxEntries) {
+    const stale = [];
+    const active = [];
+    for (const [k, e] of next) {
+      (e.status === 'stale' ? stale : active).push([k, e]);
+    }
+    // Oldest stale first → drop those first.
+    stale.sort((a, b) => a[1].lastUpdateMs - b[1].lastUpdateMs);
+    const overBy = next.size - maxEntries;
+    for (let i = 0; i < Math.min(overBy, stale.length); i++) {
+      next.delete(stale[i][0]);
+    }
+    // If still over (i.e. > maxEntries active rows on a very busy minute),
+    // drop the oldest planned entries next. Active radio/candidate/imminent
+    // are always kept — they're the whole point of the tool.
+    if (next.size > maxEntries) {
+      const planned = active
+        .filter(([, e]) => e.status === 'planned')
+        .sort((a, b) => a[1].closestApproachAtMs - b[1].closestApproachAtMs);
+      const stillOver = next.size - maxEntries;
+      for (let i = planned.length - 1; i >= 0 && next.size > maxEntries; i--) {
+        next.delete(planned[i][0]);
+      }
+    }
   }
 
   return next;

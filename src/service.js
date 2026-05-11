@@ -36,7 +36,8 @@ export const DEFAULT_CONFIG = {
   lifecycle: {
     plannedWindowMs: 3600_000,    // surface watchlist entries within ±1 h
     imminentWindowMs: 30_000,     // ±30 s around closest-approach → imminent
-    staleGraceMs: 10_000,         // keep dropped contacts visible for 10 s
+    staleGraceMs: 60_000,         // keep dropped contacts visible for 1 min
+    maxEntries: 20,               // tracking-list cap; oldest stale FIFO-out
   },
   server: { port: 8081, host: '0.0.0.0', publicUrl: '' },
   store: { path: './data/history.db' },
@@ -253,6 +254,7 @@ export async function runService({
       imminentWindowMs: config.lifecycle.imminentWindowMs,
       plannedWindowMs: config.lifecycle.plannedWindowMs,
       staleGraceMs: config.lifecycle.staleGraceMs,
+      maxEntries: config.lifecycle.maxEntries,
     });
     state.lifecycle = lifecycleArray(lifecycleMap, nowMs);
 

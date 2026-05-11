@@ -504,7 +504,7 @@ into Pushover messages:
 | **radio** 📡 | tracker projects `[thresholdDeg, looseThresholdDeg]` separation (default 0.3°–5°) within `horizonS` (default 5 min) | 0 | up to 5 min |
 | **candidate** ✈️ | tracker projects `≤ thresholdDeg` separation (default 0.3°) within `horizonS`, more than `imminentWindowMs` away | 0 | 30 s – 5 min |
 | **imminent** 🎯 | closest approach within ±`imminentWindowMs` (default ±30 s) | 1 | ≤ 30 s |
-| **stale** ❌ | was tracked last tick, gone from the tracker output now — held visible for `lifecycle.staleGraceMs` (default 10 s) before drop | none (UI only) | — |
+| **stale** ❌ | was tracked last tick, gone from the tracker output now — held visible for `lifecycle.staleGraceMs` (default 60 s) or until pushed off the panel by newer entries | none (UI only) | — |
 
 Stage rules:
 
@@ -520,6 +520,12 @@ Stage rules:
 - **What goes into SQLite.** Only `radio`, `candidate` and `imminent` are
   persisted to `transit_history`. `planned` is regenerated from the
   watchlist each tick; `stale` is a UI-only display state.
+- **Panel cap.** The tracking list is capped at `lifecycle.maxEntries`
+  (default 20). When the cap is hit, the **oldest stale entries are
+  dropped first** (FIFO by `lastUpdateMs`) — active rows are always kept.
+  Combined with `staleGraceMs=60 s` this gives a "feed" effect: dropped
+  contacts linger for ~1 min so you see them disappear, then naturally
+  fall off as newer activity displaces them.
 
 Each notification carries: callsign, IATA flight number (if adsbdb resolves
 it), airline, origin/destination, altitude (ft), ground speed (kt), minimum
