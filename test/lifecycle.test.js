@@ -156,6 +156,59 @@ describe('updateLifecycle', () => {
   });
 });
 
+describe('maxEntries cap', () => {
+  it('drops the oldest stale entries first when the cap is hit', () => {
+    // Build a previous tick with 5 stale entries (different lastUpdateMs)
+    // plus 3 active candidates this tick. With maxEntries=5, we expect all
+    // 3 active to survive and only the 2 newest stale to remain.
+    const prev = new Map();
+    for (let i = 0; i < 5; i++) {
+      prev.set(`stale${i}|Sun`, {
+        key: `stale${i}|Sun`,
+        status: 'stale',          // pre-flagged stale to simplify the test
+        body: 'Sun',
+        icao: `stale${i}`,
+        flight: null,
+        callsign: null,
+        closestApproachAtMs: NOW - 5000,
+        closestApproachSepDeg: 0.2,
+        firstSeenMs: NOW - 30_000,
+        lastUpdateMs: NOW - (10 - i) * 1000,    // 10s, 9s, ..., 6s ago
+        highestStatusReached: 'candidate',
+        route: null,
+        candidate: null,
+        watchlistEntry: null,
+      });
+    }
+    const next = updateLifecycle({
+      prev,
+      nowMs: NOW,
+      trackerCandidates: [
+        trackerCand({ icao: 'active1', closestAtSec: 100 }),
+        trackerCand({ icao: 'active2', closestAtSec: 120 }),
+        trackerCand({ icao: 'active3', closestAtSec: 140 }),
+      ],
+      expected: [],
+      liveAircraft: [],
+      maxEntries: 5,
+      staleGraceMs: 60_000,
+    });
+    expect(next.size).toBe(5);
+    const icaos = Array.from(next.values()).map(e => e.icao).sort();
+    // 3 actives must be present
+    expect(icaos).toContain('active1');
+    expect(icaos).toContain('active2');
+    expect(icaos).toContain('active3');
+    // The 2 newest stale (stale3 and stale4 — most recent lastUpdateMs)
+    // survive; the 3 oldest (stale0–stale2) are dropped.
+    expect(icaos).toContain('stale3');
+    expect(icaos).toContain('stale4');
+    expect(icaos).not.toContain('stale0');
+    expect(icaos).not.toContain('stale1');
+    expect(icaos).not.toContain('stale2');
+  });
+});
+
 describe('lifecycleArray', () => {
   it('sorts by status urgency then ETA', () => {
     const map = updateLifecycle({
