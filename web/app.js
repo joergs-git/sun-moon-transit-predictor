@@ -11,12 +11,13 @@ function fmtCountdown(ms) {
   return `${m}m ${s % 60}s`;
 }
 
-function fmtAlt(m) { return m == null ? '—' : `${Math.round(m * 3.28084 / 100) * 100}ft`; }
-function fmtSpeed(ms) { return ms == null ? '—' : `${Math.round(ms / 0.514444)}kt`; }
-function fmtSep(d) { return d == null ? '—' : `${d.toFixed(2)}°`; }
-function fmtDuration(ms) { return ms == null ? '—' : `${(ms / 1000).toFixed(1)}s`; }
-function fmtRoute(o, d) { return o && d ? `${o}→${d}` : (o || d || '—'); }
-function fmtTime(ms) { return new Date(ms).toLocaleTimeString(); }
+function fmtAlt(m)        { return m  == null ? '—' : `${Math.round(m / 100) * 100} m`; }
+function fmtSpeed(ms)     { return ms == null ? '—' : `${Math.round(ms * 3.6)} km/h`; }
+function fmtDistance(m)   { return m  == null ? '—' : `${(m / 1000).toFixed(1)} km`; }
+function fmtSep(d)        { return d  == null ? '—' : `${d.toFixed(2)}°`; }
+function fmtDuration(ms)  { return ms == null ? '—' : `${(ms / 1000).toFixed(1)}s`; }
+function fmtRoute(o, d)   { return o && d ? `${o}→${d}` : (o || d || '—'); }
+function fmtTime(ms)      { return new Date(ms).toLocaleTimeString(); }
 
 function renderSky(state) {
   const tbody = $('#sky tbody');
@@ -59,6 +60,7 @@ function renderTracking(state) {
               : `−${fmtCountdownLong(-e.etaMs)}`;
     const ac = e.candidate?.aircraft;
     const route = e.route ?? e.candidate?.route;
+    const rangeM = e.candidate?.aircraftAtClosest?.rangeM ?? null;
     tr.innerHTML = `
       <td><span class="status status-${e.status}" title="${meta.label}">${meta.icon} ${meta.label}</span></td>
       <td>${eta}</td>
@@ -69,6 +71,7 @@ function renderTracking(state) {
       <td>${fmtRoute(route?.origin?.iata ?? route?.origin?.icao, route?.destination?.iata ?? route?.destination?.icao)}</td>
       <td>${fmtAlt(ac?.altMmsl)}</td>
       <td>${fmtSpeed(ac?.groundSpeedMs)}</td>
+      <td>${fmtDistance(rangeM)}</td>
       <td>${e.closestApproachSepDeg !== null ? fmtSep(e.closestApproachSepDeg) : '—'}</td>
     `;
     tbody.appendChild(tr);
@@ -92,7 +95,7 @@ function renderHistory(events) {
   const tbody = $('#history tbody');
   tbody.innerHTML = '';
   if (!events || events.length === 0) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="10">No history yet.</td></tr>';
+    tbody.innerHTML = '<tr class="empty"><td colspan="11">No history yet.</td></tr>';
     return;
   }
   for (const e of events) {
@@ -107,6 +110,7 @@ function renderHistory(events) {
       <td>${fmtRoute(e.origin, e.destination)}</td>
       <td>${fmtAlt(e.altitude_m)}</td>
       <td>${fmtSpeed(e.ground_speed_ms)}</td>
+      <td>${fmtDistance(e.range_m)}</td>
       <td>${fmtSep(e.closest_sep_deg)}</td>
     `;
     tbody.appendChild(tr);

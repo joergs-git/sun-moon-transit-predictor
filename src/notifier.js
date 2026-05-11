@@ -23,13 +23,20 @@ const DEFAULT_FORGET_AFTER_MS = 5 * 60_000;
 const STAGE_ORDER = { radio: 0, candidate: 1, imminent: 2 };
 
 function fmtAlt(altMmsl) {
-  const ft = Math.round(altMmsl * 3.28084 / 100) * 100;
-  return `${ft}ft`;
+  // Metric: round to nearest 100 m, surface as e.g. "10700 m".
+  return `${Math.round(altMmsl / 100) * 100} m`;
 }
 
 function fmtSpeedMs(ms) {
+  // Metric: m/s → km/h, rounded to whole km/h (e.g. "828 km/h").
   if (typeof ms !== 'number') return '?';
-  return `${Math.round(ms / 0.514444)}kt`;
+  return `${Math.round(ms * 3.6)} km/h`;
+}
+
+function fmtRangeM(m) {
+  // Metric: line-of-sight distance in km, 1 dp (e.g. "47.2 km").
+  if (typeof m !== 'number') return null;
+  return `${(m / 1000).toFixed(1)} km`;
 }
 
 function fmtCountdown(ms) {
@@ -64,9 +71,12 @@ function buildPayload(stage, candidate, route, nowMs, baseUrl) {
       : `${bodySym} approach`;
   const title = `${titlePrefix} T-${eta}: ${flight}`;
 
+  const rangeM = candidate.aircraftAtClosest?.rangeM;
+  const rangeStr = fmtRangeM(rangeM);
   const lines = [
     `${flight}${routeStr}`,
-    `${ac.icao.toUpperCase()} · ${fmtAlt(ac.altMmsl)} · ${fmtSpeedMs(ac.groundSpeedMs)}`,
+    `${ac.icao.toUpperCase()} · ${fmtAlt(ac.altMmsl)} · ${fmtSpeedMs(ac.groundSpeedMs)}`
+      + (rangeStr ? ` · ${rangeStr}` : ''),
     `min sep ${sep}° · duration ${dur}s · in ${eta}`,
   ];
   if (route?.airline?.name) lines.unshift(route.airline.name);

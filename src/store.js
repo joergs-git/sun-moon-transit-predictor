@@ -11,6 +11,15 @@ import { dirname } from 'node:path';
 // resolver since the module is a Node built-in introduced in v22.
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
 
+/** Idempotent `ALTER TABLE ... ADD COLUMN` — uses PRAGMA table_info so we
+ *  don't have to swallow exceptions to detect a duplicate add. */
+function ensureColumn(db, table, column, type) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some(c => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS transit_history (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,6 +38,7 @@ CREATE TABLE IF NOT EXISTS transit_history (
   track_deg       REAL,
   closest_sep_deg REAL,
   duration_ms     INTEGER,
+  range_m         REAL,
   payload_json    TEXT
 );
 
@@ -67,13 +77,17 @@ export class HistoryStore {
       UPDATE transit_history SET stage = 'candidate' WHERE stage = 'early';
       UPDATE transit_history SET stage = 'imminent'  WHERE stage = 'precise';
     `);
+    // v0.5.0: add range_m (line-of-sight observer→aircraft, metres) so the
+    // History table can show distance. Idempotent — only adds the column
+    // when the running DB doesn't already have it.
+    ensureColumn(this.db, 'transit_history', 'range_m', 'REAL');
     this.insertStmt = this.db.prepare(`
       INSERT INTO transit_history (
         recorded_at_ms, closest_at_ms, stage, body, icao, callsign,
         flight, airline, origin, destination,
         altitude_m, ground_speed_ms, track_deg, closest_sep_deg, duration_ms,
-        payload_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        range_m, payload_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     // Insert-or-ignore so refresh runs are idempotent — same (source, flight,
@@ -150,6 +164,7 @@ export class HistoryStore {
       ac.trackDeg,
       candidate.closestApproachSepDeg,
       candidate.durationMs,
+      candidate.aircraftAtClosest?.rangeM ?? null,
       JSON.stringify({ candidate, route }),
     );
   }
