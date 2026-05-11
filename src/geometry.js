@@ -29,9 +29,14 @@ export const OBSERVABILITY_MIN_ELEVATION_DEG = 20;
  * @property {string} [name]
  * @property {number} latitudeDeg
  * @property {number} longitudeDeg
- * @property {number} elevationM           - MSL, treated as WGS84 ellipsoidal h.
- * @property {number} [temperatureC]       - reserved for future custom refraction.
- * @property {number} [pressureMbar]       - reserved for future custom refraction.
+ * @property {number} elevationM           - WGS84 ellipsoidal height of the observer (m).
+ *                                           For typical hobbyist precision a local MSL
+ *                                           value is fine; the body comparison is robust
+ *                                           to a few tens of metres of observer height.
+ * @property {number} [geoidUndulationM]   - EGM2008 N at the observer location (m), used
+ *                                           to convert ADS-B `alt_baro` (≈MSL) into HAE
+ *                                           before geometric comparison. Default 0.
+ *                                           Rheine ≈ +46 m.
  */
 
 /**
@@ -84,25 +89,63 @@ function enuToAzEl(e, n, u) {
 }
 
 /**
- * Az/El of an aircraft as seen from the observer.
+ * ECEF position of the observer. Cached at the call site to avoid recomputing
+ * once per aircraft × per time step (the observer is fixed).
  *
  * @param {Observer} observer
+ * @returns {{ x: number, y: number, z: number }}
+ */
+export function observerEcef(observer) {
+  return geodeticToEcef(observer.latitudeDeg, observer.longitudeDeg, observer.elevationM);
+}
+
+/**
+ * Az/El of a target given a precomputed observer ECEF.
+ *
+ * Note: `altMHae` is height above the WGS84 ellipsoid. ADS-B `alt_geom` is
+ * already HAE, so it can be passed directly. ADS-B `alt_baro` is pressure
+ * altitude (~MSL); convert with `altMHae = altMsl + geoidUndulationM` first.
+ *
+ * @param {{ x: number, y: number, z: number }} obsEcef
+ * @param {number} obsLatDeg
+ * @param {number} obsLonDeg
  * @param {number} latDeg
  * @param {number} lonDeg
- * @param {number} altMmsl
+ * @param {number} altMHae
  * @returns {AzEl}
  */
-export function aircraftAzEl(observer, latDeg, lonDeg, altMmsl) {
-  const obsEcef = geodeticToEcef(observer.latitudeDeg, observer.longitudeDeg, observer.elevationM);
-  const tgtEcef = geodeticToEcef(latDeg, lonDeg, altMmsl);
+export function aircraftAzElFromObsEcef(obsEcef, obsLatDeg, obsLonDeg, latDeg, lonDeg, altMHae) {
+  const tgtEcef = geodeticToEcef(latDeg, lonDeg, altMHae);
   const enu = ecefDeltaToEnu(
     tgtEcef.x - obsEcef.x,
     tgtEcef.y - obsEcef.y,
     tgtEcef.z - obsEcef.z,
-    observer.latitudeDeg,
-    observer.longitudeDeg,
+    obsLatDeg,
+    obsLonDeg,
   );
   return enuToAzEl(enu.e, enu.n, enu.u);
+}
+
+/**
+ * Az/El of an aircraft as seen from the observer. Convenience wrapper that
+ * recomputes observer ECEF on every call — for tight loops, prefer caching
+ * `observerEcef(observer)` and using `aircraftAzElFromObsEcef`.
+ *
+ * @param {Observer} observer
+ * @param {number} latDeg
+ * @param {number} lonDeg
+ * @param {number} altMHae - height above WGS84 ellipsoid, metres.
+ * @returns {AzEl}
+ */
+export function aircraftAzEl(observer, latDeg, lonDeg, altMHae) {
+  return aircraftAzElFromObsEcef(
+    observerEcef(observer),
+    observer.latitudeDeg,
+    observer.longitudeDeg,
+    latDeg,
+    lonDeg,
+    altMHae,
+  );
 }
 
 function bodyEnumOf(body) {

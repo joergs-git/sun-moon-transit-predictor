@@ -54,13 +54,19 @@ function buildPayload(stage, candidate, route, nowMs, baseUrl) {
   ];
   if (route?.airline?.name) lines.unshift(route.airline.name);
 
+  // Pushover renders `timestamp` as the moment the event happened; for an
+  // early alert the closest approach is in the *future*, so omit it. On
+  // 'precise' alerts the closest approach is within ±30 s of now, which is
+  // close enough that stamping it gives the user a useful "T-0" anchor.
   /** @type {import('./pushover.js').PushoverMessage} */
   const msg = {
     title,
     message: lines.join('\n'),
     priority: stage === 'precise' ? 1 : 0,
-    timestamp: Math.round(candidate.closestApproachAtMs / 1000),
   };
+  if (stage === 'precise') {
+    msg.timestamp = Math.round(candidate.closestApproachAtMs / 1000);
+  }
   if (baseUrl) {
     msg.url = baseUrl;
     msg.urlTitle = 'Sun-Moon Transit Predictor';
@@ -124,11 +130,19 @@ export class Notifier {
           : null;
       if (!stage) continue;
 
-      let route = null;
-      try {
-        if (cand.callsign) route = await this.routeLookup(cand.callsign);
-      } catch {
-        route = null;
+      // Prefer a pre-enriched route on the candidate (set by the service so
+      // /api/state and the notifier share the same lookup). Fall back to our
+      // own lookup only if the candidate carries no `route` key — keeps the
+      // unit tests, which build raw candidates, working unchanged.
+      let route;
+      if ('route' in cand) {
+        route = cand.route;
+      } else {
+        try {
+          route = cand.callsign ? await this.routeLookup(cand.callsign) : null;
+        } catch {
+          route = null;
+        }
       }
       const payload = buildPayload(stage, cand, route, nowMs, this.baseUrl);
       let sent = false;

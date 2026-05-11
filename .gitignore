@@ -5,6 +5,11 @@ dist/
 *.log
 .DS_Store
 
-# Runtime state — created by the service on first start
+# Runtime state and per-site config — created by the installer / service.
+# Both observer.json and service.json are personal: they hold coordinates and
+# Pushover credentials. They are ignored so `git pull` (and the auto-update
+# timer) cannot overwrite or delete them. Templates: config/observer.example.json
+# and config/service.example.json.
 data/
+config/observer.json
 config/service.json

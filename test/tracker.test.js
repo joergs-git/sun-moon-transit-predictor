@@ -123,4 +123,98 @@ describe('findTransits', () => {
     const candidates = findTransits(RHEINE, [ac], t0);
     expect(candidates).toEqual([]);
   });
+
+  it('compensates for seen_pos lag — predicted position uses receivedAtMs, not nowMs', () => {
+    // Place an aircraft whose *current* position (10 s after the last fix) is
+    // on the line of sight to the Sun. Its `lat,lon` (the fix) is therefore
+    // 10 s behind. A correct tracker projects from receivedAtMs and finds
+    // the transit; the buggy one (projecting from nowMs) misses it because
+    // it under-projects by 10 s × ground speed.
+    const t0 = new Date('2026-06-21T11:30:00Z').getTime();
+    const lagSec = 10;
+    const sun = sunAzEl(RHEINE, new Date(t0));
+    const altMmsl = 11000;
+    const currentPos = aircraftAtBodyLineOfSight(RHEINE, sun, altMmsl);
+    // Walk the position back by `lagSec` seconds along the eastbound track.
+    const groundSpeed = 230;                   // m/s
+    const dWest = groundSpeed * lagSec;        // metres travelled in the lag
+    const dLon = -(dWest / (EARTH_R * Math.cos(currentPos.lat * DEG))) * RAD;
+    const ac = makeAircraft({
+      lat: currentPos.lat,
+      lon: currentPos.lon + dLon,              // fix is dWest west of "now"
+      altMmsl,
+      groundSpeedMs: groundSpeed,
+      trackDeg: 90,                             // due east
+      receivedAtMs: t0 - lagSec * 1000,
+      seenPosS: lagSec,
+    });
+    const cands = findTransits(RHEINE, [ac], t0);
+    expect(cands.length).toBe(1);
+    expect(cands[0].closestApproachSepDeg).toBeLessThan(0.15);
+    expect(cands[0].closestApproachAtMs).toBeGreaterThanOrEqual(t0);
+    expect(cands[0].closestApproachAtMs).toBeLessThan(t0 + 5000);
+  });
+
+  it('returns sub-step closest approach time via quadratic vertex refinement', () => {
+    // With stepS = 1 s, an aircraft whose true closest approach falls at
+    // ~0.4 s past sample t=2 should report a refined time that is NOT exactly
+    // on a sample boundary. Validates parabolicVertex hookup.
+    const t0 = new Date('2026-06-21T11:30:00Z').getTime();
+    const sun = sunAzEl(RHEINE, new Date(t0 + 2400));   // sun position 2.4s ahead
+    const altMmsl = 11000;
+    const currentPos = aircraftAtBodyLineOfSight(RHEINE, sun, altMmsl);
+    // Now wind position back 2.4 s along an eastbound track so the aircraft
+    // arrives at currentPos at t0 + 2400 ms.
+    const groundSpeed = 230;
+    const dWest = groundSpeed * 2.4;
+    const dLon = -(dWest / (EARTH_R * Math.cos(currentPos.lat * DEG))) * RAD;
+    const ac = makeAircraft({
+      lat: currentPos.lat,
+      lon: currentPos.lon + dLon,
+      altMmsl,
+      groundSpeedMs: groundSpeed,
+      trackDeg: 90,
+      receivedAtMs: t0,
+    });
+    // Wide threshold ensures both neighbouring samples are flagged so the
+    // candidate is constructed; the test then asserts that the *refined*
+    // closest-approach time is between samples, not on one.
+    const cands = findTransits(RHEINE, [ac], t0, { stepS: 1, thresholdDeg: 3.0 });
+    expect(cands.length).toBe(1);
+    const closestSec = (cands[0].closestApproachAtMs - t0) / 1000;
+    expect(closestSec).toBeGreaterThan(2.0);
+    expect(closestSec).toBeLessThan(3.0);
+    // Refinement must NOT land on a discrete sample boundary (would mean
+    // the parabola fit was skipped or the math is broken).
+    expect(Math.abs(closestSec - Math.round(closestSec))).toBeGreaterThan(0.05);
+  });
+
+  it('applies geoidUndulationM for barometric altitudes only', () => {
+    // For a barometric source at "10000 m MSL", a 46 m geoid offset shifts
+    // the apparent HAE up by 46 m, which moves the aircraft Az/El upward by
+    // a fraction of a degree — enough to shift closest separation. For a
+    // geometric source the offset must NOT be applied (already HAE).
+    const t0 = new Date('2026-06-21T11:30:00Z').getTime();
+    const sun = sunAzEl(RHEINE, new Date(t0));
+    const pos = aircraftAtBodyLineOfSight(RHEINE, sun, 10000);
+    const baroAc = makeAircraft({
+      ...pos, altMmsl: 10000, altSource: 'barometric',
+      groundSpeedMs: 0, trackDeg: 0, receivedAtMs: t0,
+    });
+    const geomAc = makeAircraft({
+      ...pos, altMmsl: 10000, altSource: 'geometric',
+      groundSpeedMs: 0, trackDeg: 0, receivedAtMs: t0,
+      icao: 'test02',
+    });
+    const candsNoOffset = findTransits(RHEINE, [baroAc, geomAc], t0, { geoidUndulationM: 0 });
+    const candsWithOffset = findTransits(RHEINE, [baroAc, geomAc], t0, { geoidUndulationM: 46 });
+    // Geometric aircraft separation must be unchanged by the offset.
+    const geomSep0 = candsNoOffset.find(c => c.icao === 'test02').closestApproachSepDeg;
+    const geomSep46 = candsWithOffset.find(c => c.icao === 'test02').closestApproachSepDeg;
+    expect(geomSep46).toBeCloseTo(geomSep0, 6);
+    // Barometric aircraft separation must change with the offset.
+    const baroSep0 = candsNoOffset.find(c => c.icao === 'test01').closestApproachSepDeg;
+    const baroSep46 = candsWithOffset.find(c => c.icao === 'test01').closestApproachSepDeg;
+    expect(Math.abs(baroSep46 - baroSep0)).toBeGreaterThan(0.0);
+  });
 });

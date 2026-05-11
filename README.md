@@ -21,6 +21,48 @@ T-minus alert once live ADS-B has nailed down the transit time.
                               server    → /api/* + web UI on :8081
 ```
 
+## How the prediction works
+
+Every poll cycle (default every 2 s) the service answers one question:
+
+> *Which aircraft, currently visible to the local ADS-B receiver, will line
+> up between my observer location and the Sun or Moon disc within the next
+> 60 seconds — while that body sits more than 20° above the horizon?*
+
+1. **Sky position.** Topocentric Az/El of the Sun and Moon are computed for
+   the configured observer (WGS84, refraction-corrected). Bodies below the
+   20° elevation floor are flagged `observable: false` and skipped — the
+   floor keeps obstructions, haze, and refraction residuals out of the
+   budget.
+2. **Aircraft position.** Each aircraft from `dump1090-fa`'s `aircraft.json`
+   is converted WGS84 → ECEF → ENU into Az/El relative to the same observer,
+   using `alt_geom` (fallback `alt_baro`) as MSL. ADS-B `seen_pos` latency is
+   back-stamped onto the actual fix time, so the projection starts from when
+   the position was sampled, not from "now".
+3. **Forward projection.** Position and velocity are linearly extrapolated
+   on the local tangent plane in 1 s steps across the next 60 s.
+4. **Separation test.** Great-circle angular separation between the
+   predicted aircraft Az/El and the body's Az/El is computed at each step.
+   When the *minimum* separation across the trajectory drops below
+   `thresholdDeg` (default 0.3°; the Sun's disc is ~0.27° wide), the
+   aircraft becomes a **transit candidate** with closest-approach time,
+   minimum separation, and transit duration.
+5. **Two-stage notification.** An *early* Pushover fires the first time a
+   candidate is seen. A *precise* Pushover fires when the predicted closest
+   approach lands within ±30 s of `now` and live ADS-B has firmed up the
+   timing. Each pair is deduplicated per `(icao, body)`.
+
+The browser UI and the SQLite history give you the same view after the
+fact: every dispatched notification is logged with callsign, IATA flight,
+origin / destination, minimum separation, ETA, altitude, and ground speed.
+
+**Headless on the Pi.** The detection loop runs inside `stp.service` on
+the Pi 24/7 — the polling interval, geometry, transit search, Pushover
+dispatch and SQLite write are all server-side. The browser UI is **just a
+viewer** for state the service has already computed; closing the tab does
+not pause anything and never causes a missed transit. The Pi can run
+without a monitor, keyboard, or any client connected.
+
 ## Status
 
 | Milestone | Scope | Status |
@@ -32,6 +74,8 @@ T-minus alert once live ADS-B has nailed down the transit time.
 | M5 | adsbdb.com route lookup (origin / destination / IATA flight number) | done |
 | M6 | Web UI on the Pi (live list + persistent history) | done |
 | M7 | Bash install script for Pi 5 (Raspberry Pi OS, ARM64) | done |
+| M8 | Accuracy pass: latency back-stamp, sub-step vertex refinement, geoid offset, refraction-frame alignment | done |
+| M9 | Zero-touch operations: gitignored personal config, `--non-interactive` install, nightly auto-update timer | done |
 
 ## Quick install on the Pi 5
 
@@ -50,17 +94,194 @@ The script:
 1. installs Node.js 22 from NodeSource if it isn't already present,
 2. runs `npm install --omit=dev`,
 3. prompts for observer coordinates and Pushover credentials and writes
-   `config/observer.json` + `config/service.json`,
+   `config/observer.json` + `config/service.json` (both **gitignored** so
+   `git pull` and the auto-updater can never overwrite them),
 4. installs and starts a `stp.service` systemd unit (with light
-   sandboxing — `ProtectSystem=strict`, `ReadWritePaths=…/data`).
+   sandboxing — `ProtectSystem=strict`, `ReadWritePaths=…/data`),
+5. installs `stp-update.timer` for nightly auto-update (opt out with
+   `--no-auto-update`).
 
 After it finishes, browse to `http://<pi-ip>:8081/`. Logs:
 `journalctl -u stp.service -f`.
 
-Re-running the script keeps existing config files. Use
-`bash scripts/install-pi5.sh --overwrite` to force re-prompting.
+Re-running the script keeps existing config files. Useful flags:
+
+| Flag | Effect |
+|---|---|
+| `--overwrite`        | Re-prompt for everything; rewrite both config files. |
+| `--non-interactive`  | Zero prompts; reads defaults from env vars (see below). Pairs well with cloud-init / Ansible / first-boot scripts. |
+| `--no-auto-update`   | Skip the nightly `stp-update.timer` install. |
+
+### Zero-touch first-boot install
+
+For a true zero-interaction setup, drop credentials in env vars and let the
+installer write everything in one shot:
+
+```bash
+STP_LAT=52.2833 \
+STP_LON=7.4406 \
+STP_ELEV=50 \
+STP_GEOID_M=46 \
+STP_PUSHOVER_TOKEN=azGD…  \
+STP_PUSHOVER_USER=uQiR… \
+bash scripts/install-pi5.sh --non-interactive
+```
+
+The full env-var list is in the script's header (`bash scripts/install-pi5.sh --help`).
+
+## Service control (systemd)
+
+The installer registers `stp.service` as a systemd unit and starts it. From
+then on it auto-restarts on failure and comes back after a reboot. The
+day-to-day commands:
+
+```bash
+# status / start / stop / restart
+sudo systemctl status   stp.service
+sudo systemctl start    stp.service
+sudo systemctl stop     stp.service
+sudo systemctl restart  stp.service
+
+# enable / disable autostart on boot
+sudo systemctl enable   stp.service
+sudo systemctl disable  stp.service
+
+# logs (live tail and last hour)
+journalctl -u stp.service -f
+journalctl -u stp.service --since "1 hour ago" --no-pager
+```
+
+After editing `config/observer.json` or `config/service.json`, restart the
+service so the changes are picked up:
+
+```bash
+sudo systemctl restart stp.service
+```
+
+To remove the unit (without uninstalling Node or the repo):
+
+```bash
+sudo systemctl disable --now stp.service
+sudo rm /etc/systemd/system/stp.service
+sudo systemctl daemon-reload
+```
+
+## Updating the service
+
+### Auto-update is on by default
+
+The installer drops `scripts/auto-update.sh` plus a systemd timer
+(`stp-update.timer`) that fires nightly at **03:30 ± 15 min**. Each run:
+
+1. **Backs up** `config/observer.json` and `config/service.json` to a temp
+   dir (defensive — even if upstream renames or .gitignores them, your
+   per-site setup survives).
+2. `git pull --ff-only` (no merges, no force).
+3. **Restores** the configs if anything changed underneath them.
+4. Runs `npm install --omit=dev` only if `package.json` / lockfile moved.
+5. Restarts `stp.service` only if backend code (`src/`, `bin/`,
+   `package*.json`, `systemd/stp.service`, `config/service.example.json`)
+   changed. Frontend-only commits don't restart — the browser picks them
+   up on the next refresh.
+
+Inspect / probe / disable:
+
+```bash
+# what's scheduled and when next?
+systemctl list-timers | grep stp-update
+
+# run an update right now (same code path the timer uses)
+sudo systemctl start stp-update.service
+journalctl -u stp-update.service -n 50 --no-pager
+
+# turn the auto-updater off without touching the main service
+sudo systemctl disable --now stp-update.timer
+```
+
+### Manual update
+
+The same script is safe to run on demand:
+
+```bash
+cd ~/sun-moon-transit-predictor
+bash scripts/auto-update.sh
+```
+
+Or the long form, which is what `auto-update.sh` automates:
+
+```bash
+git pull --ff-only
+npm install --omit=dev          # only if package.json changed
+sudo systemctl restart stp.service
+journalctl -u stp.service -n 30 --no-pager
+```
+
+### Frontend-only updates
+
+Files in `web/` are served live from disk by the Node process — no build
+step, no bundling. After a pull, a hard browser refresh (`Ctrl+Shift+R`) is
+enough; `systemctl restart` is not needed for HTML / JS / CSS-only changes.
+The auto-updater detects this and skips the restart.
+
+### What is preserved across updates
+
+`config/observer.json` and `config/service.json` are **gitignored**. They
+are written once by the installer and never overwritten by `git pull`,
+`auto-update.sh`, or a re-run of the installer (use `--overwrite` to force).
+The schema reference lives at `config/observer.example.json` and
+`config/service.example.json` — diff your real files against those when a
+release notes a new field.
+
+### Push-driven updates (GitHub webhook)
+
+Webhooks require an inbound HTTPS endpoint, which a typical home Pi behind
+NAT does not expose. Workable patterns if you need near-real-time updates:
+
+- a public reverse tunnel (Cloudflare Tunnel, Tailscale Funnel, ngrok)
+  pointing at a tiny webhook receiver on the Pi that runs `auto-update.sh`,
+  or
+- a GitHub Actions job that opens an SSH tunnel via Tailscale and runs
+  `bash scripts/auto-update.sh` on the Pi after each merge to `main`.
+
+For a hobby setup the bundled nightly timer is almost always enough.
+
+## Where files live
+
+| Path | Purpose | Tracked in git? |
+|---|---|---|
+| `<repo>/config/observer.json`         | Observer location (lat / lon / elevation, geoid undulation). **Personal.** | no — gitignored |
+| `<repo>/config/observer.example.json` | Schema reference / template for `observer.json`.            | yes |
+| `<repo>/config/service.json`          | Runtime config (ADS-B URL, intervals, Pushover keys, server, DB, routes). **Personal.** | no — gitignored |
+| `<repo>/config/service.example.json`  | Schema reference / template for `service.json`.             | yes |
+| `<repo>/data/history.db`              | SQLite history of all dispatched notifications (created on first run). | no — gitignored |
+| `<repo>/web/`                         | Static frontend served at `http://<host>:<port>/`.          | yes |
+| `<repo>/bin/stp.js`                   | Service entry point.                                        | yes |
+| `<repo>/scripts/install-pi5.sh`       | Idempotent Pi installer (interactive or `--non-interactive`). | yes |
+| `<repo>/scripts/auto-update.sh`       | Pull + install-deps + restart-on-change. Backs up local config first. | yes |
+| `<repo>/scripts/test-push.js`         | One-shot Pushover sanity check.                             | yes |
+| `<repo>/systemd/stp.service`          | Template for the main systemd unit.                         | yes |
+| `<repo>/systemd/stp-update.{service,timer}` | Templates for the nightly auto-updater.               | yes |
+| `/etc/systemd/system/stp.service`     | Generated unit (paths and user templated by the installer). | n/a (system) |
+| `/etc/systemd/system/stp-update.{service,timer}` | Generated auto-update unit + timer.              | n/a (system) |
+| `/etc/sudoers.d/stp-update`           | Narrow rule: `<user> NOPASSWD: /bin/systemctl restart stp.service`. | n/a (system) |
+
+The main service runs sandboxed: `ProtectSystem=strict`,
+`ProtectHome=read-only`, and the only writable path is `<repo>/data/`. The
+SQLite history file therefore *must* live inside `data/` (the default) —
+pointing `store.path` outside that directory will fail at write time when
+running under systemd.
+
+**Config preservation contract.** `observer.json` and `service.json` are
+gitignored from the first commit that contains this README. Neither
+`git pull` nor `auto-update.sh` will ever touch them. The installer only
+rewrites them when run with `--overwrite`. If you ever need to roll back,
+copy from the matching `*.example.json` and re-edit.
 
 ## Manual run (development / non-Pi)
+
+Useful for hacking on the code, testing config changes, or running on a
+non-Pi machine that already has `dump1090-fa` (or an equivalent feed)
+reachable on the network.
 
 ```bash
 npm install
@@ -68,8 +289,28 @@ cp config/service.example.json config/service.json   # then edit
 node --experimental-sqlite bin/stp.js
 ```
 
+The process logs the listening URL, the resolved ADS-B URL, and whether
+Pushover is enabled. Stop it with `Ctrl+C` — it traps `SIGINT` / `SIGTERM`,
+closes the HTTP server, flushes SQLite, and exits cleanly.
+
 `--experimental-sqlite` is needed on Node 22; on Node 24+ the flag becomes a
 no-op since `node:sqlite` is stable.
+
+### Environment variables
+
+| Variable        | Default                          | Purpose |
+|---|---|---|
+| `STP_OBSERVER`  | `<repo>/config/observer.json`    | Override the observer-config path. |
+| `STP_CONFIG`    | `<repo>/config/service.json`     | Override the service-config path. |
+
+Useful for running multiple observer locations from a single checkout, or
+for keeping production credentials out of the repo:
+
+```bash
+STP_OBSERVER=/etc/stp/observer-rheine.json \
+STP_CONFIG=/etc/stp/service.prod.json     \
+  node --experimental-sqlite bin/stp.js
+```
 
 ## Tests
 
@@ -77,12 +318,14 @@ no-op since `node:sqlite` is stable.
 npm test
 ```
 
-53 vitest cases cover geometry, ADS-B parsing, tracker, Pushover client,
-notifier, route lookup with TTL cache, history store, and the HTTP server.
+56 vitest cases cover geometry, ADS-B parsing, tracker (including the
+ADS-B latency back-stamp, sub-step vertex refinement, and barometric geoid
+offset added in M8), Pushover client, notifier, route lookup with TTL
+cache, history store, and the HTTP server.
 
 ## Configuration
 
-### `config/observer.json`
+### `config/observer.json` (see `observer.example.json`)
 
 ```json
 {
@@ -90,20 +333,24 @@ notifier, route lookup with TTL cache, history store, and the HTTP server.
   "latitudeDeg": 52.2833,
   "longitudeDeg": 7.4406,
   "elevationM": 50.0,
-  "temperatureC": 10.0,
-  "pressureMbar": 1010.0
+  "geoidUndulationM": 46.0
 }
 ```
 
-`elevationM` is mean sea level (MSL); see *Assumptions* below for how it is
-treated.
+`elevationM` is the observer's WGS84 ellipsoidal height (a local MSL value
+within ~50 m is fine). `geoidUndulationM` is the EGM2008 N at the observer
+location — used only when an aircraft reports `alt_baro` (pressure
+altitude, ≈MSL); the offset is added so the geometric comparison happens in
+the right reference frame. Look up your local N at e.g.
+[unavco.org/software/geodetic-utilities](https://www.unavco.org/software/geodetic-utilities/geoid-height-calculator/).
+Default 0 is fine if you only see GPS-equipped aircraft (`alt_geom`).
 
 ### `config/service.json` (see `service.example.json`)
 
 ```json
 {
   "adsb":     { "url": "http://localhost:8080/data/aircraft.json", "pollIntervalMs": 2000 },
-  "tracker":  { "horizonS": 60, "stepS": 1, "thresholdDeg": 0.3, "bodies": ["Sun", "Moon"] },
+  "tracker":  { "horizonS": 60, "stepS": 0.5, "thresholdDeg": 0.3, "bodies": ["Sun", "Moon"] },
   "pushover": { "token": "...", "user": "...", "enabled": true },
   "server":   { "port": 8081, "host": "0.0.0.0", "publicUrl": "" },
   "store":    { "path": "./data/history.db" },
@@ -112,17 +359,78 @@ treated.
 ```
 
 `thresholdDeg` (default 0.3°) is the maximum line-of-sight separation that
-triggers a candidate. The Sun's angular radius is ~0.27°, so 0.3° catches
-near-misses too — tighten if you only want centred transits.
+triggers a candidate — the Sun's angular radius is ~0.27°, so 0.3° catches
+near-misses too. `stepS` (default 0.5 s) is the sample step the tracker
+walks across the look-ahead horizon; the closest-approach time is then
+sub-step refined with a parabolic vertex fit, so this only sets the lower
+bound on detection coverage, not the time precision of the alert.
 
 ## HTTP API
 
-| Path | Description |
+The service exposes a small JSON API and serves the web UI on the same
+port (default `8081`, bind host `0.0.0.0`). Replace `<host>` below with the
+Pi's hostname or IP address — for example `http://raspberrypi.local:8081/`
+or `http://192.168.1.42:8081/`.
+
+| Method & path              | Description |
 |---|---|
-| `GET /api/state`    | Current observer, sky (Sun/Moon Az/El + observability), aircraft count, candidates within the horizon. Refreshes every poll. |
-| `GET /api/history?limit=…` | Past notifications (early + precise stages) from the SQLite store, newest first. Default limit 100, max 500. |
-| `GET /api/health`   | Liveness probe. |
-| `GET /` etc.        | Static web app from `web/`. |
+| `GET /`                    | Web UI (live state + history table). |
+| `GET /api/state`           | Current observer, Sun/Moon Az/El + observability, aircraft count, transit candidates inside the look-ahead horizon. Refreshed every poll. |
+| `GET /api/history?limit=…` | Past notifications (early + precise stages) from SQLite, newest first. Default 100, max 500. |
+| `GET /api/health`          | Liveness probe — always returns `{ ok: true, time: <ISO> }`. |
+
+Responses are `Cache-Control: no-store`; no authentication, so keep the
+service on a trusted LAN or front it with a reverse proxy if you need to
+expose it publicly.
+
+### Example calls
+
+```bash
+# liveness
+curl -s http://<host>:8081/api/health
+# → {"ok":true,"time":"2026-05-11T12:00:00.000Z"}
+
+# current sky + active candidates
+curl -s http://<host>:8081/api/state | jq
+
+# last 20 dispatched notifications
+curl -s 'http://<host>:8081/api/history?limit=20' | jq '.events[]'
+
+# open the live UI in a browser
+xdg-open http://<host>:8081/        # Linux
+open     http://<host>:8081/        # macOS
+```
+
+### Sample `/api/state` response (abbreviated)
+
+```jsonc
+{
+  "observer":     { "name": "Rheine", "latitudeDeg": 52.2833, "longitudeDeg": 7.4406, "elevationM": 50 },
+  "nowMs":        1762870000000,
+  "lastUpdateMs": 1762869998000,
+  "aircraftCount": 17,
+  "bodies": {
+    "Sun":  { "azimuthDeg": 178.4, "elevationDeg": 42.1, "rangeM": 1.5e11, "observable": true  },
+    "Moon": { "azimuthDeg":  65.2, "elevationDeg": -8.7, "rangeM": 3.8e8,  "observable": false }
+  },
+  "candidates": [
+    {
+      "icao":                "3c6589",
+      "callsign":            "DLH4PV",
+      "body":                "Sun",
+      "minSeparationDeg":    0.18,
+      "closestApproachAtMs": 1762870042000,
+      "transitDurationS":    1.4,
+      "altitudeFt":          37000,
+      "groundSpeedKt":       454,
+      "route":               { "iataFlight": "LH123", "origin": "FRA", "destination": "JFK", "airline": "Lufthansa" }
+    }
+  ]
+}
+```
+
+`observable: false` on a body means it is below the 20° horizon floor — any
+aircraft passing in front of it is *not* reported, by design.
 
 ## Two-stage notifications
 
@@ -137,52 +445,157 @@ it), airline, origin/destination, altitude (ft), ground speed (kt), minimum
 separation, transit duration, ETA. Same payload is recorded in the SQLite
 history table.
 
+## Pushover setup & test push
+
+A fresh checkout has **no `config/service.json`** — only
+`config/service.example.json`. Without a service config the Pushover client
+runs in disabled mode (`enabled: false`) and silently no-ops every send.
+That's safe for first-boot but means *nothing will alert* until you
+provide credentials.
+
+### 1. Provide credentials
+
+`scripts/install-pi5.sh` prompts for your Pushover **application token** and
+**user key** the first time it runs and writes them into
+`config/service.json`. To re-do it later:
+
+```bash
+bash scripts/install-pi5.sh --overwrite
+```
+
+Or edit `config/service.json` directly:
+
+```json
+"pushover": {
+  "token":   "azGD…<your app token>",
+  "user":    "uQiR…<your user/group key>",
+  "device":  "",
+  "enabled": true
+}
+```
+
+`device` is optional — leave empty to fan out to every device on the
+account. Restart the service (`sudo systemctl restart stp.service`) after
+editing.
+
+### 2. Send a test push
+
+A small helper ships in `scripts/test-push.js`. It loads the live
+`config/service.json` and sends a single low-priority message via the same
+`PushoverClient` the notifier uses, so it verifies token, user key,
+network, and TLS in one shot.
+
+```bash
+node scripts/test-push.js
+node scripts/test-push.js "custom message"      # optional payload
+```
+
+Expected output: `pushover: sent (status=1, request=…)`. The push should
+land on every Pushover-equipped device within a couple of seconds. If the
+config is disabled or missing keys, the script prints `pushover: disabled`
+and exits 1 without contacting the API.
+
+### 3. Verify in production
+
+To confirm the live service can actually reach Pushover (not just the
+helper), tail the journal while temporarily lowering `thresholdDeg` in
+`config/service.json` to a wide value (e.g. `30`) and restarting — the next
+overhead aircraft will then trip both an early and a precise notification.
+Restore the threshold afterwards:
+
+```bash
+sudo systemctl restart stp.service
+journalctl -u stp.service -f | grep -iE 'push|notif'
+```
+
+## Web UI
+
+`http://<host>:8081/` ships a single-page UI with two panels:
+
+- **Live** — observer info, current Sun/Moon Az/El (with the observability
+  flag), aircraft count, and the table of active transit candidates inside
+  the 60 s look-ahead horizon. Polls `/api/state` continuously, so each row
+  is the *prediction* for the next minute, not a historical record.
+- **History** — paginated list backed by `/api/history`, showing every
+  dispatched notification (early + precise) with callsign, IATA flight,
+  origin / destination, body, minimum separation, ETA, altitude and speed.
+
+The page is plain vanilla JS — no build step. The files in `web/` are
+served directly; `style.css` is dark-themed.
+
+**What is persisted, what is not.** The History panel reads from
+`<repo>/data/history.db` (SQLite, see `src/store.js`), which is written
+**server-side every time the notifier dispatches a stage** — both `early`
+and `precise` rows. Closing the browser does not lose anything; the next
+load (even days later) re-reads the same DB file. What is **not** written
+is the live "candidate" stream (`/api/state.candidates`) — those rows are
+recomputed in memory each tick and only graduate to the DB if they trip a
+notification. If you want every detected near-miss persisted, you would
+need to call `store.recordEvent` from the tracker tick rather than only
+from the notifier — happy to add that as a config switch if useful.
+
 ## Assumptions and limitations
 
 - **Geometry**: 0° = N, 90° = E. WGS84 → ECEF → ENU for aircraft Az/El.
-- **Refraction**: on by default (`'normal'` model from astronomy-engine).
-  Above the 20° observability threshold the residual is well below 0.05°.
+  Observer ECEF is computed once per tick and reused for every aircraft × body.
+- **Reference frame for the comparison**: both aircraft and body are
+  compared in *geometric* (un-refracted) coordinates. `/api/state` still
+  exposes the refracted body position via the regular `bodyAzEl` for
+  display. Differential refraction along two near-coincident lines of sight
+  is well below the search noise.
 - **Observability**: `isObservable` returns `true` only for `el > 20°`.
   Tracker skips bodies that never rise above 20° within the horizon.
 - **Aircraft altitude**: prefers `alt_geom`, falls back to `alt_baro`.
-  Treated as MSL → fed straight in as WGS84 ellipsoidal h. Geoid undulation
-  in Rheine ~46 m is documented and accepted; can be corrected later if it
-  ever matters at the budget.
+  `alt_geom` is GPS height above WGS84 ellipsoid (DO-260) and is fed
+  straight in. `alt_baro` is pressure altitude (≈MSL on standard atm.) and
+  is converted to HAE by adding `observer.geoidUndulationM` (default 0;
+  ≈+46 m at Rheine).
 - **Extrapolation**: linear, locally-flat tangent plane, 60 s horizon. Error
-  versus geodesic is well under 1 m at our typical speeds.
-- **ADS-B latency**: `seen_pos` is back-stamped onto `receivedAtMs` so the
-  tracker projects from the actual sample time, not from "now".
+  versus geodesic is well under 1 m at our typical speeds. Aircraft are
+  projected from their **fix time** (`receivedAtMs`), not from `now`, so a
+  `seen_pos` lag of several seconds does not bias the predicted position.
+- **Sub-step time precision**: after the discrete minimum is located, a
+  parabolic vertex is fitted through the three samples around it. With the
+  default `stepS = 0.5 s` this gives sub-100-ms closest-approach time.
+- **ADS-B liveness**: aircraft with `seen_pos > 30 s` are dropped during
+  parsing — stale fixes are not extrapolated.
 - **No camera trigger**: explicitly out of scope. We push, you arm the camera.
 
 ## Project layout
 
 ```
 .
-├── package.json                src deps + npm scripts
-├── vitest.config.js            test runner config
-├── bin/stp.js                  service entry point
+├── package.json                  src deps + npm scripts
+├── vitest.config.js              test runner config
+├── bin/stp.js                    service entry point
 ├── config/
-│   ├── observer.json           location (placeholder values)
-│   └── service.example.json    URLs, intervals, Pushover, …
+│   ├── observer.example.json     schema reference (real observer.json is gitignored)
+│   └── service.example.json      schema reference (real service.json is gitignored)
 ├── src/
-│   ├── geometry.js             topocentric Az/El + great-circle separation
-│   ├── adsb.js                 fetch + normalise dump1090 aircraft.json
-│   ├── tracker.js              extrapolation + transit detection
-│   ├── pushover.js             Pushover REST client
-│   ├── notifier.js             two-stage dispatch + dedup
-│   ├── adsbdb.js               callsign → route, in-memory TTL cache
-│   ├── store.js                SQLite history (node:sqlite)
-│   ├── server.js               HTTP server (built-in, no framework)
-│   ├── service.js              orchestrator (the polling loop)
-│   ├── config.js               loadObserver()
-│   └── index.js                public re-exports
+│   ├── geometry.js               topocentric Az/El + great-circle separation
+│   ├── adsb.js                   fetch + normalise dump1090 aircraft.json
+│   ├── tracker.js                extrapolation + transit detection (sub-step refined)
+│   ├── pushover.js               Pushover REST client
+│   ├── notifier.js               two-stage dispatch + dedup
+│   ├── adsbdb.js                 callsign → route, in-memory TTL cache
+│   ├── store.js                  SQLite history (node:sqlite)
+│   ├── server.js                 HTTP server (built-in, no framework)
+│   ├── service.js                orchestrator (the polling loop)
+│   ├── config.js                 loadObserver()
+│   └── index.js                  public re-exports
 ├── web/
-│   ├── index.html              live + history UI
-│   ├── app.js                  vanilla-JS poller
-│   └── style.css               dark theme
-├── scripts/install-pi5.sh      idempotent installer
-├── systemd/stp.service         unit template
-└── test/                       8 vitest files, 53 cases
+│   ├── index.html                live + history UI
+│   ├── app.js                    vanilla-JS poller
+│   └── style.css                 dark theme
+├── scripts/
+│   ├── install-pi5.sh            idempotent installer (interactive or --non-interactive)
+│   ├── auto-update.sh            git pull → npm install → restart, with config backup
+│   └── test-push.js              one-shot Pushover sanity check
+├── systemd/
+│   ├── stp.service               main service unit template
+│   ├── stp-update.service        auto-update oneshot template
+│   └── stp-update.timer          nightly schedule (03:30 ±15 min)
+└── test/                         8 vitest files, 56 cases
 ```
 
 ## License

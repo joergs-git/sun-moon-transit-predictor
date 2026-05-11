@@ -3,12 +3,28 @@
 // the configured tolerance of the Sun or Moon. Pure function — no I/O, no
 // time source other than the explicit `nowMs` argument, so it is trivial to
 // unit-test.
+//
+// Accuracy notes (see tasks/lessons.md):
+//   - The sample at index `i` represents the geometry at `nowMs + i * stepS`.
+//     Aircraft positions are projected from the actual ADS-B fix time
+//     (`receivedAtMs`), not from `nowMs`, so the `seenPosS` lag does not
+//     produce a systematic position error.
+//   - Both the body and the aircraft are compared in *geometric* (un-refracted)
+//     coordinates. Differential refraction along two nearby lines of sight is
+//     well below the discretisation noise of the search.
+//   - After the discrete minimum is located, a parabolic vertex is fitted
+//     through the three samples around it. This recovers sub-step time and
+//     separation precision without inflating the trajectory cache.
+//   - For barometric altitudes (no GPS-derived `alt_geom`), the configured
+//     `geoidUndulationM` (observer.json) is added so the value approximates
+//     WGS84 ellipsoidal height before geometric conversion.
 
 import {
-  aircraftAzEl,
+  aircraftAzElFromObsEcef,
   angularSeparationDeg,
   bodyAzEl,
   isObservable,
+  observerEcef,
 } from './geometry.js';
 
 const EARTH_RADIUS_M = 6371008.8;
@@ -31,9 +47,9 @@ const RAD = 180 / Math.PI;
  */
 
 /**
- * Linear-extrapolate an aircraft `dtSec` seconds into the future.
- * Treats the locally-tangent plane as flat (error <1 m for our 60-second
- * horizon).
+ * Linear-extrapolate an aircraft `dtSec` seconds forward from the *fix time*
+ * (`ac.receivedAtMs`). Treats the locally-tangent plane as flat (error <1 m
+ * for our 60-second horizon).
  *
  * @param {import('./adsb.js').Aircraft} ac
  * @param {number} dtSec
@@ -54,11 +70,21 @@ export function extrapolate(ac, dtSec) {
   };
 }
 
+/**
+ * Sample the body's Az/El across the look-ahead horizon. Refraction is OFF
+ * here — the comparison against geometric aircraft positions has to use the
+ * same reference frame, otherwise the ~0.04° refraction lift would show up
+ * as a one-sided bias near the 20° threshold.
+ */
 function sampleBodyTrajectory(observer, body, nowMs, horizonS, stepS) {
   const samples = [];
-  for (let t = 0; t <= horizonS; t += stepS) {
-    const azel = bodyAzEl(observer, body, new Date(nowMs + t * 1000));
-    samples.push({ tSec: t, azel });
+  const n = Math.floor(horizonS / stepS) + 1;
+  for (let i = 0; i < n; i++) {
+    const tSec = i * stepS;
+    const azel = bodyAzEl(observer, body, new Date(nowMs + tSec * 1000), {
+      applyRefraction: false,
+    });
+    samples.push({ tSec, azel });
   }
   return samples;
 }
@@ -68,45 +94,90 @@ function bodyIsObservableSomewhere(samples) {
   return false;
 }
 
-function candidateForBody(observer, ac, body, samples, thresholdDeg, nowMs) {
-  let minSep = Infinity;
-  let minAtT = 0;
-  let minAcAzEl = null;
-  let minBodyAzEl = null;
-  let entersT = null;
-  let leavesT = null;
+/**
+ * Convert ADS-B reported altitude to WGS84 ellipsoidal height (HAE).
+ *   - `alt_geom` (DO-260) is already HAE: identity.
+ *   - `alt_baro` is pressure altitude (≈MSL on standard atm.): add geoid
+ *     undulation N so HAE ≈ MSL + N. At Rheine N ≈ +46 m (EGM2008).
+ */
+function altHaeOf(ac, geoidUndulationM) {
+  return ac.altSource === 'barometric'
+    ? ac.altMmsl + geoidUndulationM
+    : ac.altMmsl;
+}
 
-  for (const sample of samples) {
-    if (!isObservable(sample.azel)) continue;
-    const projected = extrapolate(ac, sample.tSec);
-    const acAzEl = aircraftAzEl(observer, projected.lat, projected.lon, projected.altMmsl);
-    if (acAzEl.elevationDeg <= 0) continue;
-    const sep = angularSeparationDeg(acAzEl, sample.azel);
+/**
+ * Parabolic vertex through three equally-spaced samples (sepA, sepB, sepC) at
+ * t-step, t, t+step where sepB is the discrete minimum. Returns the
+ * sub-sample {dt, sep} relative to the centre sample. Falls back to (0, sepB)
+ * if the three points are not strictly convex (denominator ≤ 0), which avoids
+ * spurious extrapolation when the curve is degenerate or the discrete min is
+ * at the edge of the search window.
+ */
+function parabolicVertex(sepA, sepB, sepC, stepS) {
+  const denom = sepA - 2 * sepB + sepC;
+  if (denom <= 0) return { dt: 0, sep: sepB };
+  // delta in [-1, +1]; positive means vertex lies between B and C.
+  const delta = 0.5 * (sepA - sepC) / denom;
+  const dt = delta * stepS;
+  const sep = sepB - 0.25 * (sepA - sepC) * delta;
+  return { dt, sep };
+}
+
+function candidateForBody(ac, body, acTrajectory, bodySamples, thresholdDeg, nowMs, stepS) {
+  let minSep = Infinity;
+  let minIdx = -1;
+  let entersIdx = -1;
+  let leavesIdx = -1;
+
+  // bodySamples and acTrajectory share the same indexing (same step + horizon).
+  for (let i = 0; i < bodySamples.length; i++) {
+    if (!isObservable(bodySamples[i].azel)) continue;
+    const ac_i = acTrajectory[i];
+    if (!ac_i || ac_i.acAzEl.elevationDeg <= 0) continue;
+    const sep = angularSeparationDeg(ac_i.acAzEl, bodySamples[i].azel);
     if (sep < minSep) {
       minSep = sep;
-      minAtT = sample.tSec;
-      minAcAzEl = acAzEl;
-      minBodyAzEl = sample.azel;
+      minIdx = i;
     }
     if (sep <= thresholdDeg) {
-      if (entersT === null) entersT = sample.tSec;
-      leavesT = sample.tSec;
+      if (entersIdx === -1) entersIdx = i;
+      leavesIdx = i;
     }
   }
 
-  if (entersT === null) return null;
+  if (entersIdx === -1) return null;
+
+  // Sub-step refinement for time and separation. Use the discrete sample for
+  // aircraft / body Az/El at closest — the geometric refinement of those
+  // points is below display precision at the 0.5 s default step.
+  let refinedTSec = bodySamples[minIdx].tSec;
+  let refinedSep = minSep;
+  if (minIdx > 0 && minIdx < bodySamples.length - 1) {
+    const prev = acTrajectory[minIdx - 1] && isObservable(bodySamples[minIdx - 1].azel)
+      ? angularSeparationDeg(acTrajectory[minIdx - 1].acAzEl, bodySamples[minIdx - 1].azel)
+      : null;
+    const next = acTrajectory[minIdx + 1] && isObservable(bodySamples[minIdx + 1].azel)
+      ? angularSeparationDeg(acTrajectory[minIdx + 1].acAzEl, bodySamples[minIdx + 1].azel)
+      : null;
+    if (prev !== null && next !== null) {
+      const v = parabolicVertex(prev, minSep, next, stepS);
+      refinedTSec = bodySamples[minIdx].tSec + v.dt;
+      refinedSep = v.sep;
+    }
+  }
 
   return {
     icao: ac.icao,
     callsign: ac.callsign,
     body,
-    closestApproachAtMs: nowMs + minAtT * 1000,
-    closestApproachSepDeg: minSep,
-    entersAtMs: nowMs + entersT * 1000,
-    leavesAtMs: nowMs + leavesT * 1000,
-    durationMs: (leavesT - entersT) * 1000,
-    aircraftAtClosest: minAcAzEl,
-    bodyAtClosest: minBodyAzEl,
+    closestApproachAtMs: nowMs + refinedTSec * 1000,
+    closestApproachSepDeg: refinedSep,
+    entersAtMs: nowMs + bodySamples[entersIdx].tSec * 1000,
+    leavesAtMs: nowMs + bodySamples[leavesIdx].tSec * 1000,
+    durationMs: (bodySamples[leavesIdx].tSec - bodySamples[entersIdx].tSec) * 1000,
+    aircraftAtClosest: acTrajectory[minIdx].acAzEl,
+    bodyAtClosest: bodySamples[minIdx].azel,
     aircraft: ac,
   };
 }
@@ -118,17 +189,19 @@ function candidateForBody(observer, ac, body, samples, thresholdDeg, nowMs) {
  * @param {import('./adsb.js').Aircraft[]} aircraftList
  * @param {number} nowMs
  * @param {{ horizonS?: number, stepS?: number, thresholdDeg?: number,
- *           bodies?: ('Sun'|'Moon')[] }} [opts]
+ *           bodies?: ('Sun'|'Moon')[], geoidUndulationM?: number }} [opts]
  * @returns {TransitCandidate[]}
  */
 export function findTransits(observer, aircraftList, nowMs, opts = {}) {
   const {
     horizonS = 60,
-    stepS = 1,
+    stepS = 0.5,
     thresholdDeg = 0.3,
     bodies = ['Sun', 'Moon'],
+    geoidUndulationM = observer.geoidUndulationM ?? 0,
   } = opts;
 
+  // Body trajectories — geometric (un-refracted) for like-for-like comparison.
   const trajectories = new Map();
   for (const body of bodies) {
     const samples = sampleBodyTrajectory(observer, body, nowMs, horizonS, stepS);
@@ -138,12 +211,36 @@ export function findTransits(observer, aircraftList, nowMs, opts = {}) {
   }
   if (trajectories.size === 0) return [];
 
+  const obsEcef = observerEcef(observer);
+  const lat0 = observer.latitudeDeg;
+  const lon0 = observer.longitudeDeg;
+  const sampleCount = trajectories.values().next().value.length;
+
   /** @type {TransitCandidate[]} */
   const candidates = [];
+
   for (const ac of aircraftList) {
     if (typeof ac.groundSpeedMs !== 'number' || typeof ac.trackDeg !== 'number') continue;
+
+    // Project aircraft from the *fix time*, not from nowMs. The body sampling
+    // step at index i is at "nowMs + i*stepS", so the elapsed time since the
+    // last fix to that sample is `i*stepS + fixLagS`.
+    const fixLagS = (nowMs - (ac.receivedAtMs ?? nowMs)) / 1000;
+
+    // Compute the per-aircraft trajectory once and reuse across bodies.
+    const acTrajectory = new Array(sampleCount);
+    for (let i = 0; i < sampleCount; i++) {
+      const dtFromFix = i * stepS + fixLagS;
+      const projected = extrapolate(ac, dtFromFix);
+      const altHae = altHaeOf({ ...ac, altMmsl: projected.altMmsl }, geoidUndulationM);
+      const acAzEl = aircraftAzElFromObsEcef(
+        obsEcef, lat0, lon0, projected.lat, projected.lon, altHae,
+      );
+      acTrajectory[i] = { tSec: i * stepS, acAzEl };
+    }
+
     for (const [body, samples] of trajectories) {
-      const cand = candidateForBody(observer, ac, body, samples, thresholdDeg, nowMs);
+      const cand = candidateForBody(ac, body, acTrajectory, samples, thresholdDeg, nowMs, stepS);
       if (cand) candidates.push(cand);
     }
   }
