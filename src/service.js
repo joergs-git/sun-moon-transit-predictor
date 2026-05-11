@@ -6,6 +6,11 @@ import { fetchAircraft } from './adsb.js';
 import { RouteLookup } from './adsbdb.js';
 import { bodyAzEl, isObservable } from './geometry.js';
 import { Notifier } from './notifier.js';
+import {
+  buildWatchlist,
+  observationsFromHistory,
+  upcomingExpected,
+} from './predictor.js';
 import { PushoverClient } from './pushover.js';
 import { createHttpServer } from './server.js';
 import { HistoryStore } from './store.js';
@@ -26,6 +31,24 @@ export const DEFAULT_CONFIG = {
   server: { port: 8081, host: '0.0.0.0', publicUrl: '' },
   store: { path: './data/history.db' },
   routes: { enabled: true, ttlMs: 3600_000, negativeTtlMs: 300_000 },
+  predictor: {
+    enabled: true,
+    daysBack: 14,             // history window for the watchlist
+    minRepeats: 2,            // min distinct days a (flight,body) must hit
+    bucketMinutes: 60,        // time-of-day binning width — coarse enough to absorb day-to-day jitter, fine enough that the median predicted time is meaningful to ~1 h
+    rebuildIntervalMs: 3600_000,   // re-scan history every hour
+    lookAheadMs: 24 * 3600_000,    // surface expected events for the next 24 h
+  },
+  // Optional: feed schedule_observations (populated by scripts/refresh-schedule.js)
+  // into the predictor as additional observations alongside transit_history.
+  // The fetcher script is opt-in (opensky.enabled=true + airports list); this
+  // flag only controls whether the running service *consumes* whatever rows
+  // already exist in the schedule_observations table.
+  opensky: {
+    enabled: false,
+    airports: [],             // ICAO codes the refresh script should pull from
+    lookbackDays: 7,
+  },
   webRoot: 'web',
 };
 
@@ -43,12 +66,14 @@ function mergeConfig(user) {
   return {
     ...DEFAULT_CONFIG,
     ...user,
-    adsb:    { ...DEFAULT_CONFIG.adsb,    ...(user.adsb    ?? {}) },
-    tracker: { ...DEFAULT_CONFIG.tracker, ...(user.tracker ?? {}) },
-    pushover:{ ...DEFAULT_CONFIG.pushover,...(user.pushover?? {}) },
-    server:  { ...DEFAULT_CONFIG.server,  ...(user.server  ?? {}) },
-    store:   { ...DEFAULT_CONFIG.store,   ...(user.store   ?? {}) },
-    routes:  { ...DEFAULT_CONFIG.routes,  ...(user.routes  ?? {}) },
+    adsb:      { ...DEFAULT_CONFIG.adsb,      ...(user.adsb      ?? {}) },
+    tracker:   { ...DEFAULT_CONFIG.tracker,   ...(user.tracker   ?? {}) },
+    pushover:  { ...DEFAULT_CONFIG.pushover,  ...(user.pushover  ?? {}) },
+    server:    { ...DEFAULT_CONFIG.server,    ...(user.server    ?? {}) },
+    store:     { ...DEFAULT_CONFIG.store,     ...(user.store     ?? {}) },
+    routes:    { ...DEFAULT_CONFIG.routes,    ...(user.routes    ?? {}) },
+    predictor: { ...DEFAULT_CONFIG.predictor, ...(user.predictor ?? {}) },
+    opensky:   { ...DEFAULT_CONFIG.opensky,   ...(user.opensky   ?? {}) },
   };
 }
 
@@ -96,7 +121,52 @@ export async function runService({
     aircraftCount: 0,
     bodies: {},
     candidates: [],
+    expected: [],              // history-derived predictions for the next 24h
+    watchlistMeta: { lastBuildMs: 0, entries: 0 },
   };
+
+  // History-based predictor — pulled into the tick loop so /api/state stays
+  // a single source of truth. Re-build the watchlist on a slow cadence
+  // (default hourly) since `transit_history` only grows by ~10 rows/day in
+  // typical operation. Pluggable observation source: anything that returns
+  // {flight, body, timestampMs} arrays can be merged in (OpenSky, manual
+  // imports, etc.) — see attachExtraObservations below.
+  let watchlist = [];
+  let watchlistBuiltAtMs = 0;
+  /** @type {(() => Promise<import('./predictor.js').Observation[]>)[]} */
+  const extraObservationSources = [];
+
+  async function rebuildWatchlist(nowMs) {
+    if (!config.predictor.enabled) {
+      watchlist = [];
+      return;
+    }
+    try {
+      const localObs = observationsFromHistory(store, {
+        nowMs,
+        daysBack: config.predictor.daysBack,
+      });
+      let combined = localObs;
+      for (const src of extraObservationSources) {
+        try {
+          const extra = await src();
+          if (Array.isArray(extra)) combined = combined.concat(extra);
+        } catch (e) {
+          logger.warn?.('extra observation source failed:', e?.message ?? e);
+        }
+      }
+      watchlist = buildWatchlist(combined, {
+        nowMs,
+        daysBack: config.predictor.daysBack,
+        minRepeats: config.predictor.minRepeats,
+        bucketMinutes: config.predictor.bucketMinutes,
+      });
+      watchlistBuiltAtMs = nowMs;
+      state.watchlistMeta = { lastBuildMs: nowMs, entries: watchlist.length };
+    } catch (e) {
+      logger.error?.('watchlist rebuild failed:', e);
+    }
+  }
 
   const httpServer = noServer ? null : createHttpServer({
     port: config.server.port,
@@ -142,6 +212,15 @@ export async function runService({
     state.candidates = enriched;
     state.lastUpdateMs = nowMs;
 
+    // Refresh the predictor watchlist on the configured cadence, then surface
+    // upcoming-today expected events. The rebuild is async but cheap (single
+    // SELECT) — it runs at most once per `rebuildIntervalMs`.
+    if (config.predictor.enabled
+        && nowMs - watchlistBuiltAtMs >= config.predictor.rebuildIntervalMs) {
+      await rebuildWatchlist(nowMs);
+    }
+    state.expected = upcomingExpected(watchlist, nowMs, config.predictor.lookAheadMs);
+
     try {
       await notifier.tick(enriched, nowMs);
     } catch (e) {
@@ -149,7 +228,18 @@ export async function runService({
     }
   }
 
+  // If schedule augmentation is enabled, pull rows from schedule_observations
+  // each time the watchlist is rebuilt. The refresh script populates the
+  // table on its own cadence (cron / systemd timer); this just consumes.
+  if (config.opensky?.enabled) {
+    extraObservationSources.push(async () => {
+      const sinceMs = Date.now() - config.predictor.daysBack * 24 * 3600_000;
+      return store.scheduleObservations({ sinceMs, source: 'opensky' });
+    });
+  }
+
   // initial tick (await so the first /api/state has data)
+  await rebuildWatchlist(Date.now());
   await tick();
   intervalHandle = setInterval(() => {
     if (stopping) return;
@@ -162,6 +252,13 @@ export async function runService({
     notifier,
     store,
     config,
+    /**
+     * Register an additional observation source (called on each watchlist
+     * rebuild). Used by the optional OpenSky integration to augment local
+     * history with public schedule data.
+     * @param {() => Promise<import('./predictor.js').Observation[]>} fn
+     */
+    addObservationSource(fn) { extraObservationSources.push(fn); },
     async stop() {
       stopping = true;
       if (intervalHandle) clearInterval(intervalHandle);

@@ -5,7 +5,7 @@
   },
   "tracker": {
     "horizonS": 60,
-    "stepS": 1,
+    "stepS": 0.5,
     "thresholdDeg": 0.3,
     "bodies": ["Sun", "Moon"]
   },
@@ -27,5 +27,18 @@
     "enabled": true,
     "ttlMs": 3600000,
     "negativeTtlMs": 300000
+  },
+  "predictor": {
+    "enabled": true,
+    "daysBack": 14,
+    "minRepeats": 2,
+    "bucketMinutes": 60,
+    "rebuildIntervalMs": 3600000,
+    "lookAheadMs": 86400000
+  },
+  "opensky": {
+    "enabled": false,
+    "airports": ["EDDF", "EDDL", "EHAM"],
+    "lookbackDays": 7
   }
 }

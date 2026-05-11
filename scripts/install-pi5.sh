@@ -135,14 +135,28 @@ if [ ! -f "$SERVICE_FILE_LOCAL" ] || [ "$OVERWRITE_CONFIG" -eq 1 ]; then
   PUSH_USER=$(prompt  "Pushover user/group key   (blank to disable)" "${STP_PUSHOVER_USER:-}")
   if [ -n "$PUSH_TOKEN" ] && [ -n "$PUSH_USER" ]; then PUSH_ENABLED=true; else PUSH_ENABLED=false; fi
 
+  # Optional opensky airports list (comma-separated ICAOs); empty = disabled
+  OPENSKY_AIRPORTS_RAW="${STP_OPENSKY_AIRPORTS:-}"
+  if [ -n "$OPENSKY_AIRPORTS_RAW" ]; then
+    OPENSKY_ENABLED=true
+    OPENSKY_AIRPORTS_JSON=$(printf '%s' "$OPENSKY_AIRPORTS_RAW" | awk -F, '{
+      printf "["; for (i=1;i<=NF;i++) { gsub(/^ +| +$/, "", $i); printf (i>1?", ":"") "\"" $i "\"" } printf "]"
+    }')
+  else
+    OPENSKY_ENABLED=false
+    OPENSKY_AIRPORTS_JSON='[]'
+  fi
+
   cat > "$SERVICE_FILE_LOCAL" <<EOF
 {
-  "adsb":     { "url": "$ADSB_URL", "pollIntervalMs": 2000 },
-  "tracker":  { "horizonS": 60, "stepS": 0.5, "thresholdDeg": 0.3, "bodies": ["Sun", "Moon"] },
-  "pushover": { "token": "$PUSH_TOKEN", "user": "$PUSH_USER", "device": "", "enabled": $PUSH_ENABLED },
-  "server":   { "port": $PORT, "host": "0.0.0.0", "publicUrl": "$PUB_URL" },
-  "store":    { "path": "$REPO_DIR/data/history.db" },
-  "routes":   { "enabled": true, "ttlMs": 3600000, "negativeTtlMs": 300000 }
+  "adsb":      { "url": "$ADSB_URL", "pollIntervalMs": 2000 },
+  "tracker":   { "horizonS": 60, "stepS": 0.5, "thresholdDeg": 0.3, "bodies": ["Sun", "Moon"] },
+  "pushover":  { "token": "$PUSH_TOKEN", "user": "$PUSH_USER", "device": "", "enabled": $PUSH_ENABLED },
+  "server":    { "port": $PORT, "host": "0.0.0.0", "publicUrl": "$PUB_URL" },
+  "store":     { "path": "$REPO_DIR/data/history.db" },
+  "routes":    { "enabled": true, "ttlMs": 3600000, "negativeTtlMs": 300000 },
+  "predictor": { "enabled": true, "daysBack": 14, "minRepeats": 2, "bucketMinutes": 60, "rebuildIntervalMs": 3600000, "lookAheadMs": 86400000 },
+  "opensky":   { "enabled": $OPENSKY_ENABLED, "airports": $OPENSKY_AIRPORTS_JSON, "lookbackDays": 7 }
 }
 EOF
 else

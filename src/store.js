@@ -34,6 +34,24 @@ CREATE TABLE IF NOT EXISTS transit_history (
 
 CREATE INDEX IF NOT EXISTS idx_history_recorded ON transit_history(recorded_at_ms DESC);
 CREATE INDEX IF NOT EXISTS idx_history_closest  ON transit_history(closest_at_ms DESC);
+
+-- External schedule observations (e.g. OpenSky historical pulls) used by the
+-- predictor to augment local transit_history with flights we may have missed
+-- ourselves. Each row is a single (flight, body, timestamp) triple plus a
+-- short provenance string so older or revoked sources can be cleaned up.
+CREATE TABLE IF NOT EXISTS schedule_observations (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  source          TEXT NOT NULL,
+  fetched_at_ms   INTEGER NOT NULL,
+  flight          TEXT NOT NULL,
+  body            TEXT NOT NULL,
+  timestamp_ms    INTEGER NOT NULL,
+  airport         TEXT,
+  kind            TEXT,
+  UNIQUE(source, flight, timestamp_ms)
+);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_ts ON schedule_observations(timestamp_ms DESC);
 `;
 
 export class HistoryStore {
@@ -51,6 +69,55 @@ export class HistoryStore {
         payload_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+
+    // Insert-or-ignore so refresh runs are idempotent — same (source, flight,
+    // timestamp) combination won't create duplicate rows.
+    this.insertScheduleStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO schedule_observations
+        (source, fetched_at_ms, flight, body, timestamp_ms, airport, kind)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+  }
+
+  /**
+   * Persist a single schedule observation (e.g. from an OpenSky pull).
+   * Idempotent on (source, flight, timestamp_ms).
+   * @returns {boolean} true if a new row was inserted, false if it already existed
+   */
+  recordScheduleObservation({ source, flight, body, timestampMs, airport, kind, fetchedAtMs = Date.now() }) {
+    const res = this.insertScheduleStmt.run(
+      source, fetchedAtMs, flight, body, timestampMs, airport ?? null, kind ?? null,
+    );
+    return res.changes > 0;
+  }
+
+  /**
+   * Read schedule observations within a time window, optionally limited by
+   * source. Returned in the same shape predictor.observationsFromHistory()
+   * uses, so callers can mix-and-match.
+   *
+   * @param {{ sinceMs?: number, source?: string }} [opts]
+   * @returns {Array<{ flight: string, body: 'Sun'|'Moon', timestampMs: number }>}
+   */
+  scheduleObservations({ sinceMs = 0, source } = {}) {
+    const where = ['timestamp_ms >= ?'];
+    const args = [sinceMs];
+    if (source) { where.push('source = ?'); args.push(source); }
+    const rows = this.db
+      .prepare(`SELECT flight, body, timestamp_ms FROM schedule_observations
+                WHERE ${where.join(' AND ')}`)
+      .all(...args);
+    return rows.map(r => ({ flight: r.flight, body: r.body, timestampMs: r.timestamp_ms }));
+  }
+
+  /**
+   * Drop schedule observations older than `cutoffMs`. Used by the refresh
+   * script to bound table growth.
+   */
+  pruneScheduleOlderThan(cutoffMs) {
+    return this.db
+      .prepare('DELETE FROM schedule_observations WHERE timestamp_ms < ?')
+      .run(cutoffMs).changes;
   }
 
   /**
