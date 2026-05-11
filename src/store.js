@@ -61,6 +61,12 @@ export class HistoryStore {
     }
     this.db = new DatabaseSync(path);
     this.db.exec(SCHEMA);
+    // Stage rename migration (v0.4.0). Idempotent: re-running just touches
+    // zero rows the second time. Keeps history under one stable vocabulary.
+    this.db.exec(`
+      UPDATE transit_history SET stage = 'candidate' WHERE stage = 'early';
+      UPDATE transit_history SET stage = 'imminent'  WHERE stage = 'precise';
+    `);
     this.insertStmt = this.db.prepare(`
       INSERT INTO transit_history (
         recorded_at_ms, closest_at_ms, stage, body, icao, callsign,

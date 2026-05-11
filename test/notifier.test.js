@@ -7,11 +7,13 @@ class FakePushover {
 }
 
 function makeCandidate({ icao = 'abc123', body = 'Sun', closestInMs = 90_000,
-                        callsign = 'DLH123', sepDeg = 0.12, durationMs = 4000 } = {}) {
+                        callsign = 'DLH123', sepDeg = 0.12, durationMs = 4000,
+                        level = 'candidate' } = {}) {
   return {
     icao,
     callsign,
     body,
+    level,
     closestApproachAtMs: 1_000_000_000_000 + closestInMs,
     closestApproachSepDeg: sepDeg,
     entersAtMs: 1_000_000_000_000 + closestInMs - durationMs / 2,
@@ -36,18 +38,27 @@ function makeCandidate({ icao = 'abc123', body = 'Sun', closestInMs = 90_000,
 }
 
 describe('Notifier', () => {
-  it('sends an early notification on first sighting', async () => {
+  it('sends a candidate notification on first sighting at level=candidate', async () => {
     const px = new FakePushover();
     const n = new Notifier({ pushover: px });
-    const cand = makeCandidate({ closestInMs: 90_000 });
+    const cand = makeCandidate({ closestInMs: 90_000, level: 'candidate' });
     const events = await n.tick([cand], 1_000_000_000_000);
     expect(events.length).toBe(1);
-    expect(events[0].stage).toBe('early');
+    expect(events[0].stage).toBe('candidate');
     expect(px.calls.length).toBe(1);
     expect(px.calls[0].title).toMatch(/Sun candidate/);
   });
 
-  it('does not double-send the early notification on subsequent ticks', async () => {
+  it('sends a radio notification first when first sighting is level=radio', async () => {
+    const px = new FakePushover();
+    const n = new Notifier({ pushover: px });
+    const cand = makeCandidate({ closestInMs: 90_000, level: 'radio', sepDeg: 2.1 });
+    const events = await n.tick([cand], 1_000_000_000_000);
+    expect(events[0].stage).toBe('radio');
+    expect(px.calls[0].title).toMatch(/Sun approach/);
+  });
+
+  it('does not double-send the candidate notification on subsequent ticks', async () => {
     const px = new FakePushover();
     const n = new Notifier({ pushover: px });
     const cand = makeCandidate({ closestInMs: 90_000 });
@@ -56,20 +67,20 @@ describe('Notifier', () => {
     expect(px.calls.length).toBe(1);
   });
 
-  it('emits the precise stage when closest-approach falls inside the window', async () => {
+  it('emits the imminent stage when closest-approach falls inside the window', async () => {
     const px = new FakePushover();
-    const n = new Notifier({ pushover: px, preciseWindowMs: 30_000 });
+    const n = new Notifier({ pushover: px, imminentWindowMs: 30_000 });
     const cand = makeCandidate({ closestInMs: 90_000 });
-    await n.tick([cand], 1_000_000_000_000);                 // early
-    const evts = await n.tick([cand], 1_000_000_000_000 + 70_000); // T-20s
+    await n.tick([cand], 1_000_000_000_000);                  // candidate
+    const evts = await n.tick([cand], 1_000_000_000_000 + 70_000); // T-20s → imminent
     expect(evts.length).toBe(1);
-    expect(evts[0].stage).toBe('precise');
+    expect(evts[0].stage).toBe('imminent');
     expect(px.calls.length).toBe(2);
     expect(px.calls[1].title).toMatch(/Sun TRANSIT/);
     expect(px.calls[1].priority).toBe(1);
   });
 
-  it('does not double-send the precise notification', async () => {
+  it('does not double-send the imminent notification', async () => {
     const px = new FakePushover();
     const n = new Notifier({ pushover: px });
     const cand = makeCandidate({ closestInMs: 90_000 });
@@ -77,6 +88,21 @@ describe('Notifier', () => {
     await n.tick([cand], 1_000_000_000_000 + 70_000);
     await n.tick([cand], 1_000_000_000_000 + 75_000);
     expect(px.calls.length).toBe(2);
+  });
+
+  it('skips earlier stages when minStage is set', async () => {
+    const px = new FakePushover();
+    const n = new Notifier({ pushover: px, minStage: 'candidate' });
+    // First a radio-level sighting → must be filtered
+    const radio = makeCandidate({ closestInMs: 90_000, level: 'radio', sepDeg: 2.5 });
+    await n.tick([radio], 1_000_000_000_000);
+    expect(px.calls.length).toBe(0);
+    // Then escalate to candidate-level → must fire (and not retroactively send radio)
+    const cand = { ...radio, level: 'candidate', closestApproachSepDeg: 0.15 };
+    const evts = await n.tick([cand], 1_000_000_000_000 + 2000);
+    expect(evts.length).toBe(1);
+    expect(evts[0].stage).toBe('candidate');
+    expect(px.calls.length).toBe(1);
   });
 
   it('treats Sun and Moon candidates for the same aircraft as separate streams', async () => {

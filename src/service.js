@@ -5,6 +5,7 @@
 import { fetchAircraft } from './adsb.js';
 import { RouteLookup } from './adsbdb.js';
 import { bodyAzEl, isObservable } from './geometry.js';
+import { lifecycleArray, updateLifecycle } from './lifecycle.js';
 import { Notifier } from './notifier.js';
 import {
   buildWatchlist,
@@ -22,12 +23,21 @@ export const DEFAULT_CONFIG = {
     pollIntervalMs: 2000,
   },
   tracker: {
-    horizonS: 60,
-    stepS: 1,
-    thresholdDeg: 0.3,
+    horizonS: 300,            // 5-minute look-ahead by default
+    stepS: 0.5,
+    thresholdDeg: 0.3,        // tight band → 'candidate' level
+    looseThresholdDeg: 5.0,   // wider band → 'radio' level (early warning)
     bodies: ['Sun', 'Moon'],
   },
-  pushover: { token: '', user: '', device: '', enabled: false },
+  pushover: {
+    token: '', user: '', device: '', enabled: false,
+    minStage: 'radio',        // default: emit all three stages
+  },
+  lifecycle: {
+    plannedWindowMs: 3600_000,    // surface watchlist entries within ±1 h
+    imminentWindowMs: 30_000,     // ±30 s around closest-approach → imminent
+    staleGraceMs: 10_000,         // keep dropped contacts visible for 10 s
+  },
   server: { port: 8081, host: '0.0.0.0', publicUrl: '' },
   store: { path: './data/history.db' },
   routes: { enabled: true, ttlMs: 3600_000, negativeTtlMs: 300_000 },
@@ -74,6 +84,7 @@ function mergeConfig(user) {
     routes:    { ...DEFAULT_CONFIG.routes,    ...(user.routes    ?? {}) },
     predictor: { ...DEFAULT_CONFIG.predictor, ...(user.predictor ?? {}) },
     opensky:   { ...DEFAULT_CONFIG.opensky,   ...(user.opensky   ?? {}) },
+    lifecycle: { ...DEFAULT_CONFIG.lifecycle, ...(user.lifecycle ?? {}) },
   };
 }
 
@@ -111,6 +122,8 @@ export async function runService({
       try { store.recordEvent(evt.stage, evt.candidate, evt.route, Date.now()); }
       catch (e) { logger.error?.('store record failed:', e); }
     },
+    minStage: config.pushover.minStage ?? 'radio',
+    imminentWindowMs: config.lifecycle.imminentWindowMs,
     baseUrl: config.server.publicUrl || undefined,
   });
 
@@ -120,10 +133,16 @@ export async function runService({
     lastUpdateMs: 0,
     aircraftCount: 0,
     bodies: {},
-    candidates: [],
-    expected: [],              // history-derived predictions for the next 24h
+    candidates: [],            // backward-compat: tracker output (live)
+    expected: [],              // backward-compat: predictor watchlist (24 h)
+    lifecycle: [],             // primary unified view used by the new UI
     watchlistMeta: { lastBuildMs: 0, entries: 0 },
   };
+
+  // Lifecycle map persists across ticks — that's what gives the UI the
+  // "no candidate anymore" grace period and a single dynamic list to read.
+  /** @type {Map<string, import('./lifecycle.js').LifecycleEntry>} */
+  let lifecycleMap = new Map();
 
   // History-based predictor — pulled into the tick loop so /api/state stays
   // a single source of truth. Re-build the watchlist on a slow cadence
@@ -220,6 +239,22 @@ export async function runService({
       await rebuildWatchlist(nowMs);
     }
     state.expected = upcomingExpected(watchlist, nowMs, config.predictor.lookAheadMs);
+
+    // Unified lifecycle state — merges live tracker + watchlist + previous
+    // tick's contacts. The notifier still drives Pushover; the lifecycle
+    // adds visibility for 'planned' and 'stale' states which never push but
+    // matter in the UI.
+    lifecycleMap = updateLifecycle({
+      prev: lifecycleMap,
+      nowMs,
+      trackerCandidates: enriched,
+      expected: state.expected,
+      liveAircraft: aircraft,
+      imminentWindowMs: config.lifecycle.imminentWindowMs,
+      plannedWindowMs: config.lifecycle.plannedWindowMs,
+      staleGraceMs: config.lifecycle.staleGraceMs,
+    });
+    state.lifecycle = lifecycleArray(lifecycleMap, nowMs);
 
     try {
       await notifier.tick(enriched, nowMs);

@@ -150,12 +150,13 @@ if [ ! -f "$SERVICE_FILE_LOCAL" ] || [ "$OVERWRITE_CONFIG" -eq 1 ]; then
   cat > "$SERVICE_FILE_LOCAL" <<EOF
 {
   "adsb":      { "url": "$ADSB_URL", "pollIntervalMs": 2000 },
-  "tracker":   { "horizonS": 60, "stepS": 0.5, "thresholdDeg": 0.3, "bodies": ["Sun", "Moon"] },
-  "pushover":  { "token": "$PUSH_TOKEN", "user": "$PUSH_USER", "device": "", "enabled": $PUSH_ENABLED },
+  "tracker":   { "horizonS": 300, "stepS": 0.5, "thresholdDeg": 0.3, "looseThresholdDeg": 5.0, "bodies": ["Sun", "Moon"] },
+  "pushover":  { "token": "$PUSH_TOKEN", "user": "$PUSH_USER", "device": "", "enabled": $PUSH_ENABLED, "minStage": "radio" },
   "server":    { "port": $PORT, "host": "0.0.0.0", "publicUrl": "$PUB_URL" },
   "store":     { "path": "$REPO_DIR/data/history.db" },
   "routes":    { "enabled": true, "ttlMs": 3600000, "negativeTtlMs": 300000 },
   "predictor": { "enabled": true, "daysBack": 14, "minRepeats": 2, "bucketMinutes": 60, "rebuildIntervalMs": 3600000, "lookAheadMs": 86400000 },
+  "lifecycle": { "plannedWindowMs": 3600000, "imminentWindowMs": 30000, "staleGraceMs": 10000 },
   "opensky":   { "enabled": $OPENSKY_ENABLED, "airports": $OPENSKY_AIRPORTS_JSON, "lookbackDays": 7 }
 }
 EOF

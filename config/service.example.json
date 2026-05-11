@@ -4,16 +4,23 @@
     "pollIntervalMs": 2000
   },
   "tracker": {
-    "horizonS": 60,
+    "horizonS": 300,
     "stepS": 0.5,
     "thresholdDeg": 0.3,
+    "looseThresholdDeg": 5.0,
     "bodies": ["Sun", "Moon"]
   },
   "pushover": {
     "token": "PASTE_PUSHOVER_APP_TOKEN_HERE",
     "user":  "PASTE_PUSHOVER_USER_KEY_HERE",
     "device": "",
-    "enabled": false
+    "enabled": false,
+    "minStage": "radio"
+  },
+  "lifecycle": {
+    "plannedWindowMs": 3600000,
+    "imminentWindowMs": 30000,
+    "staleGraceMs": 10000
   },
   "server": {
     "port": 8081,

@@ -110,7 +110,7 @@ describe('upcomingExpected', () => {
 });
 
 describe('observationsFromHistory', () => {
-  it('reads only precise-stage rows with a flight from transit_history', () => {
+  it('reads only imminent-stage rows with a flight from transit_history', () => {
     const store = new HistoryStore(':memory:');
     const cand = (flight, body, closestAtMs) => ({
       icao: '3c6589', callsign: 'DLH4PV', body,
@@ -118,16 +118,16 @@ describe('observationsFromHistory', () => {
       durationMs: 1400,
       aircraft: { altMmsl: 11000, groundSpeedMs: 230, trackDeg: 90 },
     });
-    // precise + flight → kept
-    store.recordEvent('precise', cand('LH123', 'Sun', NOW - 2 * DAY_MS),
+    // imminent + flight → kept
+    store.recordEvent('imminent', cand('LH123', 'Sun', NOW - 2 * DAY_MS),
       { flight: 'LH123' }, NOW - 2 * DAY_MS);
-    store.recordEvent('precise', cand('LH123', 'Sun', NOW - DAY_MS),
+    store.recordEvent('imminent', cand('LH123', 'Sun', NOW - DAY_MS),
       { flight: 'LH123' }, NOW - DAY_MS);
-    // early → excluded
-    store.recordEvent('early', cand('LH123', 'Sun', NOW - 3 * DAY_MS),
+    // candidate (earlier-stage) → excluded
+    store.recordEvent('candidate', cand('LH123', 'Sun', NOW - 3 * DAY_MS),
       { flight: 'LH123' }, NOW - 3 * DAY_MS);
-    // precise but no route flight → excluded
-    store.recordEvent('precise', cand('LH123', 'Sun', NOW - 4 * DAY_MS),
+    // imminent but no route flight → excluded
+    store.recordEvent('imminent', cand('LH123', 'Sun', NOW - 4 * DAY_MS),
       null, NOW - 4 * DAY_MS);
 
     const obs = observationsFromHistory(store, { nowMs: NOW, daysBack: 14 });
