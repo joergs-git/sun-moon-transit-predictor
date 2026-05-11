@@ -36,8 +36,8 @@ export const DEFAULT_CONFIG = {
   lifecycle: {
     plannedWindowMs: 3600_000,    // surface watchlist entries within ±1 h
     imminentWindowMs: 30_000,     // ±30 s around closest-approach → imminent
-    staleGraceMs: 60_000,         // keep dropped contacts visible for 1 min
-    maxEntries: 20,               // tracking-list cap; oldest stale FIFO-out
+    staleGraceMs: 0,              // 0 = no time eviction; cap below does FIFO
+    maxEntries: 20,               // tracking-list cap; oldest stale dropped first
   },
   server: { port: 8081, host: '0.0.0.0', publicUrl: '' },
   store: { path: './data/history.db' },

@@ -24,7 +24,10 @@
 const HOUR_MS = 3600_000;
 const DEFAULT_PLANNED_WINDOW_MS = HOUR_MS;
 const DEFAULT_IMMINENT_WINDOW_MS = 30_000;
-const DEFAULT_STALE_GRACE_MS = 60_000;        // 1 min — lets the user see drops
+// 0 = no time-based drop; stale entries persist until they are pushed off
+// the bottom of the panel by the cap below. Set to a positive ms value to
+// re-enable an absolute upper age (e.g. 60_000 for the old 1-min behaviour).
+const DEFAULT_STALE_GRACE_MS = 0;
 const DEFAULT_MAX_ENTRIES = 20;               // cap on the UI panel; FIFO on stale
 
 /**
@@ -169,13 +172,16 @@ export function updateLifecycle({
     touched.add(key);
   }
 
-  // ---------- 3. Carry forward stale entries within the grace period ----------
+  // ---------- 3. Carry forward stale entries ----------
+  // Default behaviour (staleGraceMs <= 0): stale entries persist forever
+  // and only leave the panel when displaced by the 20-cap below (oldest
+  // stale first). Set staleGraceMs > 0 to also evict by absolute age.
   for (const [key, prevEntry] of prev) {
     if (touched.has(key)) continue;
-    // The entry was active last tick but is missing this tick. If we are
-    // within the stale grace period, hold it visible; otherwise drop.
-    const ageMs = nowMs - prevEntry.lastUpdateMs;
-    if (ageMs > staleGraceMs) continue;
+    if (staleGraceMs > 0) {
+      const ageMs = nowMs - prevEntry.lastUpdateMs;
+      if (ageMs > staleGraceMs) continue;
+    }
     // Don't downgrade a 'planned' entry to 'stale' — planned entries are
     // forecast-only and naturally disappear/re-appear; only real ADS-B
     // contacts get the "no candidate anymore" treatment.

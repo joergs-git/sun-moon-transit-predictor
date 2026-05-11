@@ -504,7 +504,7 @@ into Pushover messages:
 | **radio** 📡 | tracker projects `[thresholdDeg, looseThresholdDeg]` separation (default 0.3°–5°) within `horizonS` (default 5 min) | 0 | up to 5 min |
 | **candidate** ✈️ | tracker projects `≤ thresholdDeg` separation (default 0.3°) within `horizonS`, more than `imminentWindowMs` away | 0 | 30 s – 5 min |
 | **imminent** 🎯 | closest approach within ±`imminentWindowMs` (default ±30 s) | 1 | ≤ 30 s |
-| **stale** ❌ | was tracked last tick, gone from the tracker output now — held visible for `lifecycle.staleGraceMs` (default 60 s) or until pushed off the panel by newer entries | none (UI only) | — |
+| **stale** ❌ | was tracked last tick, gone from the tracker output now — held visible **indefinitely** by default (`lifecycle.staleGraceMs = 0`); leaves only when displaced off the bottom of the panel by newer entries | none (UI only) | — |
 
 Stage rules:
 
@@ -523,9 +523,10 @@ Stage rules:
 - **Panel cap.** The tracking list is capped at `lifecycle.maxEntries`
   (default 20). When the cap is hit, the **oldest stale entries are
   dropped first** (FIFO by `lastUpdateMs`) — active rows are always kept.
-  Combined with `staleGraceMs=60 s` this gives a "feed" effect: dropped
-  contacts linger for ~1 min so you see them disappear, then naturally
-  fall off as newer activity displaces them.
+  With `staleGraceMs=0` (default), stale entries persist as long as the
+  cap allows — on quiet days you'll see drops from hours ago still
+  sitting at the bottom of the panel. Set `staleGraceMs > 0` to also
+  evict by absolute age.
 
 Each notification carries: callsign, IATA flight number (if adsbdb resolves
 it), airline, origin/destination, altitude (ft), ground speed (kt), minimum
