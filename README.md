@@ -1,11 +1,14 @@
 # sun-moon-transit-predictor
-
 Predicts and detects aircraft transits across the **sun and moon disc** from a
 fixed observer location (Rheine, Germany), so the camera at the telescope can
 be armed in time. End-to-end runs on a single **Raspberry Pi 5** (Raspberry
 Pi OS Lite, 64-bit) alongside `dump1090-fa`, with a small browser UI and
 Pushover notifications in two stages: an early candidate alert and a precise
 T-minus alert once live ADS-B has nailed down the transit time.
+
+![Plane candidates overview](/sunmoonplane.png)
+![Plane direction and FOV](/sunplane.png)
+
 
 ## Overview
 
