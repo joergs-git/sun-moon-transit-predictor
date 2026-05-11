@@ -1,0 +1,18 @@
+[Unit]
+Description=Sun-Moon Transit Predictor — auto-update (git pull + restart)
+Documentation=https://github.com/joergs-git/sun-moon-transit-predictor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+Group=__USER__
+WorkingDirectory=__INSTALL_DIR__
+ExecStart=/usr/bin/bash __INSTALL_DIR__/scripts/auto-update.sh
+StandardOutput=journal
+StandardError=journal
+
+# Network-only side effects; no need for elevated capabilities beyond the
+# narrowly scoped sudoers rule that allows `systemctl restart stp.service`.
+NoNewPrivileges=false

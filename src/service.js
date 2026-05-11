@@ -125,8 +125,13 @@ export async function runService({
     }
     state.aircraftCount = aircraft.length;
 
-    const candidates = findTransits(observer, aircraft, nowMs, config.tracker);
+    const trackerOpts = {
+      ...config.tracker,
+      geoidUndulationM: observer.geoidUndulationM ?? config.tracker.geoidUndulationM ?? 0,
+    };
+    const candidates = findTransits(observer, aircraft, nowMs, trackerOpts);
 
+    // Single route lookup per candidate, shared by /api/state and notifier.
     const enriched = await Promise.all(candidates.map(async (c) => {
       let route = null;
       if (c.callsign) {
@@ -138,7 +143,7 @@ export async function runService({
     state.lastUpdateMs = nowMs;
 
     try {
-      await notifier.tick(candidates, nowMs);
+      await notifier.tick(enriched, nowMs);
     } catch (e) {
       logger.error?.('notifier tick failed:', e);
     }

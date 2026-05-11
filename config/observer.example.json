@@ -1,0 +1,8 @@
+{
+  "name": "Rheine",
+  "latitudeDeg": 52.2833,
+  "longitudeDeg": 7.4406,
+  "elevationM": 50.0,
+  "geoidUndulationM": 46.0,
+  "_note": "Template — copy to config/observer.json and edit. elevationM is the observer height above WGS84 ellipsoid (a local MSL value is fine within ~50 m). geoidUndulationM is EGM2008 N at the observer location, used to convert ADS-B alt_baro (≈MSL) to HAE before geometric comparison; ~+46 m at Rheine, look it up at https://www.unavco.org/software/geodetic-utilities/geoid-height-calculator/ for your site."
+}

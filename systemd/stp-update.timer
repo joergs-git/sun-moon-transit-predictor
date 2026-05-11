@@ -1,0 +1,14 @@
+[Unit]
+Description=Nightly auto-update for stp.service
+
+[Timer]
+# 03:30 local time, +/- 15 min jitter to avoid thundering-herd on shared
+# upstream. Persistent=true catches up after an offline window (a Pi that
+# was off at 03:30 will run the timer the next time it boots).
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=stp-update.service
+
+[Install]
+WantedBy=timers.target
