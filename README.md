@@ -78,6 +78,7 @@ without a monitor, keyboard, or any client connected.
 | M9 | Zero-touch operations: gitignored personal config, `--non-interactive` install, nightly auto-update timer | done |
 | M10 | History-based predictor (24 h "Expected today" panel) + optional OpenSky schedule augmentation | done |
 | M11 | Lifecycle pipeline: planned → radio → candidate → imminent → stale, with `horizonS=300` default, unified UI panel | done |
+| M12 | FOV sketch popup: per-row preview of disc + aircraft + apparent transit line in the 500 mm / ASI174MM frame | done |
 
 ## Quick install on the Pi 5
 
@@ -711,8 +712,33 @@ fewer false-positive watchlist entries.
   Transit time, callsign, IATA flight, origin / destination, body, minimum
   separation, altitude and speed.
 
-The page is plain vanilla JS — no build step. The files in `web/` are
-served directly; `style.css` is dark-themed.
+### FOV sketch popup (v0.6.0+)
+
+Click any row in the **Tracking** or **History** panel to open a popup
+that visualises the transit as it would appear in the eyepiece / camera
+frame:
+
+- **FOV rectangle** sized to the default optical setup —
+  **500 mm focal length + ZWO ASI174MM** (sensor 11.34 × 7.13 mm,
+  1936 × 1216 px → FOV **1.30° × 0.82°**). Tweak the constants at the
+  top of `web/sketch.js` for a different rig; nothing on the backend
+  needs to change.
+- **Sun / Moon disc** centred at the body's apparent diameter (Sun
+  0.53°, Moon 0.52°).
+- **Aircraft silhouette** scaled by line-of-sight distance using a
+  generic ~36 m airliner footprint — at 10 km this works out to
+  ~0.2°, roughly a third of the Sun's diameter.
+- **Apparent transit line** (dashed) connecting five samples of the
+  aircraft–body relative position at ±60, ±30 and 0 s around closest
+  approach, with an arrowhead in the direction of motion. Body drift
+  is subtracted per sample, so the line shows the path as seen through
+  a tracking mount keeping the disc centred.
+
+The sketch is built client-side from a small `transitPath` array that
+the tracker now attaches to every `TransitCandidate`. History rows
+written before v0.6.0 still open the popup, but without the motion
+line (the disc + aircraft anchor point are derived from the existing
+`payload_json`).
 
 **What is persisted, what is not.** The History panel reads from
 `<repo>/data/history.db` (SQLite, see `src/store.js`), which is written
