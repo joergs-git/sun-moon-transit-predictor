@@ -8,14 +8,35 @@
 </head>
 <body>
   <header>
-    <h1>Sun-Moon Transit Predictor</h1>
-    <div id="status" class="status">connecting…</div>
+    <div class="brand">
+      <h1>Sun-Moon Transit Predictor</h1>
+      <div class="identity">
+        <span>© <span id="copyright-year">2026</span> joergsflow</span>
+        <span class="sep">·</span>
+        <a href="https://github.com/joergs-git/sun-moon-transit-predictor" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <span class="sep">·</span>
+        <a href="https://app.astrobin.com/u/joergsflow#gallery" target="_blank" rel="noopener noreferrer">AstroBin</a>
+        <span class="sep">·</span>
+        <a id="dump1090-link" href="#" target="_blank" rel="noopener noreferrer" title="Open the local dump1090 status page on port 8080 in a new tab.">dump1090 ↗</a>
+      </div>
+    </div>
+    <div class="header-right">
+      <div id="status" class="status" title="Service liveness. Shows seconds since the last successful tick and the number of aircraft currently tracked by dump1090.">connecting…</div>
+      <button id="settings-btn" type="button" class="btn" title="Edit Pushover credentials, observer location and optical setup (focal length + sensor).">⚙ Settings</button>
+    </div>
   </header>
 
   <section>
     <h2>Sky now</h2>
     <table id="sky">
-      <thead><tr><th>Body</th><th>Az</th><th>El</th><th>Observable</th></tr></thead>
+      <thead>
+        <tr>
+          <th title="Celestial body — Sun or Moon, evaluated for the configured observer location.">Body</th>
+          <th title="Azimuth in degrees, measured clockwise from true north (0° = N, 90° = E, 180° = S, 270° = W).">Az</th>
+          <th title="Elevation in degrees above the local horizon (refraction-corrected).">El</th>
+          <th title="✓ when the body is above the 20° elevation floor used by the transit detector. Below that, refraction residuals + obstructions make a transit unreliable.">Observable</th>
+        </tr>
+      </thead>
       <tbody></tbody>
     </table>
   </section>
@@ -36,8 +57,17 @@
     <table id="tracking">
       <thead>
         <tr>
-          <th>Status</th><th>ETA</th><th>Time</th><th>Body</th><th>Flight</th>
-          <th>ICAO</th><th>Route</th><th>Alt</th><th>Speed</th><th>Dist</th><th>Sep</th>
+          <th title="Lifecycle stage: planned → radio → candidate → imminent → stale. Driven live by the tracker + predictor.">Status</th>
+          <th title="Time until closest approach. Negative when the predicted moment has already passed.">ETA</th>
+          <th title="Wall-clock time of the predicted closest approach (camera-ready moment).">Time</th>
+          <th title="Sun or Moon — which body this entry transits.">Body</th>
+          <th title="IATA flight number, or the ADS-B callsign if no route lookup is available.">Flight</th>
+          <th title="ADS-B 24-bit ICAO hex code identifying the airframe.">ICAO</th>
+          <th title="Origin → Destination IATA codes from the adsbdb.com route lookup.">Route</th>
+          <th title="Aircraft altitude above mean sea level, rounded to the nearest 100 m. Uses GNSS altitude where available, otherwise barometric.">Alt</th>
+          <th title="Ground speed in km/h.">Speed</th>
+          <th title="Line-of-sight distance from the observer to the aircraft at closest approach.">Dist</th>
+          <th title="Minimum angular separation between aircraft and the body disc at closest approach. Below ~0.27° = on-disc transit for the Sun.">Sep</th>
         </tr>
       </thead>
       <tbody><tr class="empty"><td colspan="11">Tracking list empty.</td></tr></tbody>
@@ -55,8 +85,17 @@
     <table id="history">
       <thead>
         <tr>
-          <th>Transit</th><th>Recorded</th><th>Stage</th><th>Body</th><th>Flight</th>
-          <th>ICAO</th><th>Route</th><th>Alt</th><th>Speed</th><th>Dist</th><th>Sep</th>
+          <th title="Predicted closest-approach time — the camera-ready moment for this transit.">Transit</th>
+          <th title="Wall-clock time the notification was dispatched. Earlier than Transit for the radio/candidate stage; near Transit for imminent.">Recorded</th>
+          <th title="Notification stage that fired: radio (early-warning), candidate (tight band), or imminent (±30 s).">Stage</th>
+          <th title="Sun or Moon — which body this entry transits.">Body</th>
+          <th title="IATA flight number, or the ADS-B callsign if no route lookup was available at the time.">Flight</th>
+          <th title="ADS-B 24-bit ICAO hex code identifying the airframe.">ICAO</th>
+          <th title="Origin → Destination IATA codes from the adsbdb.com route lookup.">Route</th>
+          <th title="Aircraft altitude above mean sea level, rounded to the nearest 100 m.">Alt</th>
+          <th title="Ground speed in km/h.">Speed</th>
+          <th title="Line-of-sight distance from the observer to the aircraft at closest approach.">Dist</th>
+          <th title="Minimum angular separation between aircraft and the body disc at closest approach.">Sep</th>
         </tr>
       </thead>
       <tbody><tr class="empty"><td colspan="11">Loading…</td></tr></tbody>
@@ -75,8 +114,78 @@
       <button type="button" class="sketch-close" data-close="1" aria-label="Close">×</button>
       <div id="sketch-body"></div>
       <p class="sketch-hint" id="sketch-title">
-        Aircraft silhouette is generic (≈36 m wingspan); FOV assumes 500 mm focal length on a ZWO ASI174MM sensor (1936×1216 px).
+        Aircraft silhouette is generic (≈36 m wingspan). FOV reflects the
+        focal length + sensor configured in <b>Settings</b>.
       </p>
+    </div>
+  </div>
+
+  <!-- Settings modal: edit Pushover credentials, observer location and the
+       FOV optics. POSTs to /api/config which hot-reloads the running service
+       and writes back to config/observer.json + config/service.json so the
+       next nightly auto-update restart keeps the new values. -->
+  <div id="settings-modal" class="sketch-modal" hidden role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="sketch-backdrop" data-close-settings="1"></div>
+    <div class="sketch-card settings-card">
+      <button type="button" class="sketch-close" data-close-settings="1" aria-label="Close">×</button>
+      <h3 id="settings-title">Settings</h3>
+      <p class="sketch-hint settings-intro">
+        Changes apply live to the running service and are written back to
+        <code>config/observer.json</code> and <code>config/service.json</code>
+        so they survive the next restart. Pushover token + user key are
+        masked once saved; leave the masked value untouched to keep it.
+      </p>
+
+      <form id="settings-form">
+        <fieldset>
+          <legend>Observer</legend>
+          <label>Name <input name="observer.name" type="text" placeholder="Rheine"></label>
+          <label title="Geographic latitude in decimal degrees. North positive.">Latitude °<input name="observer.latitudeDeg" type="number" step="0.0001" required></label>
+          <label title="Geographic longitude in decimal degrees. East positive.">Longitude °<input name="observer.longitudeDeg" type="number" step="0.0001" required></label>
+          <label title="Elevation above mean sea level in metres.">Elevation (m)<input name="observer.elevationM" type="number" step="0.1" required></label>
+          <label title="Site temperature in °C — used for refraction correction. Defaults to 10 °C.">Temperature (°C)<input name="observer.temperatureC" type="number" step="0.1"></label>
+          <label title="Atmospheric pressure in mbar — used for refraction correction. Defaults to 1010.">Pressure (mbar)<input name="observer.pressureMbar" type="number" step="0.1"></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Pushover</legend>
+          <label class="checkbox-row" title="Master switch. When off, no Pushover messages are sent regardless of stage.">
+            <input name="pushover.enabled" type="checkbox"> Enabled
+          </label>
+          <label title="Pushover application token. Get this at pushover.net once you create an application.">App Token <input name="pushover.token" type="text" autocomplete="off" spellcheck="false"></label>
+          <label title="Pushover user key — identifies your account.">User Key <input name="pushover.user" type="text" autocomplete="off" spellcheck="false"></label>
+          <label title="Optional Pushover device identifier. Leave blank to deliver to all devices.">Device <input name="pushover.device" type="text" autocomplete="off"></label>
+          <label title="Lowest stage that triggers a Pushover. radio = earliest, imminent = only the ±30 s final alert.">
+            Minimum stage
+            <select name="pushover.minStage">
+              <option value="radio">radio (all stages)</option>
+              <option value="candidate">candidate</option>
+              <option value="imminent">imminent (only ±30 s)</option>
+            </select>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Telescope &amp; sensor (FOV sketch)</legend>
+          <label title="Effective focal length of the telescope in millimetres.">Focal length (mm)<input name="optics.telescopeFocalMm" type="number" step="0.1" min="1" required></label>
+          <label title="Sensor name / model, shown in the FOV sketch footer.">Sensor model<input name="optics.sensorName" type="text" placeholder="ZWO ASI174MM"></label>
+          <label title="Sensor active area width in millimetres.">Sensor W (mm)<input name="optics.sensorWmm" type="number" step="0.01" min="0.01" required></label>
+          <label title="Sensor active area height in millimetres.">Sensor H (mm)<input name="optics.sensorHmm" type="number" step="0.01" min="0.01" required></label>
+          <label title="Sensor resolution in pixels (horizontal). Currently informational; not used in the geometric FOV.">Sensor W (px)<input name="optics.sensorPxW" type="number" step="1" min="1"></label>
+          <label title="Sensor resolution in pixels (vertical).">Sensor H (px)<input name="optics.sensorPxH" type="number" step="1" min="1"></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>External links</legend>
+          <label title="Override URL for the dump1090 link in the header. Leave blank to use http://<this-host>:8080/.">dump1090 URL<input name="externalLinks.dump1090Url" type="text" placeholder="http://pi.local:8080/"></label>
+        </fieldset>
+
+        <div class="settings-actions">
+          <span id="settings-msg" class="settings-msg"></span>
+          <button type="button" id="settings-cancel" class="btn" data-close-settings="1">Cancel</button>
+          <button type="submit" id="settings-save" class="btn btn-primary">Save</button>
+        </div>
+      </form>
     </div>
   </div>
 

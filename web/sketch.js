@@ -11,10 +11,18 @@
 // telescope keeps the disc fixed and the aircraft sweeps across it.
 
 // ---- Optical setup (edit these to match a different rig) ---------------------
-// 500 mm refractor + ZWO ASI174MM sensor (1936×1216 px, 11.34 × 7.13 mm).
-const TELESCOPE_FOCAL_MM = 500;
-const SENSOR_W_MM = 11.34;
-const SENSOR_H_MM = 7.13;
+// Mutable so the Settings panel can hot-swap focal length + sensor at
+// runtime via setOptics(). Defaults match the original rig (500 mm refractor
+// + ZWO ASI174MM, 1936×1216 px, 11.34 × 7.13 mm) so the sketch still works
+// before /api/config has answered for the first time.
+const OPTICS = {
+  TELESCOPE_FOCAL_MM: 500,
+  SENSOR_W_MM: 11.34,
+  SENSOR_H_MM: 7.13,
+  SENSOR_PX_W: 1936,
+  SENSOR_PX_H: 1216,
+  SENSOR_NAME: 'ZWO ASI174MM',
+};
 
 // Generic airliner silhouette dimensions, used until a per-aircraft type
 // lookup is wired in. ~A320/B737 envelope; off by no more than ~30 % for
@@ -34,8 +42,31 @@ const RAD = 180 / Math.PI;
 function fovDeg(focalMm, sensorMm) {
   return 2 * Math.atan(sensorMm / 2 / focalMm) * RAD;
 }
-const FOV_W_DEG = fovDeg(TELESCOPE_FOCAL_MM, SENSOR_W_MM);  // ≈ 1.30°
-const FOV_H_DEG = fovDeg(TELESCOPE_FOCAL_MM, SENSOR_H_MM);  // ≈ 0.82°
+
+/**
+ * Hot-swap the optical setup at runtime (driven by /api/config). Only keys
+ * that are valid positive numbers are accepted; everything else is ignored
+ * so a malformed payload can't break the sketch.
+ */
+export function setOptics(patch) {
+  if (!patch || typeof patch !== 'object') return;
+  const map = {
+    telescopeFocalMm: 'TELESCOPE_FOCAL_MM',
+    sensorWmm: 'SENSOR_W_MM',
+    sensorHmm: 'SENSOR_H_MM',
+    sensorPxW: 'SENSOR_PX_W',
+    sensorPxH: 'SENSOR_PX_H',
+  };
+  for (const [src, dst] of Object.entries(map)) {
+    if (src in patch) {
+      const v = Number(patch[src]);
+      if (Number.isFinite(v) && v > 0) OPTICS[dst] = v;
+    }
+  }
+  if (typeof patch.sensorName === 'string' && patch.sensorName.trim()) {
+    OPTICS.SENSOR_NAME = patch.sensorName.trim();
+  }
+}
 
 /** Aircraft angular size at distance r (m). Returns degrees. */
 function aircraftAngularDeg(meters, rangeM) {
@@ -222,13 +253,17 @@ function fmtRange(m) {
 export function buildSketchSvg(d) {
   // FOV pixel rectangle, padded to leave room for top header and bottom
   // legend. Aspect ratio is locked to the sensor's, not the SVG canvas.
+  // FOV is recomputed per call so a setOptics() in between two opens of the
+  // popup reflects the new rig without page reload.
+  const fovWDeg = fovDeg(OPTICS.TELESCOPE_FOCAL_MM, OPTICS.SENSOR_W_MM);
+  const fovHDeg = fovDeg(OPTICS.TELESCOPE_FOCAL_MM, OPTICS.SENSOR_H_MM);
   const innerW = SVG_W - 2 * PAD;
   const innerH = SVG_H - HEADER_H - FOOTER_H - 2 * PAD;
-  const pxPerDegW = innerW / FOV_W_DEG;
-  const pxPerDegH = innerH / FOV_H_DEG;
+  const pxPerDegW = innerW / fovWDeg;
+  const pxPerDegH = innerH / fovHDeg;
   const pxPerDeg = Math.min(pxPerDegW, pxPerDegH);
-  const fovPxW = FOV_W_DEG * pxPerDeg;
-  const fovPxH = FOV_H_DEG * pxPerDeg;
+  const fovPxW = fovWDeg * pxPerDeg;
+  const fovPxH = fovHDeg * pxPerDeg;
   const fovX = (SVG_W - fovPxW) / 2;
   const fovY = HEADER_H + PAD + (innerH - fovPxH) / 2;
   const cx = fovX + fovPxW / 2;
@@ -340,7 +375,7 @@ export function buildSketchSvg(d) {
   // Footer line: range, alt, speed, FOV info.
   const footY = SVG_H - PAD + 2;
   const footL = `R ${fmtRange(d.aircraftAt.rangeM)} · Alt ${fmtAlt(d.altMmsl)} · v ${fmtSpeed(d.groundSpeedMs)}`;
-  const footR = `FOV ${FOV_W_DEG.toFixed(2)}° × ${FOV_H_DEG.toFixed(2)}° · ${TELESCOPE_FOCAL_MM} mm`;
+  const footR = `FOV ${fovWDeg.toFixed(2)}° × ${fovHDeg.toFixed(2)}° · ${OPTICS.TELESCOPE_FOCAL_MM} mm · ${OPTICS.SENSOR_NAME}`;
   const footer =
     txt(PAD, footY, footL, { fill: COLOURS.label, size: 11 }) +
     txt(SVG_W - PAD, footY, footR, { fill: COLOURS.label, size: 11, anchor: 'end' });
@@ -359,14 +394,18 @@ export function buildSketchSvg(d) {
   );
 }
 
-// Expose optical setup for tests / external introspection.
-export const SKETCH_OPTICS = Object.freeze({
-  TELESCOPE_FOCAL_MM,
-  SENSOR_W_MM,
-  SENSOR_H_MM,
-  FOV_W_DEG,
-  FOV_H_DEG,
+// Live snapshot of the optical setup. Reflects setOptics() calls. Not frozen
+// so tests / debug code can see the current values, but external code should
+// treat it as read-only — use setOptics() to mutate. FOV_*_DEG remain as
+// computed getters so old tests / consumers keep working.
+Object.defineProperties(OPTICS, {
+  FOV_W_DEG: { enumerable: true, get() { return fovDeg(OPTICS.TELESCOPE_FOCAL_MM, OPTICS.SENSOR_W_MM); } },
+  FOV_H_DEG: { enumerable: true, get() { return fovDeg(OPTICS.TELESCOPE_FOCAL_MM, OPTICS.SENSOR_H_MM); } },
+});
+export const SKETCH_OPTICS = OPTICS;
+export const SKETCH_GEOMETRY = Object.freeze({
   AC_WINGSPAN_M,
   AC_LENGTH_M,
   BODY_DIAMETER_DEG,
+  fovDeg,
 });

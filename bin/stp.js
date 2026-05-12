@@ -30,8 +30,18 @@ const config = readJsonIfExists(servicePath);
 config.webRoot = config.webRoot ?? resolve(ROOT, 'web');
 config.store = config.store ?? {};
 if (!config.store.path) config.store.path = resolve(ROOT, 'data', 'history.db');
+// Default lifecycle snapshot to data/lifecycle.json so the tracking panel
+// survives the nightly auto-update timer and any other restart.
+config.lifecyclePersist = config.lifecyclePersist ?? {};
+if (!config.lifecyclePersist.path) {
+  config.lifecyclePersist.path = resolve(ROOT, 'data', 'lifecycle.json');
+}
 
-const service = await runService({ observer, config });
+const service = await runService({
+  observer,
+  config,
+  configPaths: { observer: observerPath, service: servicePath },
+});
 
 const addr = service.httpServer?.address();
 console.log(`stp listening on http://${addr?.address ?? '?'}:${addr?.port ?? '?'} ` +
