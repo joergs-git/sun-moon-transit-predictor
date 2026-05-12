@@ -2,6 +2,9 @@
 // lookup, notifier, history store and HTTP server together. Exposes a single
 // `runService(config)` entry point used by bin/stp.js and exercised by tests.
 
+import { promises as fsp, existsSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+
 import { fetchAircraft } from './adsb.js';
 import { RouteLookup } from './adsbdb.js';
 import { bodyAzEl, isObservable } from './geometry.js';
@@ -41,6 +44,27 @@ export const DEFAULT_CONFIG = {
   },
   server: { port: 8081, host: '0.0.0.0', publicUrl: '' },
   store: { path: './data/history.db' },
+  // Optical setup for the FOV sketch popup. Editable from the web Settings
+  // panel; persisted into config/service.json so a restart preserves it.
+  optics: {
+    telescopeFocalMm: 500,
+    sensorWmm: 11.34,
+    sensorHmm: 7.13,
+    sensorPxW: 1936,
+    sensorPxH: 1216,
+    sensorName: 'ZWO ASI174MM',
+  },
+  // Where to write the periodic lifecycle snapshot used to repopulate the
+  // tracking panel after a service restart. Set to '' to disable persistence.
+  lifecyclePersist: {
+    path: './data/lifecycle.json',
+    snapshotIntervalMs: 30_000,
+  },
+  // External tools accessible from the web UI footer. dump1090's status page
+  // typically lives on port 8080 of the same host that runs this service.
+  externalLinks: {
+    dump1090Url: '',          // empty → frontend derives from window.location
+  },
   routes: { enabled: true, ttlMs: 3600_000, negativeTtlMs: 300_000 },
   predictor: {
     enabled: true,
@@ -86,6 +110,9 @@ function mergeConfig(user) {
     predictor: { ...DEFAULT_CONFIG.predictor, ...(user.predictor ?? {}) },
     opensky:   { ...DEFAULT_CONFIG.opensky,   ...(user.opensky   ?? {}) },
     lifecycle: { ...DEFAULT_CONFIG.lifecycle, ...(user.lifecycle ?? {}) },
+    optics:    { ...DEFAULT_CONFIG.optics,    ...(user.optics    ?? {}) },
+    lifecyclePersist: { ...DEFAULT_CONFIG.lifecyclePersist, ...(user.lifecyclePersist ?? {}) },
+    externalLinks:    { ...DEFAULT_CONFIG.externalLinks,    ...(user.externalLinks    ?? {}) },
   };
 }
 
@@ -99,6 +126,7 @@ function mergeConfig(user) {
  *   fetchImpl?: typeof fetch,
  *   noServer?: boolean,
  *   store?: HistoryStore,
+ *   configPaths?: { service?: string, observer?: string },
  * }} args
  */
 export async function runService({
@@ -108,6 +136,7 @@ export async function runService({
   fetchImpl = fetch,
   noServer = false,
   store: providedStore,
+  configPaths = {},
 }) {
   const config = mergeConfig(userConfig);
   const store = providedStore ?? new HistoryStore(config.store.path);
@@ -138,12 +167,56 @@ export async function runService({
     expected: [],              // backward-compat: predictor watchlist (24 h)
     lifecycle: [],             // primary unified view used by the new UI
     watchlistMeta: { lastBuildMs: 0, entries: 0 },
+    optics: config.optics,     // surfaced so the FOV sketch picks up edits live
+    externalLinks: config.externalLinks,
   };
 
   // Lifecycle map persists across ticks — that's what gives the UI the
   // "no candidate anymore" grace period and a single dynamic list to read.
+  // It is also snapshotted to disk (config.lifecyclePersist.path) so a
+  // service restart does NOT empty the tracking panel — see the load below.
   /** @type {Map<string, import('./lifecycle.js').LifecycleEntry>} */
   let lifecycleMap = new Map();
+  let lastLifecycleSnapshotMs = 0;
+
+  if (config.lifecyclePersist?.path) {
+    try {
+      if (existsSync(config.lifecyclePersist.path)) {
+        const raw = await fsp.readFile(config.lifecyclePersist.path, 'utf8');
+        const snap = JSON.parse(raw);
+        if (Array.isArray(snap?.entries)) {
+          // Drop entries whose closest-approach time is more than 10 min in
+          // the past — they would only confuse the UI after a long downtime.
+          const cutoff = Date.now() - 10 * 60_000;
+          for (const e of snap.entries) {
+            if (typeof e?.closestApproachAtMs !== 'number') continue;
+            if (e.closestApproachAtMs < cutoff && e.status !== 'planned') continue;
+            // Mark restored entries as stale until the next tick reaffirms
+            // them — they have no live ADS-B match by definition right now.
+            lifecycleMap.set(e.key, { ...e, status: e.status === 'planned' ? 'planned' : 'stale' });
+          }
+          logger.info?.(`lifecycle: restored ${lifecycleMap.size} entries from ${config.lifecyclePersist.path}`);
+        }
+      }
+    } catch (e) {
+      logger.warn?.('lifecycle snapshot load failed:', e?.message ?? e);
+    }
+  }
+
+  async function snapshotLifecycle() {
+    if (!config.lifecyclePersist?.path) return;
+    try {
+      const dir = dirname(config.lifecyclePersist.path);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      const payload = {
+        savedAtMs: Date.now(),
+        entries: Array.from(lifecycleMap.values()),
+      };
+      await fsp.writeFile(config.lifecyclePersist.path, JSON.stringify(payload), 'utf8');
+    } catch (e) {
+      logger.warn?.('lifecycle snapshot save failed:', e?.message ?? e);
+    }
+  }
 
   // History-based predictor — pulled into the tick loop so /api/state stays
   // a single source of truth. Re-build the watchlist on a slow cadence
@@ -188,12 +261,142 @@ export async function runService({
     }
   }
 
+  // Build a sanitised view of the runtime config for the Settings panel.
+  // Secrets (Pushover token / user key) are masked so they never leak through
+  // /api/config even if the page is loaded over a non-TLS link from a third
+  // party — only the last 4 chars are returned to confirm "something is set".
+  function publicConfig() {
+    const mask = (s) => (s ? `••••${String(s).slice(-4)}` : '');
+    return {
+      observer: { ...observer, _path: configPaths.observer ?? null },
+      pushover: {
+        enabled: config.pushover.enabled,
+        minStage: config.pushover.minStage,
+        device: config.pushover.device ?? '',
+        tokenMasked: mask(config.pushover.token),
+        userMasked:  mask(config.pushover.user),
+        hasToken: Boolean(config.pushover.token),
+        hasUser:  Boolean(config.pushover.user),
+      },
+      optics: { ...config.optics },
+      externalLinks: { ...config.externalLinks },
+      tracker: { ...config.tracker },
+      _servicePath: configPaths.service ?? null,
+    };
+  }
+
+  /**
+   * Apply a partial config update from the Settings UI. Hot-reloads pushover
+   * credentials, observer location and optics in-place — the running service
+   * does NOT need a restart for the user's three target areas. Persists
+   * changes to disk so the next cold start (and the next nightly auto-update
+   * timer) keep the new values.
+   *
+   * @param {{ observer?: object, pushover?: object, optics?: object,
+   *          externalLinks?: object }} patch
+   */
+  async function applyConfigUpdate(patch) {
+    const warnings = [];
+    const applied = {};
+
+    if (patch.observer && typeof patch.observer === 'object') {
+      const o = patch.observer;
+      const numKeys = ['latitudeDeg', 'longitudeDeg', 'elevationM', 'temperatureC', 'pressureMbar'];
+      for (const k of numKeys) {
+        if (k in o) {
+          const v = Number(o[k]);
+          if (!Number.isFinite(v)) throw new Error(`observer.${k} must be a number`);
+          observer[k] = v;
+        }
+      }
+      if (typeof o.name === 'string') observer.name = o.name;
+      applied.observer = { ...observer };
+      if (configPaths.observer) await fsp.writeFile(configPaths.observer, JSON.stringify(observer, null, 2), 'utf8');
+    }
+
+    if (patch.pushover && typeof patch.pushover === 'object') {
+      const p = patch.pushover;
+      if (typeof p.token === 'string' && p.token && !p.token.startsWith('••••')) {
+        config.pushover.token = p.token.trim();
+      }
+      if (typeof p.user === 'string' && p.user && !p.user.startsWith('••••')) {
+        config.pushover.user = p.user.trim();
+      }
+      if (typeof p.device === 'string') config.pushover.device = p.device.trim();
+      if (typeof p.enabled === 'boolean') config.pushover.enabled = p.enabled;
+      if (typeof p.minStage === 'string'
+          && ['radio', 'candidate', 'imminent'].includes(p.minStage)) {
+        config.pushover.minStage = p.minStage;
+        notifier.minStage = p.minStage;
+      }
+      // PushoverClient reads this.config on every send() call → in-place mutation
+      // is enough; no client reconstruction needed.
+      pushover.config = config.pushover;
+      applied.pushover = {
+        enabled: config.pushover.enabled,
+        minStage: config.pushover.minStage,
+        device: config.pushover.device,
+        hasToken: Boolean(config.pushover.token),
+        hasUser:  Boolean(config.pushover.user),
+      };
+    }
+
+    if (patch.optics && typeof patch.optics === 'object') {
+      const o = patch.optics;
+      const numKeys = ['telescopeFocalMm', 'sensorWmm', 'sensorHmm', 'sensorPxW', 'sensorPxH'];
+      for (const k of numKeys) {
+        if (k in o) {
+          const v = Number(o[k]);
+          if (!Number.isFinite(v) || v <= 0) throw new Error(`optics.${k} must be a positive number`);
+          config.optics[k] = v;
+        }
+      }
+      if (typeof o.sensorName === 'string') config.optics.sensorName = o.sensorName;
+      applied.optics = { ...config.optics };
+    }
+
+    if (patch.externalLinks && typeof patch.externalLinks === 'object') {
+      if (typeof patch.externalLinks.dump1090Url === 'string') {
+        config.externalLinks.dump1090Url = patch.externalLinks.dump1090Url.trim();
+      }
+      applied.externalLinks = { ...config.externalLinks };
+    }
+
+    // Persist the service-level changes (pushover, optics, externalLinks)
+    // back to service.json. observer.json is written separately above.
+    if (configPaths.service) {
+      try {
+        // Read-modify-write so we don't clobber fields the UI doesn't expose.
+        let existing = {};
+        if (existsSync(configPaths.service)) {
+          try { existing = JSON.parse(await fsp.readFile(configPaths.service, 'utf8')); }
+          catch { /* fall through */ }
+        }
+        const merged = {
+          ...existing,
+          pushover:      { ...(existing.pushover      ?? {}), ...config.pushover },
+          optics:        { ...(existing.optics        ?? {}), ...config.optics },
+          externalLinks: { ...(existing.externalLinks ?? {}), ...config.externalLinks },
+        };
+        await fsp.writeFile(configPaths.service, JSON.stringify(merged, null, 2), 'utf8');
+      } catch (e) {
+        warnings.push(`could not persist service.json: ${e.message ?? e}`);
+      }
+    } else {
+      warnings.push('no service config path provided — changes are in memory only');
+    }
+
+    return { ok: true, applied, warnings };
+  }
+
   const httpServer = noServer ? null : createHttpServer({
     port: config.server.port,
     host: config.server.host,
     getState: () => state,
     store,
     webRoot: config.webRoot,
+    getConfig: () => publicConfig(),
+    updateConfig: applyConfigUpdate,
   });
   if (httpServer) await httpServer.start();
 
@@ -258,6 +461,14 @@ export async function runService({
     });
     state.lifecycle = lifecycleArray(lifecycleMap, nowMs);
 
+    // Persist lifecycle on a slow cadence so a restart can repopulate the UI.
+    // Cheap (< 5 KB), async, and we never block the tick on the write.
+    if (config.lifecyclePersist?.path
+        && nowMs - lastLifecycleSnapshotMs >= (config.lifecyclePersist.snapshotIntervalMs ?? 30_000)) {
+      lastLifecycleSnapshotMs = nowMs;
+      snapshotLifecycle();
+    }
+
     try {
       await notifier.tick(enriched, nowMs);
     } catch (e) {
@@ -299,6 +510,9 @@ export async function runService({
     async stop() {
       stopping = true;
       if (intervalHandle) clearInterval(intervalHandle);
+      // Flush lifecycle snapshot before tearing down so SIGTERM right after
+      // a tick still leaves a fresh tracking list on disk for the next start.
+      await snapshotLifecycle();
       if (httpServer) await httpServer.stop();
       store.close();
     },

@@ -1,4 +1,4 @@
-import { buildSketchSvg, fromHistoryRow, fromLifecycleEntry } from './sketch.js';
+import { buildSketchSvg, fromHistoryRow, fromLifecycleEntry, setOptics } from './sketch.js';
 
 const STATE_INTERVAL_MS = 2000;
 const HISTORY_INTERVAL_MS = 15000;
@@ -139,6 +139,10 @@ async function pollState() {
     const state = await res.json();
     renderSky(state);
     renderTracking(state);
+    // Push live optics into the FOV sketch module so a Settings edit is
+    // reflected the next time the user opens the popup, without a reload.
+    if (state.optics) setOptics(state.optics);
+    if (state.externalLinks) applyExternalLinks(state.externalLinks);
     const status = $('#status');
     const age = Math.round((Date.now() - state.lastUpdateMs) / 1000);
     status.textContent = `live · ${age}s ago · ${state.aircraftCount ?? 0} aircraft`;
@@ -154,6 +158,16 @@ async function pollState() {
     status.textContent = `disconnected: ${e.message ?? e}`;
     status.className = 'status stale';
   }
+}
+
+// Compose the dump1090 link target. If the server config overrides it, use
+// that verbatim; otherwise derive http://<current-host>:8080/ so opening the
+// UI from any LAN client lands on the right machine.
+function applyExternalLinks(links) {
+  const a = $('#dump1090-link');
+  if (!a) return;
+  const explicit = (links?.dump1090Url ?? '').trim();
+  a.href = explicit || `${window.location.protocol}//${window.location.hostname}:8080/`;
 }
 
 async function pollHistory() {
@@ -205,6 +219,122 @@ document.body.addEventListener('click', (ev) => {
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && !modal.hidden) closeSketch();
 });
+
+// ---- Settings panel ---------------------------------------------------------
+// Loads /api/config, fills the form, lets the user edit and POSTs back. The
+// server hot-reloads Pushover credentials, observer location and optics and
+// writes through to the on-disk configs so the next restart keeps the new
+// values.
+const settingsModal = $('#settings-modal');
+const settingsForm = $('#settings-form');
+const settingsMsg = $('#settings-msg');
+
+function setNested(obj, dottedKey, value) {
+  const parts = dottedKey.split('.');
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    cur[parts[i]] = cur[parts[i]] ?? {};
+    cur = cur[parts[i]];
+  }
+  cur[parts[parts.length - 1]] = value;
+}
+
+function getNested(obj, dottedKey) {
+  return dottedKey.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+
+function fillSettingsForm(cfg) {
+  // Each <input name="a.b.c"> maps to a path inside the config object.
+  for (const el of settingsForm.elements) {
+    if (!el.name) continue;
+    let v = getNested(cfg, el.name);
+    // Pushover token/user come back masked — show the mask so the user can
+    // tell something is configured without exposing the secret.
+    if (el.name === 'pushover.token') v = cfg.pushover?.tokenMasked ?? '';
+    if (el.name === 'pushover.user')  v = cfg.pushover?.userMasked  ?? '';
+    if (el.type === 'checkbox') el.checked = Boolean(v);
+    else if (v == null) el.value = '';
+    else el.value = v;
+  }
+}
+
+async function openSettings() {
+  settingsMsg.textContent = '';
+  try {
+    const res = await fetch('/api/config');
+    if (!res.ok) throw new Error(`/api/config ${res.status}`);
+    const cfg = await res.json();
+    fillSettingsForm(cfg);
+    settingsModal.hidden = false;
+  } catch (e) {
+    settingsMsg.textContent = `load failed: ${e.message ?? e}`;
+    settingsMsg.className = 'settings-msg err';
+    settingsModal.hidden = false;
+  }
+}
+
+function closeSettings() {
+  settingsModal.hidden = true;
+}
+
+settingsForm.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const patch = {};
+  for (const el of settingsForm.elements) {
+    if (!el.name) continue;
+    let value;
+    if (el.type === 'checkbox') value = el.checked;
+    else if (el.type === 'number') {
+      // Skip empty number fields — preserves the optional ones (temperature,
+      // pressure) when the user leaves them blank.
+      if (el.value === '') continue;
+      value = Number(el.value);
+      if (!Number.isFinite(value)) continue;
+    } else {
+      value = el.value;
+      // Don't ship the masked placeholder back as the new secret. The server
+      // also guards against this but stripping it here makes the intent clear.
+      if ((el.name === 'pushover.token' || el.name === 'pushover.user')
+          && typeof value === 'string' && value.startsWith('••••')) continue;
+    }
+    setNested(patch, el.name, value);
+  }
+  settingsMsg.textContent = 'saving…';
+  settingsMsg.className = 'settings-msg';
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    settingsMsg.textContent = body.warnings?.length
+      ? `saved · ${body.warnings.join('; ')}`
+      : 'saved';
+    settingsMsg.className = 'settings-msg ok';
+    // Re-poll state immediately so the live UI picks up new optics / location.
+    pollState();
+  } catch (e) {
+    settingsMsg.textContent = `save failed: ${e.message ?? e}`;
+    settingsMsg.className = 'settings-msg err';
+  }
+});
+
+$('#settings-btn').addEventListener('click', openSettings);
+document.body.addEventListener('click', (ev) => {
+  if (ev.target.closest('[data-close-settings="1"]')) closeSettings();
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && !settingsModal.hidden) closeSettings();
+});
+
+// Pin the copyright year so it always matches the runtime — saves having to
+// edit the HTML on every January 1st.
+$('#copyright-year').textContent = String(new Date().getFullYear());
+// Pre-populate the dump1090 link with a sensible default before /api/state
+// answers, so the link works even during the initial loading window.
+applyExternalLinks({});
 
 pollState();
 pollHistory();
