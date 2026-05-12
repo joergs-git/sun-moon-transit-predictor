@@ -24,13 +24,48 @@ body {
 header {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
   border-bottom: 1px solid var(--line);
   padding: 16px 0;
   margin-bottom: 16px;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
+.brand { display: flex; flex-direction: column; gap: 4px; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+
 h1 { font-size: 18px; margin: 0; }
+
+/* Identity line: copyright + repo + external links. Muted by default so it
+   reads as metadata, not as part of the live status row. */
+.identity {
+  color: var(--muted);
+  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.identity a { color: var(--accent); text-decoration: none; }
+.identity a:hover { text-decoration: underline; }
+.identity .sep { color: var(--line); }
+
+/* Buttons. Used for the Settings toggle in the header and the modal actions.
+   Same look across both so the affordance is consistent. */
+.btn {
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn-primary { background: var(--accent); color: #1a1300; border-color: var(--accent); }
+.btn-primary:hover { color: #1a1300; filter: brightness(1.1); }
 h2 { font-size: 14px; margin: 16px 0 8px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; }
 
 .status { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); }
@@ -165,3 +200,57 @@ tr.sketchable.row-imminent:hover td { background: rgba(240, 160, 32, 0.16); }
   text-align: center;
   font-size: 13px;
 }
+
+/* Settings modal. Same chrome as the FOV sketch popup so the two read as one
+   family. Form uses a two-column grid of label/input pairs grouped into
+   fieldsets — compact enough to fit on a phone in portrait. */
+.settings-card { width: min(560px, calc(100vw - 32px)); padding: 18px 20px 16px; }
+.settings-card h3 { margin: 0 0 6px; color: var(--accent); font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; }
+.settings-intro { margin: 0 0 12px; max-width: 100%; }
+.settings-card fieldset {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px 12px 12px;
+  margin: 0 0 10px;
+}
+.settings-card legend { color: var(--accent); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; padding: 0 4px; }
+.settings-card label {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.settings-card label.checkbox-row { grid-template-columns: auto 1fr; color: var(--fg); }
+.settings-card input[type="text"],
+.settings-card input[type="number"],
+.settings-card select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 4px 6px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  width: 100%;
+}
+.settings-card input:focus, .settings-card select:focus { outline: none; border-color: var(--accent); }
+.settings-card code { color: var(--accent); }
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.settings-msg {
+  font-size: 12px;
+  color: var(--muted);
+  margin-right: auto;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.settings-msg.ok  { color: var(--ok); }
+.settings-msg.err { color: var(--warn); }

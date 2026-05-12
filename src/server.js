@@ -47,6 +47,31 @@ async function serveStatic(req, res, webRoot) {
   }
 }
 
+async function readJsonBody(req, maxBytes = 64 * 1024) {
+  // Small JSON bodies only — the settings editor sends a few KB at most.
+  // Bigger payloads are rejected outright to keep this tiny server safe from
+  // memory-exhaustion shenanigans without pulling in a body-parser dep.
+  return new Promise((resolveBody, rejectBody) => {
+    const chunks = [];
+    let total = 0;
+    req.on('data', (chunk) => {
+      total += chunk.length;
+      if (total > maxBytes) {
+        rejectBody(new Error('request body too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      if (chunks.length === 0) return resolveBody({});
+      try { resolveBody(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+      catch (e) { rejectBody(e); }
+    });
+    req.on('error', rejectBody);
+  });
+}
+
 /**
  * @param {{
  *   port: number,
@@ -54,16 +79,34 @@ async function serveStatic(req, res, webRoot) {
  *   getState: () => object,
  *   store: import('./store.js').HistoryStore,
  *   webRoot: string,
+ *   getConfig?: () => object,
+ *   updateConfig?: (patch: object) => Promise<{ ok: boolean, applied: object, warnings?: string[] }>,
  * }} opts
  */
 export function createHttpServer(opts) {
-  const { port, host = '0.0.0.0', getState, store, webRoot } = opts;
+  const { port, host = '0.0.0.0', getState, store, webRoot, getConfig, updateConfig } = opts;
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
     try {
       if (url.pathname === '/api/state') {
         return jsonResponse(res, 200, getState());
+      }
+      if (url.pathname === '/api/config' && req.method === 'GET') {
+        if (!getConfig) return jsonResponse(res, 404, { error: 'config api disabled' });
+        return jsonResponse(res, 200, getConfig());
+      }
+      if (url.pathname === '/api/config' && req.method === 'POST') {
+        if (!updateConfig) return jsonResponse(res, 404, { error: 'config api disabled' });
+        let body;
+        try { body = await readJsonBody(req); }
+        catch (e) { return jsonResponse(res, 400, { error: `bad json: ${e.message}` }); }
+        try {
+          const result = await updateConfig(body);
+          return jsonResponse(res, 200, result);
+        } catch (e) {
+          return jsonResponse(res, 400, { error: String(e?.message ?? e) });
+        }
       }
       if (url.pathname === '/api/history') {
         const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') ?? '100')));
