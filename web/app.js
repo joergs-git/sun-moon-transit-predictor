@@ -140,9 +140,12 @@ async function pollState() {
     renderSky(state);
     renderTracking(state);
     // Push live optics into the FOV sketch module so a Settings edit is
-    // reflected the next time the user opens the popup, without a reload.
+    // reflected on the next render of the inline preview pane.
     if (state.optics) setOptics(state.optics);
     if (state.externalLinks) applyExternalLinks(state.externalLinks);
+    // The preview pane needs the latest lifecycle on every tick — both to
+    // pick a fresh auto entry and to refresh the pinned row's highlight.
+    refreshFovPane();
     const status = $('#status');
     const age = Math.round((Date.now() - state.lastUpdateMs) / 1000);
     status.textContent = `live · ${age}s ago · ${state.aircraftCount ?? 0} aircraft`;
@@ -176,48 +179,173 @@ async function pollHistory() {
     if (!res.ok) return;
     const { events } = await res.json();
     renderHistory(events);
+    // History repaint wipes the pinned-row marker class — re-apply.
+    highlightPinnedRow();
   } catch { /* ignore */ }
 }
 
-// ---- FOV sketch popup --------------------------------------------------------
-// Delegated click handler on document.body so it survives table re-renders
-// without needing to re-attach listeners every poll tick.
-const modal = $('#sketch-modal');
-const modalBody = $('#sketch-body');
-
-function openSketchFor(source, index) {
-  const idx = Number(index);
-  let input = null;
-  if (source === 'live') {
-    const entry = lastLifecycle[idx];
-    input = entry ? fromLifecycleEntry(entry) : null;
-  } else if (source === 'history') {
-    const row = lastHistory[idx];
-    input = row ? fromHistoryRow(row) : null;
-  }
-  if (!input) {
-    modalBody.innerHTML =
-      '<p class="sketch-empty">No geometry available for this row yet — wait for the next live update, ' +
-      'or this entry pre-dates the FOV sketch feature.</p>';
-  } else {
-    modalBody.innerHTML = buildSketchSvg(input);
-  }
-  modal.hidden = false;
+// Local wall-clock readout in the header. Self-correcting (re-reads
+// Date.now() every tick) so a sleeping tab doesn't drift.
+function tickClock() {
+  const now = new Date();
+  $('#clock').textContent = now.toLocaleTimeString();
 }
 
-function closeSketch() {
-  modal.hidden = true;
-  modalBody.innerHTML = '';
+// ---- FOV preview pane --------------------------------------------------------
+// Single-slot panel in the sky row. The pane decides what to show on every
+// state poll:
+//   * Auto mode: pick the newest live lifecycle entry whose minimum
+//     separation is under FOV_NEAR_DEG and that carries usable geometry.
+//     "Newest" = highest firstSeenMs.
+//   * Pinned mode: the user clicked a row → that row stays on screen until
+//     a live candidate with a *later* firstSeenMs (and sep < FOV_NEAR_DEG)
+//     comes in, at which point the pin is released and auto resumes.
+// Replacing the row click handler keeps the table interaction familiar but
+// removes the modal entirely.
+const FOV_NEAR_DEG = 1.0;
+
+const fovBody = $('#fov-body');
+const fovMode = $('#fov-mode');
+const fovHint = $('#fov-hint');
+
+/** @type {{ key: string, firstSeenMs: number, input: object, label: string } | null} */
+let pin = null;
+
+function entryHasGeometry(entry) {
+  const c = entry?.candidate;
+  return Boolean(c?.aircraftAtClosest && c?.bodyAtClosest);
+}
+
+function isQualifyingLifecycle(entry) {
+  // "close enough for an intersection" → angular separation strictly under
+  // FOV_NEAR_DEG, AND we actually have geometry to render. Stale entries
+  // can still qualify so the user gets a last-known view of a fly-by that
+  // already happened, as long as the geometry is intact.
+  if (!entry) return false;
+  if (!Number.isFinite(entry.closestApproachSepDeg)) return false;
+  if (entry.closestApproachSepDeg >= FOV_NEAR_DEG) return false;
+  return entryHasGeometry(entry);
+}
+
+function pickAutoEntry(lifecycle) {
+  // Pick the newest qualifying entry. Lifecycle order in /api/state is by
+  // urgency, not by firstSeenMs, so we do a single pass.
+  let best = null;
+  for (const e of lifecycle) {
+    if (!isQualifyingLifecycle(e)) continue;
+    if (!best || (e.firstSeenMs ?? 0) > (best.firstSeenMs ?? 0)) best = e;
+  }
+  return best;
+}
+
+function renderFovEmpty(message) {
+  fovBody.innerHTML = `<p class="fov-placeholder">${message}</p>`;
+  fovMode.textContent = 'auto';
+  fovMode.classList.remove('pinned');
+  fovMode.title = 'auto = newest live candidate with sep < 1°. No candidate currently qualifies.';
+}
+
+function renderFovSketch(input, { pinned, label }) {
+  fovBody.innerHTML = buildSketchSvg(input);
+  fovMode.textContent = pinned ? 'pinned' : 'auto';
+  fovMode.classList.toggle('pinned', pinned);
+  fovMode.title = pinned
+    ? `pinned to ${label} — click another row to switch, or wait for a newer candidate (sep < 1°) to take over.`
+    : `auto: ${label}. Click any row to pin a specific entry.`;
+}
+
+function highlightPinnedRow() {
+  // The pinned row gets a colored bar on the left — drawn after each render
+  // because the table is rebuilt on every poll tick.
+  for (const tr of document.querySelectorAll('tr.fov-pinned')) tr.classList.remove('fov-pinned');
+  if (!pin) return;
+  // Live lifecycle rows match by lifecycle key — stable across ticks.
+  for (const tr of document.querySelectorAll('tr.sketchable[data-source="live"]')) {
+    const idx = Number(tr.dataset.index);
+    if (lastLifecycle[idx]?.key === pin.key) { tr.classList.add('fov-pinned'); return; }
+  }
+  // History rows fall back to (icao, closest_at_ms) — both columns are
+  // already on the row's underlying record.
+  if (pin.key.startsWith('history:')) {
+    for (const tr of document.querySelectorAll('tr.sketchable[data-source="history"]')) {
+      const idx = Number(tr.dataset.index);
+      const row = lastHistory[idx];
+      if (!row) continue;
+      if (`history:${row.icao}|${row.body}|${row.closest_at_ms}` === pin.key) {
+        tr.classList.add('fov-pinned');
+        return;
+      }
+    }
+  }
+}
+
+function describeEntry(entry) {
+  const flight = entry.flight ?? entry.callsign ?? entry.icao ?? '—';
+  const sep = Number.isFinite(entry.closestApproachSepDeg)
+    ? `${(entry.closestApproachSepDeg * 60).toFixed(1)}'`
+    : '—';
+  return `${entry.body} · ${flight} · sep ${sep}`;
+}
+
+function refreshFovPane() {
+  const auto = pickAutoEntry(lastLifecycle);
+
+  // Pin invalidation: a *newer* qualifying live candidate displaces the
+  // pin. "Newer" is judged by firstSeenMs > the firstSeenMs we captured
+  // when the user clicked. Equal timestamps do NOT displace (so an
+  // auto-picked entry that was already there before the click stays
+  // out of the way).
+  if (pin && auto && (auto.firstSeenMs ?? 0) > pin.firstSeenMs) {
+    pin = null;
+  }
+
+  if (pin) {
+    renderFovSketch(pin.input, { pinned: true, label: pin.label });
+  } else if (auto) {
+    renderFovSketch(fromLifecycleEntry(auto),
+      { pinned: false, label: describeEntry(auto) });
+  } else {
+    renderFovEmpty(
+      `No close approach right now (sep &lt; ${FOV_NEAR_DEG.toFixed(0)}°). ` +
+      'Click any tracking or history row to pin a specific transit here.',
+    );
+  }
+  highlightPinnedRow();
+}
+
+function pinFromRow(source, index) {
+  const idx = Number(index);
+  if (source === 'live') {
+    const entry = lastLifecycle[idx];
+    const input = entry ? fromLifecycleEntry(entry) : null;
+    if (!input) return;
+    pin = { key: entry.key, firstSeenMs: Date.now(), input, label: describeEntry(entry) };
+  } else if (source === 'history') {
+    const row = lastHistory[idx];
+    const input = row ? fromHistoryRow(row) : null;
+    if (!input) return;
+    // History pin key is synthetic so the pin invalidator can't collide it
+    // with any live lifecycle entry — history rows never get displaced by
+    // an older live tick that happens to share an ICAO.
+    const key = `history:${row.icao}|${row.body}|${row.closest_at_ms}`;
+    pin = {
+      key,
+      firstSeenMs: Date.now(),
+      input,
+      label: `${row.body} · ${row.flight ?? row.callsign ?? row.icao} (history)`,
+    };
+  }
+  refreshFovPane();
 }
 
 document.body.addEventListener('click', (ev) => {
-  const t = ev.target;
-  if (t.closest('[data-close="1"]')) { closeSketch(); return; }
-  const row = t.closest('tr.sketchable');
-  if (row) openSketchFor(row.dataset.source, row.dataset.index);
+  const row = ev.target.closest('tr.sketchable');
+  if (row) pinFromRow(row.dataset.source, row.dataset.index);
 });
+// Esc unpins, restoring auto mode — discoverable shortcut without a UI
+// button cluttering the sky-row pane.
 document.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && !modal.hidden) closeSketch();
+  if (ev.key === 'Escape' && pin) { pin = null; refreshFovPane(); }
 });
 
 // ---- Settings panel ---------------------------------------------------------
@@ -335,6 +463,14 @@ $('#copyright-year').textContent = String(new Date().getFullYear());
 // Pre-populate the dump1090 link with a sensible default before /api/state
 // answers, so the link works even during the initial loading window.
 applyExternalLinks({});
+
+// Seed the preview pane with the placeholder copy so it isn't blank during
+// the brief window before the first /api/state response.
+refreshFovPane();
+
+// Wall-clock tick: render immediately then every second.
+tickClock();
+setInterval(tickClock, 1000);
 
 pollState();
 pollHistory();

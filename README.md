@@ -83,6 +83,7 @@ without a monitor, keyboard, or any client connected.
 | M11 | Lifecycle pipeline: planned → radio → candidate → imminent → stale, with `horizonS=300` default, unified UI panel | done |
 | M12 | FOV sketch popup: per-row preview of disc + aircraft + apparent transit line in the 500 mm / ASI174MM frame | done |
 | M13 | In-browser Settings panel (Pushover, observer, optics) + cross-restart tracking-list persistence | done |
+| M14 | Inline FOV preview pane (auto-tracks newest sep&lt;1° candidate, click-to-pin) + live header clock | done |
 
 ## Quick install on the Pi 5
 
@@ -718,19 +719,25 @@ fewer false-positive watchlist entries.
   Transit time, callsign, IATA flight, origin / destination, body, minimum
   separation, altitude and speed.
 
-### FOV sketch popup (v0.6.0+)
+### FOV preview pane (v0.7.1+)
 
-Click any row in the **Tracking** or **History** panel to open a popup
-that visualises the transit as it would appear in the eyepiece / camera
-frame:
+Top right of the page, beside **Sky now**, sits a permanent FOV
+preview pane (originally a click-to-open modal, v0.6.0). It auto-shows
+the most recently spotted live candidate whose minimum angular
+separation is under **1°** — i.e. visually close enough to actually
+intersect or graze the body — and refreshes on every 2 s state poll.
+Clicking a row in **Tracking** or **History** pins that entry into the
+pane (an orange bar marks the pinned row); the pin is released as soon
+as a newer qualifying live candidate (sep < 1°) arrives. Press
+**Escape** at any time to drop the pin and resume auto-tracking.
 
-- **FOV rectangle** sized to the default optical setup —
-  **500 mm focal length + ZWO ASI174MM** (sensor 11.34 × 7.13 mm,
-  1936 × 1216 px → FOV **1.30° × 0.82°**). Tweak the constants at the
-  top of `web/sketch.js` for a different rig; nothing on the backend
-  needs to change.
-- **Sun / Moon disc** centred at the body's apparent diameter (Sun
-  0.53°, Moon 0.52°).
+The sketch itself shows:
+
+- **FOV rectangle** sized to the optical setup configured in
+  **Settings** (default 500 mm + ZWO ASI174MM → FOV ≈ 1.30° × 0.82°);
+  changes take effect on the next poll, no reload needed.
+- **Sun / Moon disc** centred at the body's apparent diameter
+  (Sun 0.53°, Moon 0.52°).
 - **Aircraft silhouette** scaled by line-of-sight distance using a
   generic ~36 m airliner footprint — at 10 km this works out to
   ~0.2°, roughly a third of the Sun's diameter.
@@ -741,9 +748,9 @@ frame:
   a tracking mount keeping the disc centred.
 
 The sketch is built client-side from a small `transitPath` array that
-the tracker now attaches to every `TransitCandidate`. History rows
-written before v0.6.0 still open the popup, but without the motion
-line (the disc + aircraft anchor point are derived from the existing
+the tracker attaches to every `TransitCandidate`. History rows written
+before v0.6.0 can still be pinned, but without the motion line (the
+disc + aircraft anchor point are derived from the existing
 `payload_json`).
 
 ### Settings panel (v0.7.0+)
@@ -760,8 +767,8 @@ form for the three configuration areas you actually touch in the field:
   leak the secret. Leaving the masked value untouched on save keeps
   the existing credentials.
 - **Telescope & sensor** — focal length, sensor width/height in mm,
-  pixel count, and a free-text sensor name. The FOV sketch picks the
-  new optics up on the next popup without a page reload.
+  pixel count, and a free-text sensor name. The FOV preview pane picks
+  the new optics up on the next state poll, no reload needed.
 - **External links** — optional override for the dump1090 status-page
   URL surfaced in the header (defaults to
   `http://<this-host>:8080/`).
