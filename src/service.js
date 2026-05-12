@@ -35,6 +35,11 @@ export const DEFAULT_CONFIG = {
   pushover: {
     token: '', user: '', device: '', enabled: false,
     minStage: 'radio',        // default: emit all three stages
+    // Pushover-only filter on the radio band. Tracker still surfaces all
+    // matches inside tracker.looseThresholdDeg (default 5°) to the tracking
+    // panel, but the phone only buzzes for radio events whose projected
+    // separation is at or below this much tighter threshold (default 1°).
+    radioThresholdDeg: 1.0,
   },
   lifecycle: {
     plannedWindowMs: 3600_000,    // surface watchlist entries within ±1 h
@@ -153,6 +158,7 @@ export async function runService({
       catch (e) { logger.error?.('store record failed:', e); }
     },
     minStage: config.pushover.minStage ?? 'radio',
+    radioThresholdDeg: config.pushover.radioThresholdDeg,
     imminentWindowMs: config.lifecycle.imminentWindowMs,
     baseUrl: config.server.publicUrl || undefined,
   });
@@ -273,6 +279,7 @@ export async function runService({
         enabled: config.pushover.enabled,
         minStage: config.pushover.minStage,
         device: config.pushover.device ?? '',
+        radioThresholdDeg: config.pushover.radioThresholdDeg,
         tokenMasked: mask(config.pushover.token),
         userMasked:  mask(config.pushover.user),
         hasToken: Boolean(config.pushover.token),
@@ -358,6 +365,12 @@ export async function runService({
         config.pushover.minStage = p.minStage;
         notifier.minStage = p.minStage;
       }
+      if ('radioThresholdDeg' in p) {
+        const v = Number(p.radioThresholdDeg);
+        if (!Number.isFinite(v) || v <= 0) throw new Error('pushover.radioThresholdDeg must be a positive number');
+        config.pushover.radioThresholdDeg = v;
+        notifier.radioThresholdDeg = v;
+      }
       // PushoverClient reads this.config on every send() call → in-place mutation
       // is enough; no client reconstruction needed.
       pushover.config = config.pushover;
@@ -365,6 +378,7 @@ export async function runService({
         enabled: config.pushover.enabled,
         minStage: config.pushover.minStage,
         device: config.pushover.device,
+        radioThresholdDeg: config.pushover.radioThresholdDeg,
         hasToken: Boolean(config.pushover.token),
         hasUser:  Boolean(config.pushover.user),
       };

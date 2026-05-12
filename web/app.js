@@ -2,6 +2,7 @@ import { buildSketchSvg, fromHistoryRow, fromLifecycleEntry, setOptics } from '.
 
 const STATE_INTERVAL_MS = 2000;
 const HISTORY_INTERVAL_MS = 15000;
+const LEARNING_INTERVAL_MS = 60_000;
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -102,12 +103,18 @@ function fmtCountdownLong(ms) {
   return `${d}d ${h % 24}h`;
 }
 
+const OUTCOME_LABELS = {
+  graduated: { icon: '✅', label: 'graduated', title: 'Radio alert paid off — flight tightened to candidate or imminent.' },
+  faded:     { icon: '➖', label: 'faded',     title: 'Radio alert never tightened — false positive of the early stage.' },
+  surprise:  { icon: '⚡', label: 'surprise',  title: 'Tight transit fired without a prior radio warning.' },
+};
+
 function renderHistory(events) {
   const tbody = $('#history tbody');
   tbody.innerHTML = '';
   lastHistory = events ?? [];
   if (!events || events.length === 0) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="11">No history yet.</td></tr>';
+    tbody.innerHTML = '<tr class="empty"><td colspan="12">No history yet.</td></tr>';
     return;
   }
   for (const [i, e] of events.entries()) {
@@ -115,10 +122,15 @@ function renderHistory(events) {
     tr.className = 'sketchable';
     tr.dataset.source = 'history';
     tr.dataset.index = String(i);
+    const oc = e.outcome ? OUTCOME_LABELS[e.outcome] : null;
+    const outcomeCell = oc
+      ? `<span class="outcome outcome-${e.outcome}" title="${oc.title}">${oc.icon} ${oc.label}</span>`
+      : '<span class="outcome outcome-none" title="Episode not yet classified — still in flight, or the window has no companion stages to compare against.">—</span>';
     tr.innerHTML = `
       <td class="stage-${e.stage}">${fmtTime(e.closest_at_ms)}</td>
       <td>${fmtTime(e.recorded_at_ms)}</td>
       <td class="stage-${e.stage}">${e.stage}</td>
+      <td>${outcomeCell}</td>
       <td class="body-${e.body}">${e.body}</td>
       <td>${e.flight ?? e.callsign ?? ''}</td>
       <td>${e.icao.toUpperCase()}</td>
@@ -181,6 +193,32 @@ async function pollHistory() {
     renderHistory(events);
     // History repaint wipes the pinned-row marker class — re-apply.
     highlightPinnedRow();
+  } catch { /* ignore */ }
+}
+
+// Alert-learning panel: lightweight rolling stats. Polled on a slow cadence
+// (default 60 s) because episodes change at the rate of new Pushovers — i.e.
+// rarely. The window matches the predictor's daysBack default of 14.
+function fmtPct(n) { return n == null ? '—' : `${n.toFixed(0)}%`; }
+
+async function pollLearning() {
+  try {
+    const res = await fetch('/api/learning?windowDays=14');
+    if (!res.ok) return;
+    const { aggregates: a, windowDays } = await res.json();
+    const hit = $('#learn-hit');
+    hit.querySelector('.learn-num').textContent = fmtPct(a.hitRatePct);
+    hit.querySelector('.learn-detail').textContent =
+      `${a.radioGraduated} / ${a.radioFired} radios`;
+
+    const sur = $('#learn-surprise');
+    sur.querySelector('.learn-num').textContent = fmtPct(a.surpriseRatePct);
+    sur.querySelector('.learn-detail').textContent =
+      `${a.surprises} / ${a.candidateOrImminent} transits`;
+
+    const ep = $('#learn-episodes');
+    ep.querySelector('.learn-num').textContent = String(a.totalEpisodes);
+    ep.querySelector('.learn-detail').textContent = `in last ${windowDays} days`;
   } catch { /* ignore */ }
 }
 
@@ -474,5 +512,7 @@ setInterval(tickClock, 1000);
 
 pollState();
 pollHistory();
+pollLearning();
 setInterval(pollState, STATE_INTERVAL_MS);
 setInterval(pollHistory, HISTORY_INTERVAL_MS);
+setInterval(pollLearning, LEARNING_INTERVAL_MS);

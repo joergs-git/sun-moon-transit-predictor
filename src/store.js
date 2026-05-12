@@ -182,6 +182,141 @@ export class HistoryStore {
     return this.db.prepare('SELECT COUNT(*) AS n FROM transit_history').get().n;
   }
 
+  /**
+   * Group rows in transit_history into "episodes" (one row per real transit
+   * approach) and classify each by which stages fired.
+   *
+   * Two rows belong to the same episode when they share (icao, body) and
+   * their closest_at_ms values are within `episodeWindowMs` of each other
+   * (default 5 min) — far enough apart to absorb the predictor refining the
+   * time as the aircraft gets closer, tight enough that two unrelated
+   * approaches by the same registration on the same day never collide.
+   *
+   * Outcome taxonomy:
+   *   - 'graduated' : early-warning radio fired AND the flight later reached
+   *                   candidate or imminent — the alert paid off.
+   *   - 'faded'     : radio fired but the flight never tightened up — false
+   *                   positive of the early-warning stage.
+   *   - 'surprise'  : candidate or imminent fired with no prior radio — we
+   *                   missed the build-up entirely.
+   *
+   * @param {{ windowMs?: number, episodeWindowMs?: number, nowMs?: number }} [opts]
+   * @returns {{
+   *   windowMs: number,
+   *   episodes: Array<{
+   *     key: string, icao: string, body: 'Sun'|'Moon',
+   *     flight: string|null, callsign: string|null,
+   *     firstRecordedAtMs: number, lastRecordedAtMs: number,
+   *     closestAtMs: number,
+   *     stages: Array<'radio'|'candidate'|'imminent'>,
+   *     minSepDeg: number|null,
+   *     outcome: 'graduated'|'faded'|'surprise',
+   *     rowIds: number[],
+   *   }>,
+   *   aggregates: {
+   *     totalEpisodes: number,
+   *     radioFired: number,
+   *     radioGraduated: number,
+   *     radioFaded: number,
+   *     surprises: number,
+   *     candidateOrImminent: number,
+   *     hitRatePct: number|null,
+   *     surpriseRatePct: number|null,
+   *   },
+   * }}
+   */
+  episodes({ windowMs = 14 * 24 * 3600_000, episodeWindowMs = 5 * 60_000, nowMs = Date.now() } = {}) {
+    const since = nowMs - windowMs;
+    const rows = this.db
+      .prepare(`SELECT id, recorded_at_ms, closest_at_ms, stage, body, icao,
+                       callsign, flight, closest_sep_deg
+                FROM transit_history
+                WHERE recorded_at_ms >= ?
+                ORDER BY icao, body, closest_at_ms`)
+      .all(since);
+
+    // One forward sweep per (icao, body) group: start a fresh episode when
+    // the gap between consecutive closest-approach timestamps exceeds the
+    // episode window. Each row contributes one stage to its episode.
+    /** @type {Map<string, any>} */
+    const byKey = new Map();
+    let curKey = '';
+    let cur = null;
+    for (const r of rows) {
+      // Reset cursor on group boundary.
+      const groupKey = `${r.icao}|${r.body}`;
+      if (groupKey !== curKey) { curKey = groupKey; cur = null; }
+      if (!cur || (r.closest_at_ms - cur.closestAtMs) > episodeWindowMs) {
+        cur = {
+          key: `${groupKey}|${r.closest_at_ms}`,
+          icao: r.icao,
+          body: r.body,
+          flight: r.flight,
+          callsign: r.callsign,
+          firstRecordedAtMs: r.recorded_at_ms,
+          lastRecordedAtMs:  r.recorded_at_ms,
+          closestAtMs: r.closest_at_ms,
+          stages: new Set(),
+          minSepDeg: null,
+          rowIds: [],
+        };
+        byKey.set(cur.key, cur);
+      }
+      cur.stages.add(r.stage);
+      cur.rowIds.push(r.id);
+      // Flight / callsign on the latest row wins — earlier rows may not yet
+      // have had the route lookup answer, the later ones often do.
+      if (r.flight) cur.flight = r.flight;
+      if (r.callsign) cur.callsign = r.callsign;
+      cur.lastRecordedAtMs = Math.max(cur.lastRecordedAtMs, r.recorded_at_ms);
+      cur.closestAtMs = r.closest_at_ms;          // latest refinement
+      if (Number.isFinite(r.closest_sep_deg)) {
+        if (cur.minSepDeg == null || r.closest_sep_deg < cur.minSepDeg) {
+          cur.minSepDeg = r.closest_sep_deg;
+        }
+      }
+    }
+
+    const classify = (stages) => {
+      const tightened = stages.has('candidate') || stages.has('imminent');
+      if (stages.has('radio') && tightened) return 'graduated';
+      if (stages.has('radio') && !tightened) return 'faded';
+      return 'surprise';   // candidate/imminent without prior radio
+    };
+
+    const episodes = Array.from(byKey.values())
+      .map(e => ({ ...e, stages: Array.from(e.stages), outcome: classify(e.stages) }))
+      .sort((a, b) => b.closestAtMs - a.closestAtMs);
+
+    const total = episodes.length;
+    const radioFired = episodes.filter(e => e.stages.includes('radio')).length;
+    const radioGraduated = episodes.filter(e => e.outcome === 'graduated').length;
+    const radioFaded = episodes.filter(e => e.outcome === 'faded').length;
+    const surprises = episodes.filter(e => e.outcome === 'surprise').length;
+    const candidateOrImminent = episodes.filter(
+      e => e.stages.includes('candidate') || e.stages.includes('imminent'),
+    ).length;
+    const aggregates = {
+      totalEpisodes: total,
+      radioFired,
+      radioGraduated,
+      radioFaded,
+      surprises,
+      candidateOrImminent,
+      // Hit rate: of all radio alerts, how many panned out into a tight
+      // transit. The user's "wie oft kommt es vor, dass ein echter 1°
+      // candidate tatsächlich ernst wird".
+      hitRatePct: radioFired > 0 ? (radioGraduated / radioFired) * 100 : null,
+      // Surprise rate: of all tight transits we ended up actually firing,
+      // how many came without any prior radio heads-up. The user's "wie oft
+      // ein echter Kandidat erkannt wird, der vorher nicht ermittelt wurde".
+      surpriseRatePct: candidateOrImminent > 0
+        ? (surprises / candidateOrImminent) * 100
+        : null,
+    };
+    return { windowMs, episodes, aggregates };
+  }
+
   close() {
     this.db.close();
   }

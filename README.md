@@ -84,6 +84,7 @@ without a monitor, keyboard, or any client connected.
 | M12 | FOV sketch popup: per-row preview of disc + aircraft + apparent transit line in the 500 mm / ASI174MM frame | done |
 | M13 | In-browser Settings panel (Pushover, observer, optics) + cross-restart tracking-list persistence | done |
 | M14 | Inline FOV preview pane (auto-tracks newest sep&lt;1° candidate, click-to-pin) + live header clock | done |
+| M15 | Tighter 1°-only radio Pushovers + alert-learning stats (hit / surprise rate, per-row outcome tags) | done |
 
 ## Quick install on the Pi 5
 
@@ -440,9 +441,10 @@ or `http://192.168.1.42:8081/`.
 |---|---|
 | `GET /`                    | Web UI (live state + history table). |
 | `GET /api/state`           | Current observer, Sun/Moon Az/El + observability, aircraft count, `lifecycle[]` (unified per-`(icao, body)` tracking list with status enum, M11 — primary feed for the new UI), plus `candidates[]` (live tracker output, backward compat), `expected[]` (history-based 24 h watchlist, backward compat), `optics` (current FOV setup) and `externalLinks`. Refreshed every poll. |
-| `GET /api/history?limit=…` | Past notifications (early + precise stages) from SQLite, newest first. Default 100, max 500. |
+| `GET /api/history?limit=…` | Past notifications (radio / candidate / imminent stages) from SQLite, newest first. Default 100, max 500. Each row now also carries `outcome` (`graduated` / `faded` / `surprise` / `null`) computed across the episode it belongs to — see *Alert learning* below. |
 | `GET /api/config`          | Sanitised view of the runtime config used by the Settings panel: observer, masked Pushover credentials, optics, external links. Pushover token + user key come back as `••••<last4>` so the page never echoes the secret in plaintext. |
 | `POST /api/config`         | Apply a partial config update (`{ observer, pushover, optics, externalLinks }`). Hot-reloads the running service in place and persists changes back to `config/observer.json` + `config/service.json`. Masked secret placeholders (`••••…`) are ignored so a no-op resave never overwrites the real token. |
+| `GET /api/learning?windowDays=…` | Rolling alert-effectiveness stats over the requested window (default 14 days, capped at 90). Returns aggregates (`radioFired`, `radioGraduated`, `surprises`, `hitRatePct`, `surpriseRatePct`, …) plus the last 20 classified episodes. |
 | `GET /api/health`          | Liveness probe — always returns `{ ok: true, time: <ISO> }`. |
 
 Responses are `Cache-Control: no-store`; no authentication, so keep the
@@ -583,13 +585,45 @@ Or edit `config/service.json` directly:
   "token":   "azGD…<your app token>",
   "user":    "uQiR…<your user/group key>",
   "device":  "",
-  "enabled": true
+  "enabled": true,
+  "minStage": "radio",
+  "radioThresholdDeg": 1.0
 }
 ```
 
 `device` is optional — leave empty to fan out to every device on the
-account. Restart the service (`sudo systemctl restart stp.service`) after
-editing.
+account. `minStage` controls which stages dispatch at all
+(`radio` = all, `imminent` = only the ±30 s alert). `radioThresholdDeg`
+adds a tighter Pushover-only filter on top: the tracker still surfaces
+matches inside `tracker.looseThresholdDeg` (5° by default) to the
+tracking panel, but the phone only buzzes when the projected minimum
+separation is at or below this value (default **1°** — i.e. only
+flights likely to actually graze the body). Restart the service
+(`sudo systemctl restart stp.service`) after editing, or use the
+**Settings** panel in the web UI for hot-reload.
+
+### Alert learning
+
+The UI surfaces a rolling 14-day stats panel showing how well the
+early-warning radio stage predicts the tight transits that actually
+matter. Each history row gets one of three outcome tags:
+
+- **graduated** — radio alert paid off: the flight later reached
+  candidate or imminent.
+- **faded** — radio alert never tightened up: false positive of the
+  early stage.
+- **surprise** — candidate or imminent fired with *no* prior radio
+  warning. Useful to spot under-detected geometries.
+
+Headline numbers in the panel:
+
+- **hit rate** = `radioGraduated / radioFired` — how often a radio
+  alert was worth paying attention to.
+- **surprise rate** = `surprises / (graduated + surprises)` — how
+  often we missed an early heads-up for a transit that actually
+  fired.
+
+Same data is available raw via `GET /api/learning?windowDays=…`.
 
 ### 2. Send a test push
 

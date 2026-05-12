@@ -19,6 +19,11 @@
 
 const DEFAULT_IMMINENT_WINDOW_MS = 30_000;
 const DEFAULT_FORGET_AFTER_MS = 5 * 60_000;
+// Default Pushover-only "near" filter for the radio stage. Tracker still
+// emits radio-level matches out to the wider looseThresholdDeg (5°) so the
+// tracking panel shows them — but we only buzz the phone when the projected
+// separation drops under this much tighter band. Override via config.
+const DEFAULT_RADIO_THRESHOLD_DEG = 1.0;
 
 const STAGE_ORDER = { radio: 0, candidate: 1, imminent: 2 };
 
@@ -115,6 +120,10 @@ export class Notifier {
    *   imminentWindowMs?: number,
    *   forgetAfterMs?: number,
    *   minStage?: 'radio'|'candidate'|'imminent',  - opt out of earlier stages
+   *   radioThresholdDeg?: number,                  - extra Pushover-only filter
+   *                                                  on the wide radio band; the
+   *                                                  tracker still surfaces the
+   *                                                  full 5° band to the UI
    *   baseUrl?: string,
    * }} opts
    */
@@ -125,6 +134,7 @@ export class Notifier {
     this.imminentWindowMs = opts.imminentWindowMs ?? DEFAULT_IMMINENT_WINDOW_MS;
     this.forgetAfterMs = opts.forgetAfterMs ?? DEFAULT_FORGET_AFTER_MS;
     this.minStage = opts.minStage ?? 'radio';      // default: send all stages
+    this.radioThresholdDeg = opts.radioThresholdDeg ?? DEFAULT_RADIO_THRESHOLD_DEG;
     this.baseUrl = opts.baseUrl;
     /** @type {Map<string, { radioSent: boolean, candidateSent: boolean,
      *                       imminentSent: boolean, lastClosestMs: number }>} */
@@ -187,6 +197,20 @@ export class Notifier {
         if (stage === 'radio') st.radioSent = true;
         if (stage === 'candidate') { st.radioSent = true; st.candidateSent = true; }
         if (stage === 'imminent')  { st.radioSent = true; st.candidateSent = true; st.imminentSent = true; }
+        continue;
+      }
+      // Extra Pushover-only filter on the radio band: tracker emits matches
+      // out to looseThresholdDeg (5° by default), but the phone only buzzes
+      // when the projected minimum separation is below radioThresholdDeg
+      // (1° by default — i.e. only flights that might actually graze the
+      // body). Mark the stage sent so a still-loose match doesn't re-trigger
+      // it on every poll; an upgrade to candidate/imminent on a later tick
+      // still goes through under its own stage gate.
+      if (stage === 'radio'
+          && Number.isFinite(this.radioThresholdDeg)
+          && Number.isFinite(cand.closestApproachSepDeg)
+          && cand.closestApproachSepDeg > this.radioThresholdDeg) {
+        st.radioSent = true;
         continue;
       }
 
