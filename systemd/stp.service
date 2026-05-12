@@ -17,11 +17,14 @@ StandardError=journal
 Environment=NODE_ENV=production
 
 # Light sandboxing — service does not need root or write access outside its dir.
+# data/ holds the SQLite history + lifecycle snapshot (always written).
+# config/ holds observer.json + service.json, which the in-UI Settings panel
+# (v0.7.0+) writes back to via POST /api/config — needs write access too.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=__INSTALL_DIR__/data
+ReadWritePaths=__INSTALL_DIR__/data __INSTALL_DIR__/config
 
 [Install]
 WantedBy=multi-user.target

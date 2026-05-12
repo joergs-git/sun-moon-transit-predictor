@@ -771,6 +771,30 @@ back to `config/observer.json` + `config/service.json` so the next
 restart (including the nightly auto-update timer) keeps the new
 values.
 
+> **Upgrading from a pre-v0.7.0 install:** older `stp.service` units
+> only listed `data/` under `ReadWritePaths`, so saving from the
+> Settings panel fails with `EROFS: read-only file system`. Refresh
+> the systemd unit on the Pi with one of:
+>
+> ```bash
+> # Option A — re-run the installer (preserves existing configs):
+> bash scripts/install-pi5.sh --non-interactive
+>
+> # Option B — drop-in override, no reinstall needed:
+> sudo systemctl edit stp.service        # opens an empty override
+> # Paste these three lines, save and exit:
+> #   [Service]
+> #   ReadWritePaths=
+> #   ReadWritePaths=/home/<user>/sun-moon-transit-predictor/data \
+> #                  /home/<user>/sun-moon-transit-predictor/config
+> sudo systemctl daemon-reload
+> sudo systemctl restart stp.service
+> ```
+>
+> Hot-reload of the in-memory state still works even when the disk
+> write fails — the Settings panel just shows the actionable hint as a
+> warning so you see exactly what to fix.
+
 ### Tracking-list persistence across restarts (v0.7.0+)
 
 The unified tracking panel is snapshotted to `data/lifecycle.json`
