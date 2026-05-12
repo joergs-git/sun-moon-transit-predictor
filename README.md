@@ -82,6 +82,7 @@ without a monitor, keyboard, or any client connected.
 | M10 | History-based predictor (24 h "Expected today" panel) + optional OpenSky schedule augmentation | done |
 | M11 | Lifecycle pipeline: planned → radio → candidate → imminent → stale, with `horizonS=300` default, unified UI panel | done |
 | M12 | FOV sketch popup: per-row preview of disc + aircraft + apparent transit line in the 500 mm / ASI174MM frame | done |
+| M13 | In-browser Settings panel (Pushover, observer, optics) + cross-restart tracking-list persistence | done |
 
 ## Quick install on the Pi 5
 
@@ -437,8 +438,10 @@ or `http://192.168.1.42:8081/`.
 | Method & path              | Description |
 |---|---|
 | `GET /`                    | Web UI (live state + history table). |
-| `GET /api/state`           | Current observer, Sun/Moon Az/El + observability, aircraft count, `lifecycle[]` (unified per-`(icao, body)` tracking list with status enum, M11 — primary feed for the new UI), plus `candidates[]` (live tracker output, backward compat) and `expected[]` (history-based 24 h watchlist, backward compat). Refreshed every poll. |
+| `GET /api/state`           | Current observer, Sun/Moon Az/El + observability, aircraft count, `lifecycle[]` (unified per-`(icao, body)` tracking list with status enum, M11 — primary feed for the new UI), plus `candidates[]` (live tracker output, backward compat), `expected[]` (history-based 24 h watchlist, backward compat), `optics` (current FOV setup) and `externalLinks`. Refreshed every poll. |
 | `GET /api/history?limit=…` | Past notifications (early + precise stages) from SQLite, newest first. Default 100, max 500. |
+| `GET /api/config`          | Sanitised view of the runtime config used by the Settings panel: observer, masked Pushover credentials, optics, external links. Pushover token + user key come back as `••••<last4>` so the page never echoes the secret in plaintext. |
+| `POST /api/config`         | Apply a partial config update (`{ observer, pushover, optics, externalLinks }`). Hot-reloads the running service in place and persists changes back to `config/observer.json` + `config/service.json`. Masked secret placeholders (`••••…`) are ignored so a no-op resave never overwrites the real token. |
 | `GET /api/health`          | Liveness probe — always returns `{ ok: true, time: <ISO> }`. |
 
 Responses are `Cache-Control: no-store`; no authentication, so keep the
@@ -742,6 +745,41 @@ the tracker now attaches to every `TransitCandidate`. History rows
 written before v0.6.0 still open the popup, but without the motion
 line (the disc + aircraft anchor point are derived from the existing
 `payload_json`).
+
+### Settings panel (v0.7.0+)
+
+The header now exposes a `⚙ Settings` button that opens an in-browser
+form for the three configuration areas you actually touch in the field:
+
+- **Observer** — name, latitude, longitude, elevation, plus optional
+  temperature and pressure for the refraction model.
+- **Pushover** — app token, user key, device, master enable + minimum
+  stage. Token and user key are stored on the Pi but **never echoed
+  back in plaintext** — `GET /api/config` returns them as
+  `••••<last4>` so a page reload (or a forgotten browser tab) cannot
+  leak the secret. Leaving the masked value untouched on save keeps
+  the existing credentials.
+- **Telescope & sensor** — focal length, sensor width/height in mm,
+  pixel count, and a free-text sensor name. The FOV sketch picks the
+  new optics up on the next popup without a page reload.
+- **External links** — optional override for the dump1090 status-page
+  URL surfaced in the header (defaults to
+  `http://<this-host>:8080/`).
+
+Saved changes hot-reload the running service in place and are written
+back to `config/observer.json` + `config/service.json` so the next
+restart (including the nightly auto-update timer) keeps the new
+values.
+
+### Tracking-list persistence across restarts (v0.7.0+)
+
+The unified tracking panel is snapshotted to `data/lifecycle.json`
+every 30 s and on `SIGTERM`. On startup the file is read back so the
+panel does not appear empty after the auto-update timer restarts the
+service overnight. Entries whose predicted closest-approach time is
+already more than 10 minutes in the past are dropped on load to keep
+the panel meaningful; restored live entries are marked `stale` until
+the next tick reaffirms them.
 
 **What is persisted, what is not.** The History panel reads from
 `<repo>/data/history.db` (SQLite, see `src/store.js`), which is written
