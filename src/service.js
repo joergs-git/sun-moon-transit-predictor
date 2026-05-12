@@ -295,6 +295,25 @@ export async function runService({
    * @param {{ observer?: object, pushover?: object, optics?: object,
    *          externalLinks?: object }} patch
    */
+  // Re-shape OS errors into actionable hints. The most common failure modes
+  // on a Pi install are EROFS (systemd sandbox makes the path read-only —
+  // ReadWritePaths in stp.service does not include config/) and EACCES
+  // (file owned by a different user). Both have one-line fixes the user can
+  // copy-paste, so we surface them instead of the raw syscall name.
+  function describeFsError(e, path) {
+    const code = e?.code ?? '';
+    if (code === 'EROFS') {
+      return `cannot write ${path}: filesystem is read-only inside the service sandbox. `
+        + `Fix on the Pi: add config/ to ReadWritePaths in /etc/systemd/system/stp.service `
+        + `(see systemd/stp.service in the repo), then \`sudo systemctl daemon-reload && sudo systemctl restart stp.service\`.`;
+    }
+    if (code === 'EACCES') {
+      return `cannot write ${path}: permission denied. `
+        + `Fix on the Pi: \`sudo chown -R <service-user>:<service-user> $(dirname ${path})\`.`;
+    }
+    return `cannot write ${path}: ${e?.message ?? e}`;
+  }
+
   async function applyConfigUpdate(patch) {
     const warnings = [];
     const applied = {};
@@ -311,7 +330,17 @@ export async function runService({
       }
       if (typeof o.name === 'string') observer.name = o.name;
       applied.observer = { ...observer };
-      if (configPaths.observer) await fsp.writeFile(configPaths.observer, JSON.stringify(observer, null, 2), 'utf8');
+      if (configPaths.observer) {
+        try {
+          await fsp.writeFile(configPaths.observer, JSON.stringify(observer, null, 2), 'utf8');
+        } catch (e) {
+          // Live edit already applied to the in-memory observer object — only
+          // the on-disk copy failed. Warn rather than throw so the user sees
+          // the actionable hint *and* the UI does not roll back the apparent
+          // save (which would be misleading: the new lat/lon are in effect).
+          warnings.push(describeFsError(e, configPaths.observer));
+        }
+      }
     }
 
     if (patch.pushover && typeof patch.pushover === 'object') {
@@ -380,7 +409,10 @@ export async function runService({
         };
         await fsp.writeFile(configPaths.service, JSON.stringify(merged, null, 2), 'utf8');
       } catch (e) {
-        warnings.push(`could not persist service.json: ${e.message ?? e}`);
+        // Stay non-fatal here: hot-reload already succeeded; only the
+        // persistence write failed. Surface the actionable hint as a warning
+        // so the UI shows it but the user's edit still takes effect live.
+        warnings.push(describeFsError(e, configPaths.service));
       }
     } else {
       warnings.push('no service config path provided — changes are in memory only');

@@ -201,25 +201,61 @@ tr.sketchable.row-imminent:hover td { background: rgba(240, 160, 32, 0.16); }
   font-size: 13px;
 }
 
-/* Settings modal. Same chrome as the FOV sketch popup so the two read as one
-   family. Form uses a two-column grid of label/input pairs grouped into
-   fieldsets — compact enough to fit on a phone in portrait. */
-.settings-card { width: min(560px, calc(100vw - 32px)); padding: 18px 20px 16px; }
-.settings-card h3 { margin: 0 0 6px; color: var(--accent); font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; }
-.settings-intro { margin: 0 0 12px; max-width: 100%; }
+/* Settings modal. Wider than the FOV sketch popup (more fields), and capped
+   in height so the Save button is always reachable: the card is a flex
+   column, the fieldsets scroll internally, and the action row stays pinned
+   at the bottom regardless of how many sections fit on screen. */
+.settings-card {
+  width: min(760px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  padding: 14px 18px 0;       /* the action row supplies its own bottom padding */
+  display: flex;
+  flex-direction: column;
+}
+.settings-card h3 {
+  margin: 0 0 4px;
+  color: var(--accent);
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex: 0 0 auto;
+}
+.settings-intro { margin: 0 0 10px; max-width: 100%; flex: 0 0 auto; }
+
+/* The <form> fills the card; fieldsets scroll inside it, action row sticks
+   to the bottom. min-height:0 is the trick that lets overflow:auto actually
+   clip inside a flex parent. */
+#settings-form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.settings-fields {
+  overflow-y: auto;
+  padding-right: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Two-column grid on wide cards so fieldsets pair up and the modal stays
+     short; auto-drops to one column on narrow screens (≈< 700 px). */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 8px 12px;
+  align-content: start;
+}
 .settings-card fieldset {
   border: 1px solid var(--line);
   border-radius: 4px;
-  padding: 10px 12px 12px;
-  margin: 0 0 10px;
+  padding: 8px 12px 10px;
+  margin: 0;                  /* grid gap handles spacing */
 }
 .settings-card legend { color: var(--accent); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; padding: 0 4px; }
 .settings-card label {
   display: grid;
-  grid-template-columns: 130px 1fr;
+  grid-template-columns: 120px 1fr;
   align-items: center;
   gap: 8px;
-  margin: 6px 0;
+  margin: 4px 0;
   font-size: 12px;
   color: var(--muted);
 }
@@ -235,6 +271,7 @@ tr.sketchable.row-imminent:hover td { background: rgba(240, 160, 32, 0.16); }
   font-family: ui-monospace, Menlo, monospace;
   font-size: 12px;
   width: 100%;
+  min-width: 0;               /* keeps long values from breaking the grid */
 }
 .settings-card input:focus, .settings-card select:focus { outline: none; border-color: var(--accent); }
 .settings-card code { color: var(--accent); }
@@ -244,13 +281,22 @@ tr.sketchable.row-imminent:hover td { background: rgba(240, 160, 32, 0.16); }
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 6px;
+  flex: 0 0 auto;
+  padding: 10px 0 12px;
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  position: sticky;
+  bottom: 0;
 }
 .settings-msg {
   font-size: 12px;
   color: var(--muted);
   margin-right: auto;
   font-family: ui-monospace, Menlo, monospace;
+  white-space: normal;
+  max-width: 65%;
+  line-height: 1.4;
 }
 .settings-msg.ok  { color: var(--ok); }
 .settings-msg.err { color: var(--warn); }
