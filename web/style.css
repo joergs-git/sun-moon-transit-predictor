@@ -51,6 +51,19 @@ h1 { font-size: 18px; margin: 0; }
 .identity a:hover { text-decoration: underline; }
 .identity .sep { color: var(--line); }
 
+/* Live wall-clock readout. Monospace + tabular-nums so the digits don't
+   jitter as the seconds tick over. */
+.clock {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel);
+}
+
 /* Buttons. Used for the Settings toggle in the header and the modal actions.
    Same look across both so the affordance is consistent. */
 .btn {
@@ -142,10 +155,63 @@ footer {
 
 /* Clickable rows in the tracking + history tables. The hover tint matches the
    existing imminent/candidate row tints so the affordance reads as "select"
-   rather than as a status change. */
+   rather than as a status change. Clicking now pins the row into the
+   top-right FOV preview pane (no modal). */
 tr.sketchable { cursor: pointer; }
 tr.sketchable:hover td { background: rgba(95, 208, 127, 0.08); }
 tr.sketchable.row-imminent:hover td { background: rgba(240, 160, 32, 0.16); }
+/* Visual anchor on the currently-shown FOV entry. Matches the auto/pinned
+   pane in the top right so the user can trace which row is in view. */
+tr.sketchable.fov-pinned td { box-shadow: inset 3px 0 0 var(--accent); }
+
+/* Sky-row: Sky-now table on the left, FOV preview on the right. Two-column
+   grid on wide screens; auto-stacks when there is no room (<860 px).
+   The preview pane is the one the user wanted "permanent, top right". */
+.sky-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(360px, 1.6fr);
+  gap: 12px;
+  margin-bottom: 8px;
+}
+@media (max-width: 859px) {
+  .sky-row { grid-template-columns: 1fr; }
+}
+
+/* FOV preview panel. Same panel chrome as the tables so the page reads as
+   one surface; SVG inside scales to the panel width. The fov-mode pill in
+   the heading tells the user whether the pane is auto-tracking or pinned. */
+#fov-section h2 { display: flex; align-items: center; gap: 8px; }
+.fov-mode {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--panel);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid var(--line);
+  cursor: default;
+}
+.fov-mode.pinned { background: rgba(240, 160, 32, 0.15); color: var(--accent); border-color: var(--accent); }
+.fov-body {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fov-body svg { width: 100%; height: auto; max-width: 460px; display: block; }
+.fov-body .fov-placeholder {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 16px 24px;
+  line-height: 1.5;
+}
 
 /* FOV sketch modal. Centered card with a dim backdrop; closes on backdrop
    click, the × button, or Escape (handled in app.js). */
