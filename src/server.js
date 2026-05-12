@@ -110,19 +110,33 @@ export function createHttpServer(opts) {
       }
       if (url.pathname === '/api/history') {
         const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') ?? '100')));
-        // Parse the persisted payload_json so the frontend can consume the
-        // candidate + route as a structured object (needed by the FOV sketch
-        // popup for aircraftAtClosest / bodyAtClosest / transitPath). Rows
-        // written before this field existed simply yield payload = null.
+        // Compute episodes over a generous 30-day window so the rows
+        // returned here all get classified — history grows ~10 rows/day so
+        // this is still cheap. Each row gets an `outcome` field
+        // (graduated / faded / surprise / null) so the UI can colour it.
+        const { episodes } = store.episodes({ windowMs: 30 * 24 * 3600_000 });
+        const outcomeById = new Map();
+        for (const e of episodes) for (const id of e.rowIds) outcomeById.set(id, e.outcome);
         const events = store.recent({ limit }).map((row) => {
           let payload = null;
           if (row.payload_json) {
             try { payload = JSON.parse(row.payload_json); } catch { /* drop */ }
           }
           const { payload_json, ...rest } = row;
-          return { ...rest, payload };
+          return { ...rest, payload, outcome: outcomeById.get(row.id) ?? null };
         });
         return jsonResponse(res, 200, { events });
+      }
+      if (url.pathname === '/api/learning') {
+        // Rolling alert-effectiveness stats. windowDays caps at 90 days to
+        // bound the SQL scan; default 14 matches the predictor's window.
+        const windowDays = Math.min(90, Math.max(1, Number(url.searchParams.get('windowDays') ?? '14')));
+        const result = store.episodes({ windowMs: windowDays * 24 * 3600_000 });
+        return jsonResponse(res, 200, {
+          windowDays,
+          aggregates: result.aggregates,
+          recent: result.episodes.slice(0, 20),
+        });
       }
       if (url.pathname === '/api/health') {
         return jsonResponse(res, 200, { ok: true, time: new Date().toISOString() });

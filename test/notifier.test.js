@@ -52,10 +52,32 @@ describe('Notifier', () => {
   it('sends a radio notification first when first sighting is level=radio', async () => {
     const px = new FakePushover();
     const n = new Notifier({ pushover: px });
-    const cand = makeCandidate({ closestInMs: 90_000, level: 'radio', sepDeg: 2.1 });
+    // Below the new default 1° Pushover filter so the radio stage actually
+    // dispatches. The wider-band suppression is exercised separately below.
+    const cand = makeCandidate({ closestInMs: 90_000, level: 'radio', sepDeg: 0.8 });
     const events = await n.tick([cand], 1_000_000_000_000);
     expect(events[0].stage).toBe('radio');
     expect(px.calls[0].title).toMatch(/Sun approach/);
+  });
+
+  it('suppresses radio Pushovers wider than radioThresholdDeg', async () => {
+    const px = new FakePushover();
+    const n = new Notifier({ pushover: px });                  // default 1.0
+    // 2.1° is inside the tracker's looseThresholdDeg (5°) so the lifecycle
+    // panel still sees it, but the Pushover should NOT fire.
+    const cand = makeCandidate({ closestInMs: 90_000, level: 'radio', sepDeg: 2.1 });
+    const events = await n.tick([cand], 1_000_000_000_000);
+    expect(events.length).toBe(0);
+    expect(px.calls.length).toBe(0);
+  });
+
+  it('still fires radio when the user widens radioThresholdDeg', async () => {
+    const px = new FakePushover();
+    const n = new Notifier({ pushover: px, radioThresholdDeg: 5.0 });
+    const cand = makeCandidate({ closestInMs: 90_000, level: 'radio', sepDeg: 2.1 });
+    const events = await n.tick([cand], 1_000_000_000_000);
+    expect(events[0].stage).toBe('radio');
+    expect(px.calls.length).toBe(1);
   });
 
   it('does not double-send the candidate notification on subsequent ticks', async () => {
