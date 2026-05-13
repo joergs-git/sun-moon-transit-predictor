@@ -152,10 +152,15 @@ export function fromHistoryRow(row) {
 
 // ---- SVG building ------------------------------------------------------------
 const SVG_W = 420;
-const SVG_H = 290;
+// Two-line footer (R/Alt/v on top, FOV/focal/sensor below) needs ~14 px more
+// height than the single-line version that used to overlap on narrower
+// configs. Bump SVG_H accordingly; innerH (the FOV box) is unchanged because
+// FOOTER_H grows by the same amount.
+const SVG_H = 304;
 const PAD = 14;
 const HEADER_H = 18;
-const FOOTER_H = 16;
+const FOOTER_H = 30;
+const FOOTER_LINE_H = 14;
 
 const COLOURS = {
   fovStroke: '#5a6470',
@@ -372,13 +377,17 @@ export function buildSketchSvg(d) {
     txt(fovX + 4, fovY + 12, 'EL ↑', { fill: COLOURS.label, size: 10 }) +
     txt(fovX + fovPxW - 4, fovY + fovPxH - 4, 'AZ →', { fill: COLOURS.label, size: 10, anchor: 'end' });
 
-  // Footer line: range, alt, speed, FOV info.
-  const footY = SVG_H - PAD + 2;
-  const footL = `R ${fmtRange(d.aircraftAt.rangeM)} · Alt ${fmtAlt(d.altMmsl)} · v ${fmtSpeed(d.groundSpeedMs)}`;
-  const footR = `FOV ${fovWDeg.toFixed(2)}° × ${fovHDeg.toFixed(2)}° · ${OPTICS.TELESCOPE_FOCAL_MM} mm · ${OPTICS.SENSOR_NAME}`;
+  // Two-line footer. Line 1 = live aircraft state (R/Alt/v), line 2 = the
+  // optical rig (FOV/focal/sensor). Left-aligned on both rows so long
+  // sensor names never collide with the range field — that was the overlap
+  // bug visible in v0.7.4 on focal lengths beyond ~600 mm.
+  const footYBot = SVG_H - PAD + 2;
+  const footYTop = footYBot - FOOTER_LINE_H;
+  const footTop = `R ${fmtRange(d.aircraftAt.rangeM)} · Alt ${fmtAlt(d.altMmsl)} · v ${fmtSpeed(d.groundSpeedMs)}`;
+  const footBot = `FOV ${fovWDeg.toFixed(2)}° × ${fovHDeg.toFixed(2)}° · ${OPTICS.TELESCOPE_FOCAL_MM} mm · ${OPTICS.SENSOR_NAME}`;
   const footer =
-    txt(PAD, footY, footL, { fill: COLOURS.label, size: 11 }) +
-    txt(SVG_W - PAD, footY, footR, { fill: COLOURS.label, size: 11, anchor: 'end' });
+    txt(PAD, footYTop, footTop, { fill: COLOURS.label, size: 11 }) +
+    txt(PAD, footYBot, footBot, { fill: COLOURS.label, size: 11 });
 
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SVG_W} ${SVG_H}" width="${SVG_W}" height="${SVG_H}">` +

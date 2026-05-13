@@ -68,7 +68,21 @@ const RAD = 180 / Math.PI;
 // approach. Five points is enough resolution to draw a straight line +
 // arrowhead in the FOV sketch without bloating payload_json. Symmetric around
 // 0 so the rendered line is centred on the closest-approach point.
-const PATH_OFFSETS_SEC = [-60, -30, 0, 30, 60];
+// Dense, tighter time grid for the FOV sketch path. At typical airliner
+// speeds (~1°/s of apparent angular motion across the sky), the aircraft is
+// already well outside the few-degree FOV by t=±5 s; sampling at ±60 s — as
+// the original 5-sample array did — produced a long polyline whose two
+// outer segments slanted strongly downward (range grows → apparent
+// elevation drops), meeting at t=0 in a misleading V-shape inside the disc.
+// Dense samples near closest approach render the actual trajectory inside
+// the FOV: nearly horizontal, with the gentle peak that comes from range
+// minimising at t=0. Off-FOV samples still extend the polyline naturally,
+// but the small step size keeps it smooth instead of one-segment-misleading.
+const PATH_OFFSETS_SEC = (() => {
+  const out = [];
+  for (let t = -5; t <= 5 + 1e-9; t += 0.5) out.push(Math.round(t * 10) / 10);
+  return out;
+})();
 
 /**
  * Linear-extrapolate an aircraft `dtSec` seconds forward from the *fix time*
