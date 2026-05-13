@@ -183,6 +183,98 @@ export class HistoryStore {
   }
 
   /**
+   * Episode-consolidated history view: one row per real transit, with the
+   * earliest recorded_at_ms (first detection) combined with the
+   * tightest-sep snapshot (best refined payload + range/alt/speed). Drops
+   * the radio/candidate/imminent duplication that made the v0.7.x History
+   * table feel cluttered ("why does recorded sit 30 s before transit so
+   * often" — because that was the imminent row of a 3-row episode).
+   *
+   * Per consolidated row:
+   *   - recorded_at_ms = earliest stage's recorded time (lead-time signal)
+   *   - closest_at_ms  = tightest-sep stage's refined closest-approach time
+   *   - stage          = highest stage reached (radio / candidate / imminent)
+   *   - stages         = the full set of stages that fired in the episode
+   *   - closest_sep_deg, range_m, altitude_m, ground_speed_ms, payload =
+   *       all taken from the tightest-sep stage (best-refined snapshot)
+   *   - outcome        = graduated / faded / surprise
+   *   - leadTimeMs     = closest_at_ms - recorded_at_ms (advance warning)
+   *
+   * Sorted by recorded_at_ms DESC. Capped at `limit`.
+   *
+   * @param {{ limit?: number, windowMs?: number, episodeWindowMs?: number,
+   *           nowMs?: number }} [opts]
+   */
+  consolidatedHistory({ limit = 100, windowMs = 30 * 24 * 3600_000,
+                        episodeWindowMs = 5 * 60_000, nowMs = Date.now() } = {}) {
+    const since = nowMs - windowMs;
+    const rows = this.db
+      .prepare(`SELECT * FROM transit_history
+                WHERE recorded_at_ms >= ?
+                ORDER BY icao, body, closest_at_ms`)
+      .all(since);
+
+    // Episode grouping: same algorithm as episodes() — (icao, body) groups
+    // split on a > episodeWindowMs gap between consecutive closest_at_ms.
+    const STAGE_RANK = { radio: 0, candidate: 1, imminent: 2 };
+    /** @type {Map<string, { rows: any[], stages: Set<string>, latestClosestAtMs: number }>} */
+    const byKey = new Map();
+    let curKey = '';
+    let cur = null;
+    for (const r of rows) {
+      const groupKey = `${r.icao}|${r.body}`;
+      if (groupKey !== curKey) { curKey = groupKey; cur = null; }
+      if (!cur || (r.closest_at_ms - cur.latestClosestAtMs) > episodeWindowMs) {
+        cur = {
+          key: `${groupKey}|${r.closest_at_ms}`,
+          rows: [],
+          stages: new Set(),
+          latestClosestAtMs: r.closest_at_ms,
+        };
+        byKey.set(cur.key, cur);
+      }
+      cur.rows.push(r);
+      cur.stages.add(r.stage);
+      cur.latestClosestAtMs = Math.max(cur.latestClosestAtMs, r.closest_at_ms);
+    }
+
+    const classify = (stages) => {
+      const tightened = stages.has('candidate') || stages.has('imminent');
+      if (stages.has('radio') && tightened) return 'graduated';
+      if (stages.has('radio') && !tightened) return 'faded';
+      return 'surprise';
+    };
+
+    const consolidated = Array.from(byKey.values()).map(ep => {
+      const earliest = ep.rows.reduce((a, b) =>
+        a.recorded_at_ms < b.recorded_at_ms ? a : b);
+      const tightest = ep.rows.reduce((a, b) =>
+        ((a.closest_sep_deg ?? Infinity) < (b.closest_sep_deg ?? Infinity)) ? a : b);
+      const topStage = ep.rows.reduce((a, b) =>
+        (STAGE_RANK[a.stage] ?? 0) >= (STAGE_RANK[b.stage] ?? 0) ? a : b);
+      // Base shape is the tightest-sep row (best-refined geometry +
+      // payload), overridden with the earliest recorded time and the
+      // top stage. flight/callsign prefer non-null wins (route lookup
+      // often only resolves on later stages).
+      const flight = ep.rows.map(r => r.flight).filter(Boolean).pop() ?? null;
+      const callsign = ep.rows.map(r => r.callsign).filter(Boolean).pop() ?? null;
+      return {
+        ...tightest,
+        recorded_at_ms: earliest.recorded_at_ms,
+        stage: topStage.stage,
+        stages: Array.from(ep.stages),
+        flight,
+        callsign,
+        outcome: classify(ep.stages),
+        leadTimeMs: tightest.closest_at_ms - earliest.recorded_at_ms,
+      };
+    });
+
+    consolidated.sort((a, b) => b.recorded_at_ms - a.recorded_at_ms);
+    return consolidated.slice(0, limit);
+  }
+
+  /**
    * Group rows in transit_history into "episodes" (one row per real transit
    * approach) and classify each by which stages fired.
    *

@@ -131,25 +131,30 @@ export function updateLifecycle({
   }
 
   // ---------- 2. Predictor watchlist entries within the planned window ----------
-  // Cross-reference with live ADS-B: if the callsign is currently on air
-  // *but* the tracker did not report a transit candidate, we still keep
-  // status='planned' (the aircraft is in the air, the predicted slot is near,
-  // it just isn't on the line of sight yet). If it IS reported by the
-  // tracker, the loop above already produced a higher-status entry which we
-  // do not overwrite.
+  // The watchlist is intentionally *not* a real-time enrichment of live
+  // contacts — it exists to surface flights that are still outside ADS-B
+  // reception, before they can be tracked geometrically. Once a flight is
+  // visible to ADS-B, live data wins regardless of what the tracker
+  // classifies it as: if the tracker emitted a candidate / radio entry, we
+  // already have that above; if the tracker did NOT emit (the aircraft is
+  // off-course this time), the planned entry is suppressed too, because
+  // continuing to flag a "planned" transit while the actual aircraft is on
+  // air and visibly elsewhere is more noise than signal.
   const liveCallsigns = new Set(
     liveAircraft.map(a => a.callsign).filter(Boolean).map(s => s.toUpperCase()),
   );
   for (const e of expected) {
     if (e.etaMs > plannedWindowMs || e.etaMs < -imminentWindowMs) continue;
     const key = keyForExpected(e);
-    // Did the tracker loop above already emit something for this flight? If
-    // a live entry exists with the same flight+body, prefer it (it has more
-    // precise data than the watchlist prediction).
+    // Did the tracker loop above already emit something for this flight?
     const trackerHit = Array.from(next.values()).find(
       v => v.body === e.body && (v.flight === e.flight || v.callsign === e.flight),
     );
     if (trackerHit) continue;
+    // Live ADS-B sees the flight, but the tracker said it's not on a
+    // transit path. Drop the watchlist entry — historical pattern is no
+    // longer the best signal we have for this slot.
+    if (e.flight && liveCallsigns.has(e.flight.toUpperCase())) continue;
 
     const prevEntry = prev.get(key);
     const status = 'planned';
@@ -159,7 +164,7 @@ export function updateLifecycle({
       body: e.body,
       icao: prevEntry?.icao ?? null,
       flight: e.flight,
-      callsign: liveCallsigns.has(e.flight) ? e.flight : (prevEntry?.callsign ?? null),
+      callsign: prevEntry?.callsign ?? null,
       closestApproachAtMs: e.expectedAtMs,
       closestApproachSepDeg: null,
       firstSeenMs: prevEntry?.firstSeenMs ?? nowMs,

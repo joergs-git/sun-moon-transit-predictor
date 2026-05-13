@@ -93,6 +93,36 @@ describe('updateLifecycle', () => {
     expect(Array.from(map.values())[0].status).toBe('candidate');
   });
 
+  it('drops a watchlist entry when the callsign is in live ADS-B', () => {
+    // Even though the tracker did NOT classify LH123 as a transit candidate
+    // this tick (e.g., off-course today), the aircraft is on air and visible
+    // in ADS-B. The watchlist's historical pattern is no longer the best
+    // signal we have — suppress the planned entry. v0.7.8+ behaviour, after
+    // the user's "Die plandaten waren nicht als anreicherung gedacht" call.
+    const map = updateLifecycle({
+      prev: new Map(),
+      nowMs: NOW,
+      trackerCandidates: [],
+      expected: [expectedEntry({ flight: 'LH123' })],
+      liveAircraft: [{ icao: 'aaa111', callsign: 'LH123' }],
+    });
+    expect(map.size).toBe(0);
+  });
+
+  it('keeps a watchlist entry when the callsign is NOT in live ADS-B', () => {
+    // Same setup as above but the aircraft hasn't entered ADS-B reception
+    // yet — the planned entry IS the only signal we have, so keep it.
+    const map = updateLifecycle({
+      prev: new Map(),
+      nowMs: NOW,
+      trackerCandidates: [],
+      expected: [expectedEntry({ flight: 'LH123' })],
+      liveAircraft: [],
+    });
+    expect(map.size).toBe(1);
+    expect(Array.from(map.values())[0].status).toBe('planned');
+  });
+
   it('marks a missing previous entry as stale within the grace period', () => {
     const first = updateLifecycle({
       prev: new Map(),

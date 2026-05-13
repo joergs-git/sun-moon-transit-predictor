@@ -131,12 +131,26 @@ const OUTCOME_LABELS = {
   surprise:  { icon: '⚡', label: 'surprise',  title: 'Tight transit fired without a prior radio warning.' },
 };
 
+// Lead time = how much advance warning the pipeline gave (transit − first
+// recorded). Big lead is what the user wants; small lead means the radio /
+// candidate stages only fired late in the approach.
+function fmtLead(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const m = Math.round(ms / 60_000);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return `${h}h${r ? ` ${r}m` : ''}`;
+}
+
 function renderHistory(events) {
   const tbody = $('#history tbody');
   tbody.innerHTML = '';
   lastHistory = events ?? [];
   if (!events || events.length === 0) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="12">No history yet.</td></tr>';
+    tbody.innerHTML = '<tr class="empty"><td colspan="13">No history yet.</td></tr>';
     return;
   }
   for (const [i, e] of events.entries()) {
@@ -149,9 +163,15 @@ function renderHistory(events) {
     const outcomeCell = oc
       ? `<span class="outcome outcome-${e.outcome}" title="${oc.title}">${oc.icon} ${oc.label}</span>`
       : '<span class="outcome outcome-none" title="Episode not yet classified — still in flight, or the window has no companion stages to compare against.">—</span>';
+    // leadTimeMs is set by the server's consolidated view; fall back to
+    // computing it ourselves so a partial response still renders cleanly.
+    const leadMs = Number.isFinite(e.leadTimeMs)
+      ? e.leadTimeMs
+      : (e.closest_at_ms - e.recorded_at_ms);
     tr.innerHTML = `
       <td class="stage-${e.stage}">${fmtDateTime(e.closest_at_ms)}</td>
       <td>${fmtDateTime(e.recorded_at_ms)}</td>
+      <td title="Lead time = ${leadMs} ms">${fmtLead(leadMs)}</td>
       <td class="stage-${e.stage}">${e.stage}</td>
       <td>${outcomeCell}</td>
       <td class="body-${e.body}">${e.body}</td>

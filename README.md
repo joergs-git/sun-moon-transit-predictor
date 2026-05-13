@@ -261,6 +261,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M14 | Inline FOV preview pane (auto-tracks newest sep&lt;1° candidate, click-to-pin) + live header clock | done |
 | M15 | Tighter 1°-only radio Pushovers + alert-learning stats (hit / surprise rate, per-row outcome tags) | done |
 | M16 | Editable tracker panel band (default 2°), near-hit row highlight (sep&lt;0.5°), weekday+date in History, learning block moved under Sky now | done |
+| M17 | 15-min look-ahead default + episode-consolidated History (one row per transit with Lead-time column) + planned suppression for live ADS-B callsigns | done |
 
 ## Quick install on the Pi 5
 
