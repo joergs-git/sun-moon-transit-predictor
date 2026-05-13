@@ -66,6 +66,181 @@ viewer** for state the service has already computed; closing the tab does
 not pause anything and never causes a missed transit. The Pi can run
 without a monitor, keyboard, or any client connected.
 
+## End-to-end pipeline reference
+
+This section unpacks the per-tick logic so the "what is computed when"
+question has a single answer to point at. The five-step summary above is
+the user-facing version; the layout below is the engineering view.
+
+### 1. Data sources
+
+| Source | What | Refresh | Module |
+|---|---|---|---|
+| `dump1090-fa` (local) | `aircraft.json` (live ADS-B) | **every 2 s** | `adsb.js` |
+| `astronomy-engine` | Sun/Moon ephemerides | **recomputed every tick** (no cache) | `geometry.js` |
+| `data/history.db` | dispatched Pushovers | **rebuilt hourly** into the watchlist | `predictor.js` + `store.js` |
+| `adsbdb.com` | IATA flight, route, airline | per candidate, **1 h positive cache, 5 min negative** | `adsbdb.js` |
+
+### 2. The 2-second tick (`service.js → tick()`)
+
+The main heartbeat. Each pass executes the following in order:
+
+**a) Coarse Sun/Moon trajectory** — `tracker.js → sampleBodyTrajectory`. Az/El
+for each tracked body is computed across the next `horizonS` seconds
+(default 300 s = 5 min look-ahead) at `stepS` resolution (default 0.5 s),
+yielding **601 Az/El samples per body** per tick. Geometric (no refraction)
+to match the aircraft side, which is also un-refracted.
+
+**b) Coarse aircraft route vector** — `tracker.js → extrapolate`. Each
+ADS-B contact is linearly extrapolated from `lat/lon/altMmsl` using
+`groundSpeedMs` + `trackDeg`, anchored at `receivedAtMs` (the actual sample
+time of the position, **not** "now" — this back-stamps ADS-B latency).
+WGS84 → ECEF → ENU → Az/El, same 0.5 s grid over 300 s, **601 Az/El points
+per aircraft**.
+
+**c) Pairwise separation scan**. For every (aircraft × body) pair the
+angular separation is computed at every one of the 601 sample indices and
+the minimum is remembered. A candidate is emitted when:
+
+* `min sep ≤ tracker.thresholdDeg` (default 0.3°) → `level = candidate`
+* `min sep ≤ tracker.looseThresholdDeg` (default 2°) → `level = radio`
+* otherwise the pair is dropped entirely (never reaches the panel).
+
+**d) Sub-step refinement — the fine route vector** — `tracker.js →
+parabolicVertex`. The grid step is 0.5 s, but a transit can land between
+two samples. A parabola is fitted through the three separation values
+`(i-1, i, i+1)` around the minimum; the analytic vertex gives a
+fractional-step refinement of both the closest-approach **time** and the
+**minimum separation**. Net effect: timing is accurate to a few tens of
+milliseconds despite the coarser sampling grid — far cheaper than running
+the grid at 0.05 s.
+
+**e) FOV path sampling** — `tracker.js → sampleTransitPath`. For the
+FOV-preview sketch the tracker emits 21 dense samples at
+`[-5, -4.5, …, +5] s` around closest approach. Pre-v0.7.6 used 5 samples at
+`±60 s` which, at typical airliner angular speeds, produced a misleading
+V-line through the disc — see v0.7.6 release notes.
+
+**f) Route lookup** — `adsbdb.js`. Each candidate's callsign is enriched
+with `flight / origin / destination / airline` via adsbdb.com. Hits are
+cached for 1 h, misses for 5 min, so a flight is queried at most once per
+hour across the entire service lifetime.
+
+**g) Lifecycle merge** — `lifecycle.js → updateLifecycle`. Three inputs are
+folded into a single `Map<key, LifecycleEntry>`:
+
+1. **Live tracker candidates** (highest signal — actual ADS-B geometry)
+2. **Watchlist** (predictor.js, the *flight-schedule* source — see below)
+3. **Previous tick's map** (so `stale` entries linger and the FIFO 20-cap
+   ages out displaced rows in order of `lastUpdateMs`)
+
+Per-row status is derived from `(level, time-to-closest, presence)`:
+
+* `imminent` — `level=candidate` AND closest-approach within
+  `±lifecycle.imminentWindowMs` (default 30 s)
+* `candidate` — `level=candidate` outside the imminent window
+* `radio` — `level=radio` (in the loose band, outside the tight band)
+* `planned` — comes from the watchlist; no live ADS-B match yet
+* `stale` — was active on a previous tick, no longer in tracker output;
+  held until the 20-row cap displaces it (oldest stale first)
+
+**h) Notifier dispatch** — `notifier.js → tick`. For each candidate, the
+next un-sent stage is evaluated. Stages escalate monotonically
+`radio → candidate → imminent`. Pushover dispatch on `radio` carries an
+**extra filter**: only fires when projected sep ≤ `pushover.radioThresholdDeg`
+(default 1°). The panel-band knob (`tracker.looseThresholdDeg`, default 2°)
+and the Pushover knob are independent — you can show 2° in the UI but only
+buzz the phone at 1°. Per-`(icao, body, stage)` dedup; state is forgotten
+5 min after closest approach. Every dispatched event writes one row to
+`transit_history`.
+
+### 3. Slower periodic processes
+
+| Job | Cadence | Code |
+|---|---|---|
+| **Watchlist rebuild** (the "flight schedule" source) | **hourly** | `predictor.js → buildWatchlist` reading `transit_history` |
+| **Lifecycle snapshot** → `data/lifecycle.json` | every **30 s** + on `SIGTERM` | `service.js → snapshotLifecycle` |
+| **Nightly auto-update** (`git pull` + restart) | once per night | `stp-update.timer` → `scripts/auto-update.sh` |
+| **OpenSky schedule augmentation** (optional) | at watchlist-rebuild time | `opensky.js` + `scripts/refresh-schedule.js` |
+
+### 4. The watchlist (flight-schedule source) in detail
+
+There is no external schedule API. Instead `transit_history` itself is the
+input:
+
+1. The last `predictor.daysBack` days (default 14) of dispatched events are
+   reduced to `{flight, body, timestampMs}` tuples.
+2. Tuples are bucketed by `(flight, body, time-of-day)` at
+   `predictor.bucketMinutes` granularity (default 60 min).
+3. A bucket graduates to a watchlist entry once it has hit at least
+   `predictor.minRepeats` distinct UTC days (default 2) — i.e. the pattern
+   has repeated.
+4. The median time-of-day inside each bucket becomes the predicted
+   `expectedTimeOfDayMs`; the standard deviation across observations is
+   surfaced as `stdevMs` (confidence marker — small spread = tight
+   schedule, wide spread = ad-hoc).
+5. `upcomingExpected()` filters the watchlist to "next occurrence inside
+   `predictor.lookAheadMs`" (default 24 h). The lifecycle merge then
+   promotes anything inside `±lifecycle.plannedWindowMs` (default 1 h) to a
+   `planned` row in the tracking panel.
+
+### 5. Persistence + outcome classification
+
+| Artefact | Written when | Used for |
+|---|---|---|
+| `transit_history` (SQLite) | on every Pushover dispatch | History panel, watchlist source, episode classification |
+| `lifecycle.json` (JSON) | every 30 s + on `SIGTERM` | Tracking panel survives restarts |
+| `config/observer.json` + `service.json` | on Settings save | Hot-reload + survive restart |
+
+**Episode classification** runs lazily on `/api/learning` and `/api/history`
+reads — see `store.js → episodes()`. History rows that share
+`(icao, body)` and whose `closest_at_ms` values fall within ±5 min are
+grouped into one *episode*. The set of stages it contains determines the
+outcome label:
+
+* `radio` AND (`candidate` OR `imminent`) → **graduated** (early warning paid off)
+* `radio` only → **faded** (false positive of the early stage)
+* `candidate` OR `imminent` with no prior `radio` → **surprise** (we missed the build-up)
+
+### 6. Frontend poll cadences
+
+The HTTP API is stateless (the service is the source of truth), so the
+browser is pure pull:
+
+| Endpoint / job | Interval | Why |
+|---|---|---|
+| Wall-clock readout in the header | 1 s | self-corrects from `Date.now()` each tick |
+| `GET /api/state` (Sky now, Tracking, FOV pane) | 2 s | matches the tick |
+| `GET /api/history` (history rows + outcomes) | 15 s | history only grows on Pushover dispatch |
+| `GET /api/learning` (stats cards) | 60 s | aggregates change at the rate of new episodes |
+
+Closing the tab pauses nothing — the service keeps running and the next
+load picks up wherever it left off, including the restored tracking list.
+
+### 7. Design principles
+
+* **Linear aircraft extrapolation** stays meter-accurate to ~60 s; past
+  ~2 min the assumption breaks (turns, ATC vectoring, wind). `horizonS=300`
+  is a tuning compromise between earlier detection and false-positive rate;
+  the upper clamp at 600 s exists so a typo in `service.json` can't blow
+  up the per-tick CPU budget.
+* **Un-refracted geometry on both sides**. The tracker compares Az/El of
+  the aircraft (raw ECEF→ENU) against Az/El of the body (geometric, no
+  refraction). Refraction is only applied at the "Sky now" display step so
+  the user sees what they would actually observe through the eyepiece.
+* **Parabolic-vertex refinement instead of a finer grid**. Halving `stepS`
+  from 0.5 s to 0.05 s would cost ~5× more samples per tick; the vertex
+  fit gets the same sub-tenth-of-a-second timing precision for a handful
+  of multiplications.
+* **Geoid offset for barometric altitudes only**. ADS-B `alt_geom` (GNSS)
+  is already WGS84 ellipsoidal height; `alt_baro` (pressure altitude) is
+  closer to MSL. The geoid undulation (≈46 m around Rheine) is only added
+  to barometric sources, preventing a systematic 46 m / ~0.05° offset.
+* **Service is single source of truth**. The browser UI is a viewer. Tab
+  close, browser crash, or laptop sleep never miss a transit — the
+  pipeline keeps running on the Pi and the next page load reflects the
+  full server state.
+
 ## Status
 
 | Milestone | Scope | Status |
@@ -557,9 +732,13 @@ Clamped to `[10, 600]` in code. Typical settings:
 | **Default** | **300** | First-detection at ~T-5 min; a few false-positives from in-cruise turns. |
 | Wide net | 600 | First-detection at ~T-10 min; many false-positives, but no transit ever sneaks up on you. |
 
-`tracker.looseThresholdDeg` (default 5°) is the **radio band** width — set
-to the same value as `thresholdDeg` to disable the radio stage entirely
-and fall back to the old two-stage flow.
+`tracker.looseThresholdDeg` (default **2°** since v0.7.4; was 5° in
+v0.1–v0.7.3) is the **radio band** width — anything wider is dropped from
+the tracking panel entirely. Editable in the Settings UI under the
+**Tracker** fieldset. Set to the same value as `thresholdDeg` to disable
+the radio stage and fall back to the old two-stage flow. The Pushover
+phone-buzz threshold (`pushover.radioThresholdDeg`, default 1°) is a
+separate, tighter filter on top of this.
 
 ## Pushover setup & test push
 
