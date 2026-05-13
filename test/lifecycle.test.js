@@ -232,7 +232,34 @@ describe('maxEntries cap', () => {
 });
 
 describe('lifecycleArray', () => {
-  it('sorts by status urgency then ETA', () => {
+  it('sorts newest-first by firstSeenMs', () => {
+    // Two ticks: the first seeds 'first', the second adds 'second'. The
+    // second one is newer, so it should land at the top of the array.
+    const after1 = updateLifecycle({
+      prev: new Map(),
+      nowMs: NOW,
+      trackerCandidates: [trackerCand({ icao: 'first', closestAtSec: 200 })],
+      expected: [],
+      liveAircraft: [],
+    });
+    const after2 = updateLifecycle({
+      prev: after1,
+      nowMs: NOW + 1000,
+      trackerCandidates: [
+        trackerCand({ icao: 'first',  closestAtSec: 200 }),
+        trackerCand({ icao: 'second', closestAtSec: 25, level: 'candidate' }),
+      ],
+      expected: [],
+      liveAircraft: [],
+    });
+    const arr = lifecycleArray(after2, NOW + 1000);
+    expect(arr.map(e => e.icao)).toEqual(['second', 'first']);
+    // Status pill is still derived per row; position no longer depends on it.
+    expect(arr[0].status).toBe('imminent');
+    expect(arr[1].status).toBe('candidate');
+  });
+
+  it('breaks firstSeenMs ties by ETA', () => {
     const map = updateLifecycle({
       prev: new Map(),
       nowMs: NOW,
@@ -240,11 +267,12 @@ describe('lifecycleArray', () => {
         trackerCand({ icao: 'far',  closestAtSec: 200, level: 'candidate' }),
         trackerCand({ icao: 'near', closestAtSec: 25,  level: 'candidate' }),
       ],
-      expected: [expectedEntry({ flight: 'OTHER', etaMin: 30 })],
+      expected: [],
       liveAircraft: [],
     });
     const arr = lifecycleArray(map, NOW);
-    expect(arr.map(e => e.status)).toEqual(['imminent', 'candidate', 'planned']);
-    expect(arr[0].icao).toBe('near');
+    // Both seeded in the same tick → firstSeenMs is identical → tiebreak by
+    // ETA: 'near' (25 s) comes before 'far' (200 s).
+    expect(arr.map(e => e.icao)).toEqual(['near', 'far']);
   });
 });
