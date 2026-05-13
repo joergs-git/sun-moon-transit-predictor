@@ -87,7 +87,7 @@ describe('sketch renderer', () => {
     };
     const input = fromLifecycleEntry(entry);
     expect(input).not.toBeNull();
-    expect(input.transitPath.length).toBe(5);
+    expect(input.transitPath.length).toBe(21);
     const svg = buildSketchSvg(input);
     expect(svg.startsWith('<svg')).toBe(true);
     // FOV rectangle, body disc (radial gradient), motion line, aircraft silhouette.

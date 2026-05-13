@@ -235,17 +235,15 @@ describe('findTransits', () => {
     expect(cands).toEqual([]);
   });
 
-  it('emits a transitPath with up-to-5 samples around closest approach', () => {
-    // A moving aircraft that crosses the Sun line of sight gives a clean
-    // ±60 s window where both sides stay observable, so all five offsets
-    // should make it through the filter.
+  it('emits a dense transitPath spanning ±5 s around closest approach', () => {
+    // Sampling switched from 5 wide-spaced offsets (±60 s) to 21 dense
+    // ones (every 0.5 s in ±5 s) in v0.7.6 — see PATH_OFFSETS_SEC. The wide
+    // offsets were producing a misleading V-shape inside the FOV; the
+    // tight sampling renders the actual near-horizontal arc.
     const t0 = new Date('2026-06-21T11:30:00Z').getTime();
     const sun = sunAzEl(RHEINE, new Date(t0));
     const pos = aircraftAtBodyLineOfSight(RHEINE, sun, 11000);
     const groundSpeed = 230;
-    // Wind position back along an eastbound track so the aircraft is east of
-    // the LoS now, and arrives at the LoS at t0 + ~2 s — keeps closest
-    // approach inside the sampling horizon for all offsets.
     const dWest = groundSpeed * 2;
     const dLon = -(dWest / (EARTH_R * Math.cos(pos.lat * DEG))) * RAD;
     const ac = makeAircraft({
@@ -260,12 +258,19 @@ describe('findTransits', () => {
     expect(cands.length).toBe(1);
     const path = cands[0].transitPath;
     expect(Array.isArray(path)).toBe(true);
-    expect(path.length).toBe(5);
-    // Offsets monotonically increase and cover the ±60 s span symmetrically.
-    expect(path.map(p => p.tOffsetMs)).toEqual([-60_000, -30_000, 0, 30_000, 60_000]);
-    // At tOffsetMs=0 the aircraft-body separation should approximately match
-    // the reported closestApproachSepDeg (sub-step discretisation aside).
-    const mid = path[2];
+    expect(path.length).toBe(21);
+    // First and last offsets cover the symmetric ±5 s window.
+    expect(path[0].tOffsetMs).toBe(-5000);
+    expect(path[path.length - 1].tOffsetMs).toBe(5000);
+    // Offsets are monotonically increasing and evenly spaced at 0.5 s.
+    for (let i = 1; i < path.length; i++) {
+      expect(path[i].tOffsetMs).toBeGreaterThan(path[i - 1].tOffsetMs);
+      expect(path[i].tOffsetMs - path[i - 1].tOffsetMs).toBe(500);
+    }
+    // A sample at the t=0 anchor must exist and approximately match the
+    // reported closest separation (sub-step discretisation aside).
+    const mid = path.find(p => p.tOffsetMs === 0);
+    expect(mid).toBeDefined();
     const sepMid = Math.hypot(
       (mid.aircraftAz - mid.bodyAz) * Math.cos(mid.bodyEl * DEG),
       mid.aircraftEl - mid.bodyEl,
