@@ -28,6 +28,27 @@ function fmtDuration(ms)  { return ms == null ? '—' : `${(ms / 1000).toFixed(1
 function fmtRoute(o, d)   { return o && d ? `${o}→${d}` : (o || d || '—'); }
 function fmtTime(ms)      { return new Date(ms).toLocaleTimeString(); }
 
+// Compact weekday + date + time for History rows where the user needs to
+// tell entries across multiple days apart. Today's rows collapse to just
+// the time so the column stays readable; older rows pick up the prefix.
+const TODAY_KEY = () => new Date().toDateString();
+function fmtDateTime(ms) {
+  if (ms == null) return '—';
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString();
+  if (d.toDateString() === TODAY_KEY()) return time;
+  const wd = d.toLocaleDateString(undefined, { weekday: 'short' });
+  const dt = d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' });
+  return `${wd} ${dt} ${time}`;
+}
+
+// Rows tighter than NEAR_HIT_DEG get a visual highlight in both Tracking
+// and History — the user's "alles unter 0.5 sep ... farblich hervorgehoben".
+const NEAR_HIT_DEG = 0.5;
+function isNearHit(sepDeg) {
+  return Number.isFinite(sepDeg) && sepDeg < NEAR_HIT_DEG;
+}
+
 function renderSky(state) {
   const tbody = $('#sky tbody');
   tbody.innerHTML = '';
@@ -63,7 +84,8 @@ function renderTracking(state) {
   }
   for (const [i, e] of rows.entries()) {
     const tr = document.createElement('tr');
-    tr.className = `row-${e.status} sketchable`;
+    const nearHit = isNearHit(e.closestApproachSepDeg);
+    tr.className = `row-${e.status} sketchable${nearHit ? ' near-hit' : ''}`;
     tr.dataset.source = 'live';
     tr.dataset.index = String(i);
     const meta = STATUS_LABELS[e.status] ?? { icon: '', label: e.status };
@@ -119,7 +141,8 @@ function renderHistory(events) {
   }
   for (const [i, e] of events.entries()) {
     const tr = document.createElement('tr');
-    tr.className = 'sketchable';
+    const nearHit = isNearHit(e.closest_sep_deg);
+    tr.className = `sketchable${nearHit ? ' near-hit' : ''}`;
     tr.dataset.source = 'history';
     tr.dataset.index = String(i);
     const oc = e.outcome ? OUTCOME_LABELS[e.outcome] : null;
@@ -127,8 +150,8 @@ function renderHistory(events) {
       ? `<span class="outcome outcome-${e.outcome}" title="${oc.title}">${oc.icon} ${oc.label}</span>`
       : '<span class="outcome outcome-none" title="Episode not yet classified — still in flight, or the window has no companion stages to compare against.">—</span>';
     tr.innerHTML = `
-      <td class="stage-${e.stage}">${fmtTime(e.closest_at_ms)}</td>
-      <td>${fmtTime(e.recorded_at_ms)}</td>
+      <td class="stage-${e.stage}">${fmtDateTime(e.closest_at_ms)}</td>
+      <td>${fmtDateTime(e.recorded_at_ms)}</td>
       <td class="stage-${e.stage}">${e.stage}</td>
       <td>${outcomeCell}</td>
       <td class="body-${e.body}">${e.body}</td>

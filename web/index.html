@@ -28,7 +28,7 @@
   </header>
 
   <div class="sky-row">
-    <section>
+    <section id="sky-section">
       <h2>Sky now</h2>
       <table id="sky">
         <thead>
@@ -41,6 +41,32 @@
         </thead>
         <tbody></tbody>
       </table>
+    </section>
+
+    <section id="learning-section">
+      <h2>Alert learning</h2>
+      <p class="hint">
+        Rolling 14-day stats. <b>Graduated</b> = radio alert that
+        tightened up. <b>Faded</b> = radio alert that never panned out.
+        <b>Surprise</b> = tight transit with no prior radio.
+      </p>
+      <div id="learning-cards" class="learning-cards">
+        <div class="learning-card" id="learn-hit">
+          <span class="learn-num">—</span>
+          <span class="learn-label" title="Of all radio alerts in the window, how many graduated to candidate or imminent.">hit rate</span>
+          <span class="learn-detail">— / — radios</span>
+        </div>
+        <div class="learning-card" id="learn-surprise">
+          <span class="learn-num">—</span>
+          <span class="learn-label" title="Of all tight transits we actually had, how many came without any prior radio warning.">surprise rate</span>
+          <span class="learn-detail">— / — transits</span>
+        </div>
+        <div class="learning-card" id="learn-episodes">
+          <span class="learn-num">—</span>
+          <span class="learn-label" title="Total episodes (one approach by one airframe) over the rolling window. Each can fire one to three stages.">episodes</span>
+          <span class="learn-detail">in last 14 days</span>
+        </div>
+      </div>
     </section>
 
     <section id="fov-section">
@@ -115,35 +141,6 @@
     </table>
   </section>
 
-  <section id="learning-section">
-    <h2>Alert learning</h2>
-    <p class="hint">
-      Rolling 14-day stats on how well the early-warning radio stage
-      predicts the tight transits that actually mattered.
-      <b>Graduated</b> = a radio alert that later tightened up to a
-      candidate or imminent stage. <b>Faded</b> = a radio alert that
-      never panned out. <b>Surprise</b> = a tight transit that fired
-      with no prior radio heads-up.
-    </p>
-    <div id="learning-cards" class="learning-cards">
-      <div class="learning-card" id="learn-hit">
-        <span class="learn-num">—</span>
-        <span class="learn-label" title="Of all radio alerts in the window, how many graduated to candidate or imminent.">hit rate</span>
-        <span class="learn-detail">— / — radios</span>
-      </div>
-      <div class="learning-card" id="learn-surprise">
-        <span class="learn-num">—</span>
-        <span class="learn-label" title="Of all tight transits we actually had, how many came without any prior radio warning.">surprise rate</span>
-        <span class="learn-detail">— / — transits</span>
-      </div>
-      <div class="learning-card" id="learn-episodes">
-        <span class="learn-num">—</span>
-        <span class="learn-label" title="Total episodes (one approach by one airframe) over the rolling window. Each can fire one to three stages.">episodes</span>
-        <span class="learn-detail">in last 14 days</span>
-      </div>
-    </div>
-  </section>
-
   <footer>
     <span id="observer"></span>
   </footer>
@@ -205,6 +202,16 @@
           <label title="Sensor active area height in millimetres.">Sensor H (mm)<input name="optics.sensorHmm" type="number" step="0.01" min="0.01" required></label>
           <label title="Sensor resolution in pixels (horizontal). Currently informational; not used in the geometric FOV.">Sensor W (px)<input name="optics.sensorPxW" type="number" step="1" min="1"></label>
           <label title="Sensor resolution in pixels (vertical).">Sensor H (px)<input name="optics.sensorPxH" type="number" step="1" min="1"></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Tracker</legend>
+          <label title="Drop tracker matches further than this from the panel entirely. The Pushover Radio band (above) is a separate, tighter filter applied only to phone notifications. Default 2°.">
+            Panel band °<input name="tracker.looseThresholdDeg" type="number" step="0.1" min="0.1">
+          </label>
+          <label title="Tight transit band — below this, a match is classified as 'candidate' (and counts as an on-disc / near-disc pass for the Sun's 0.27° radius). Default 0.3°.">
+            Tight band °<input name="tracker.thresholdDeg" type="number" step="0.05" min="0.05">
+          </label>
         </fieldset>
 
         <fieldset>

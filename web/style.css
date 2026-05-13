@@ -129,26 +129,29 @@ tr.empty td { color: var(--muted); text-align: center; padding: 16px; }
 .outcome-surprise  { background: rgba(240, 160, 32, 0.18); color: var(--accent); border-color: rgba(240, 160, 32, 0.4); }
 .outcome-none      { color: var(--muted); border-color: transparent; }
 
-/* Alert-learning headline panel: three big numbers side by side. Pushed
-   into a grid so the cards wrap cleanly on narrow screens. */
+/* Alert-learning headline panel: three numbers side by side. Lives in the
+   left column under Sky now (v0.7.4+), so the cards have to be slim —
+   140 px min lets all three sit on one row when the column is wide enough,
+   and they wrap into a 1- or 2-column stack on narrower layouts. */
 .learning-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 6px;
 }
 .learning-card {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 4px;
-  padding: 10px 14px;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 .learn-num {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-variant-numeric: tabular-nums;
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 600;
   color: var(--accent);
   line-height: 1.1;
@@ -219,17 +222,45 @@ tr.sketchable.row-imminent:hover td { background: rgba(240, 160, 32, 0.16); }
    pane in the top right so the user can trace which row is in view. */
 tr.sketchable.fov-pinned td { box-shadow: inset 3px 0 0 var(--accent); }
 
-/* Sky-row: Sky-now table on the left, FOV preview on the right. Two-column
-   grid on wide screens; auto-stacks when there is no room (<860 px).
-   The preview pane is the one the user wanted "permanent, top right". */
+/* Near-hit rows (sep < 0.5°) get a distinct magenta tint + a coloured left
+   bar so the eye snaps to them across both Tracking and History. Picked
+   magenta so it never collides with the imminent-orange or stale-red
+   tints — at a glance you can see "this one was actually close". */
+tr.sketchable.near-hit td { background: rgba(255, 93, 143, 0.12); }
+tr.sketchable.near-hit td:first-child { box-shadow: inset 3px 0 0 #ff5d8f; }
+tr.sketchable.near-hit.fov-pinned td:first-child {
+  /* Pinned + near-hit: stack the accent bar on top of the magenta one so
+     both states stay visible. The pinned indicator wins visually. */
+  box-shadow: inset 3px 0 0 var(--accent), inset 6px 0 0 #ff5d8f;
+}
+
+/* Sky-row: a 2-column grid with three named areas. Sky-now sits top-left,
+   Alert learning bottom-left, FOV preview spans both rows on the right so
+   the illustration has room to breathe. On narrow screens the grid drops
+   to a single column and the order becomes Sky → FOV → Learning (most
+   important info first). */
 .sky-row {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) minmax(360px, 1.6fr);
+  grid-template-areas:
+    "sky   fov"
+    "learn fov";
   gap: 12px;
   margin-bottom: 8px;
+  align-items: start;
 }
+#sky-section      { grid-area: sky; }
+#fov-section      { grid-area: fov; }
+#learning-section { grid-area: learn; }
+
 @media (max-width: 859px) {
-  .sky-row { grid-template-columns: 1fr; }
+  .sky-row {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "sky"
+      "fov"
+      "learn";
+  }
 }
 
 /* FOV preview panel. Same panel chrome as the tables so the page reads as

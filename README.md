@@ -85,6 +85,7 @@ without a monitor, keyboard, or any client connected.
 | M13 | In-browser Settings panel (Pushover, observer, optics) + cross-restart tracking-list persistence | done |
 | M14 | Inline FOV preview pane (auto-tracks newest sep&lt;1° candidate, click-to-pin) + live header clock | done |
 | M15 | Tighter 1°-only radio Pushovers + alert-learning stats (hit / surprise rate, per-row outcome tags) | done |
+| M16 | Editable tracker panel band (default 2°), near-hit row highlight (sep&lt;0.5°), weekday+date in History, learning block moved under Sky now | done |
 
 ## Quick install on the Pi 5
 
