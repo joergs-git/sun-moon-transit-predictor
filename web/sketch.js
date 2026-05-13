@@ -282,12 +282,29 @@ export function buildSketchSvg(d) {
 
   // Transit path: project each sample into relative-FOV coords. Body motion
   // is subtracted per-sample, so the line shows the path as it appears in a
-  // tracking-mount eyepiece where the disc stays centred.
+  // tracking-mount eyepiece where the disc stays centred. Each point carries
+  // its angular offset (degOff) so we can drop the wild-distance samples
+  // that older recordings produced — see the visibility filter below.
   const refEl = d.bodyAt.el;
   const pathPts = (d.transitPath ?? []).map(p => {
     const { dx, dy } = relOffsetDeg(p, refEl);
-    return { ...degToPx(dx, dy, cx, cy, pxPerDeg), tOffsetMs: p.tOffsetMs };
+    return {
+      ...degToPx(dx, dy, cx, cy, pxPerDeg),
+      tOffsetMs: p.tOffsetMs,
+      degOff: Math.hypot(dx, dy),
+    };
   });
+
+  // Pre-v0.7.6 recordings sampled at ±60 s with only 5 points. At typical
+  // airliner angular speeds the outer samples sat 30°+ off-FOV with the
+  // elevation already dropping as range grew; connecting them through t=0
+  // drew a misleading V-line straight through the disc. Drop samples whose
+  // angular offset from the body exceeds 2× the FOV diagonal — for new
+  // recordings (dense ±5 s) this drops only the farthest tail samples, for
+  // old recordings it leaves at most the t=0 sample (which is by definition
+  // at sep < 1°) so no misleading polyline is drawn at all.
+  const fovDiagDeg = Math.hypot(fovWDeg, fovHDeg);
+  const visiblePathPts = pathPts.filter(p => p.degOff <= 2 * fovDiagDeg);
 
   // Aircraft anchor point at closest approach. Prefer the tOffsetMs=0 path
   // sample (computed at the refined closest time) so it lands on the line.
@@ -302,14 +319,14 @@ export function buildSketchSvg(d) {
     anchor = degToPx(dx, dy, cx, cy, pxPerDeg);
   }
 
-  // Apparent heading angle from the path (end - start). When the path is
-  // missing, fall back to 90° (horizontal) so the silhouette still has a
-  // sensible orientation. A more refined fallback would project trackDeg
-  // into local az/el; deferred until typed silhouettes are added.
+  // Apparent heading angle from the visible-portion samples (end - start).
+  // Restricting to visiblePathPts means the silhouette orientation reflects
+  // the local direction of travel near the disc — much more accurate than
+  // taking the wide-spread t=±60 s endpoints from older recordings.
   let headingRad = 0;
-  if (pathPts.length >= 2) {
-    const a = pathPts[0];
-    const b = pathPts[pathPts.length - 1];
+  if (visiblePathPts.length >= 2) {
+    const a = visiblePathPts[0];
+    const b = visiblePathPts[visiblePathPts.length - 1];
     headingRad = Math.atan2(b.y - a.y, b.x - a.x);
   }
 
@@ -344,16 +361,18 @@ export function buildSketchSvg(d) {
     `<circle cx="${cx}" cy="${cy}" r="${bodyR}" fill="url(#bodyGrad)" stroke="${bodyRim}" stroke-width="0.5"/>`;
 
   // Motion line + tick marks at each sample, arrowhead at the latest one.
+  // Uses visiblePathPts so the polyline never connects through wild-distance
+  // tails of older recordings — see the visibility filter above.
   let pathSvg = '';
-  if (pathPts.length >= 2) {
-    const poly = pathPts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  if (visiblePathPts.length >= 2) {
+    const poly = visiblePathPts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
     pathSvg += `<polyline points="${poly}" fill="none" stroke="${COLOURS.pathStroke}" stroke-width="1.2" stroke-opacity="0.85" stroke-dasharray="6 3"/>`;
-    for (const p of pathPts) {
+    for (const p of visiblePathPts) {
       const isAnchor = p.tOffsetMs === 0;
       pathSvg += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${isAnchor ? 2.2 : 1.4}" fill="${COLOURS.pathStroke}" />`;
     }
-    // Arrowhead in direction of motion at the last point.
-    const last = pathPts[pathPts.length - 1];
+    // Arrowhead in direction of motion at the last visible point.
+    const last = visiblePathPts[visiblePathPts.length - 1];
     const hx = Math.cos(headingRad);
     const hy = Math.sin(headingRad);
     const tipX = last.x + hx * 8;
