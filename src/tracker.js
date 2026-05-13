@@ -287,12 +287,14 @@ export function findTransits(observer, aircraftList, nowMs, opts = {}) {
   // are still reported so the UI / Pushover pipeline can give a much earlier
   // heads-up. Set loose=tight (or omit) to disable the radio stage.
   const looseThresholdDeg = Math.max(thresholdDeg, opts.looseThresholdDeg ?? thresholdDeg);
-  // Clamp horizon to sane bounds. Linear extrapolation is meter-accurate at
-  // 60 s; well past 5 min the assumption breaks (turns, climbs, wind shift)
-  // and the prediction is mostly noise. Allow up to 600 s for users who
-  // explicitly want a wider net but cap the upper end so a typo in
-  // service.json can't blow up the per-tick CPU budget.
-  const horizonS = Math.min(600, Math.max(10, opts.horizonS ?? 300));
+  // Clamp horizon to sane bounds. Linear extrapolation is meter-accurate
+  // at 60 s and reasonable through ~10 min in stable cruise; well past
+  // 15 min the assumption breaks (turns, climbs, wind shift) and the
+  // prediction trends toward noise. Default (set in service.js) is 900 s
+  // for early-detection coverage; upper clamp is 1800 s for users who want
+  // to surface flights from first ADS-B contact at the cost of more
+  // "faded" episodes.
+  const horizonS = Math.min(1800, Math.max(10, opts.horizonS ?? 900));
 
   // Body trajectories — geometric (un-refracted) for like-for-like comparison.
   const trajectories = new Map();

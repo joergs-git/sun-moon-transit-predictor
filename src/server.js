@@ -110,20 +110,18 @@ export function createHttpServer(opts) {
       }
       if (url.pathname === '/api/history') {
         const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') ?? '100')));
-        // Compute episodes over a generous 30-day window so the rows
-        // returned here all get classified — history grows ~10 rows/day so
-        // this is still cheap. Each row gets an `outcome` field
-        // (graduated / faded / surprise / null) so the UI can colour it.
-        const { episodes } = store.episodes({ windowMs: 30 * 24 * 3600_000 });
-        const outcomeById = new Map();
-        for (const e of episodes) for (const id of e.rowIds) outcomeById.set(id, e.outcome);
-        const events = store.recent({ limit }).map((row) => {
+        // Episode-consolidated history view (v0.7.8+): one row per real
+        // transit, combining earliest-detection time with tightest-sep
+        // snapshot. Replaces the prior radio/candidate/imminent triplet
+        // that made recorded_at_ms appear to sit 30 s before transit
+        // (that was the imminent row of a 3-row episode).
+        const events = store.consolidatedHistory({ limit }).map((row) => {
           let payload = null;
           if (row.payload_json) {
             try { payload = JSON.parse(row.payload_json); } catch { /* drop */ }
           }
           const { payload_json, ...rest } = row;
-          return { ...rest, payload, outcome: outcomeById.get(row.id) ?? null };
+          return { ...rest, payload };
         });
         return jsonResponse(res, 200, { events });
       }

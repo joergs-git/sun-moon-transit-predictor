@@ -111,6 +111,41 @@ describe('HistoryStore', () => {
     }
   });
 
+  it('consolidates a three-stage episode into one history row', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      const nowMs = 1_700_000_000_000;
+      const a = makeCandidate({ icao: 'aaa111', body: 'Sun', sepDeg: 0.9, closestInMs: 0 });
+      a.closestApproachAtMs = nowMs - 3 * 3600_000;
+      // radio fires earliest (T-90s), candidate at T-30s, imminent at T-0
+      // with the refined geometry and the tightest sep value.
+      store.recordEvent('radio',     { ...a, closestApproachSepDeg: 0.9 },
+                        null, a.closestApproachAtMs - 90_000);
+      store.recordEvent('candidate', { ...a, closestApproachSepDeg: 0.25 },
+                        null, a.closestApproachAtMs - 30_000);
+      store.recordEvent('imminent',  { ...a, closestApproachSepDeg: 0.18 },
+                        null, a.closestApproachAtMs);
+
+      const rows = store.consolidatedHistory({ limit: 10, windowMs: 24 * 3600_000, nowMs });
+      expect(rows.length).toBe(1);
+      const r = rows[0];
+      // Earliest recorded_at_ms (radio stage) wins for the time column.
+      expect(r.recorded_at_ms).toBe(a.closestApproachAtMs - 90_000);
+      // Tightest sep wins for the geometry snapshot (imminent stage).
+      expect(r.closest_sep_deg).toBeCloseTo(0.18, 5);
+      // Highest stage reached.
+      expect(r.stage).toBe('imminent');
+      // All three stages remembered.
+      expect(r.stages.sort()).toEqual(['candidate', 'imminent', 'radio']);
+      // Outcome classifies the episode as graduated.
+      expect(r.outcome).toBe('graduated');
+      // Lead time is the full radio→imminent span.
+      expect(r.leadTimeMs).toBe(90_000);
+    } finally {
+      store.close();
+    }
+  });
+
   it('keeps two same-flight approaches more than an episode-window apart separate', () => {
     const store = new HistoryStore(':memory:');
     try {

@@ -26,7 +26,14 @@ export const DEFAULT_CONFIG = {
     pollIntervalMs: 2000,
   },
   tracker: {
-    horizonS: 300,            // 5-minute look-ahead by default
+    // 15-minute look-ahead by default (v0.7.8+, was 300 s before). A high-
+    // altitude airliner is visible to a good ADS-B antenna ~20-25 min
+    // before overhead; 900 s catches the bulk of that window so candidates
+    // are recorded when the flight first enters reception range, not 30 s
+    // before transit. Linear extrapolation noise grows past ~10 min and
+    // false-positive "faded" episodes will become more common — that's the
+    // tradeoff for earlier detection. Clamp upper bound is 1800 s in code.
+    horizonS: 900,
     stepS: 0.5,
     thresholdDeg: 0.3,        // tight band → 'candidate' level
     // Drop matches further than this from the tracking panel entirely.
@@ -404,6 +411,13 @@ export async function runService({
         const v = Number(t.thresholdDeg);
         if (!Number.isFinite(v) || v <= 0) throw new Error('tracker.thresholdDeg must be a positive number');
         config.tracker.thresholdDeg = v;
+      }
+      if ('horizonS' in t) {
+        const v = Number(t.horizonS);
+        if (!Number.isFinite(v) || v < 10) throw new Error('tracker.horizonS must be ≥ 10 seconds');
+        // findTransits() re-clamps to the upper bound on its own — let it
+        // do the work so service.js doesn't duplicate the policy constant.
+        config.tracker.horizonS = v;
       }
       // findTransits() reads trackerOpts fresh on every tick, so mutating
       // config.tracker in-place is enough — next poll picks up the new
