@@ -29,7 +29,12 @@ export const DEFAULT_CONFIG = {
     horizonS: 300,            // 5-minute look-ahead by default
     stepS: 0.5,
     thresholdDeg: 0.3,        // tight band → 'candidate' level
-    looseThresholdDeg: 5.0,   // wider band → 'radio' level (early warning)
+    // Drop matches further than this from the tracking panel entirely.
+    // Was 5° pre-v0.7.4; lowered after the user's "alles über 2° ist nicht
+    // mehr relevant" decision. The Pushover phone-buzz filter is separate
+    // (pushover.radioThresholdDeg, default 1°) so you can dial the panel
+    // and the notifications independently.
+    looseThresholdDeg: 2.0,
     bodies: ['Sun', 'Moon'],
   },
   pushover: {
@@ -384,6 +389,28 @@ export async function runService({
       };
     }
 
+    if (patch.tracker && typeof patch.tracker === 'object') {
+      const t = patch.tracker;
+      // Only the two thresholds are user-editable from the UI — the look-
+      // ahead horizon and step size are perf-tuning knobs that we don't want
+      // exposed casually. Validate strictly so a bad input never zeroes out
+      // the panel.
+      if ('looseThresholdDeg' in t) {
+        const v = Number(t.looseThresholdDeg);
+        if (!Number.isFinite(v) || v <= 0) throw new Error('tracker.looseThresholdDeg must be a positive number');
+        config.tracker.looseThresholdDeg = v;
+      }
+      if ('thresholdDeg' in t) {
+        const v = Number(t.thresholdDeg);
+        if (!Number.isFinite(v) || v <= 0) throw new Error('tracker.thresholdDeg must be a positive number');
+        config.tracker.thresholdDeg = v;
+      }
+      // findTransits() reads trackerOpts fresh on every tick, so mutating
+      // config.tracker in-place is enough — next poll picks up the new
+      // values, the lifecycle list shrinks to match.
+      applied.tracker = { ...config.tracker };
+    }
+
     if (patch.optics && typeof patch.optics === 'object') {
       const o = patch.optics;
       const numKeys = ['telescopeFocalMm', 'sensorWmm', 'sensorHmm', 'sensorPxW', 'sensorPxH'];
@@ -417,6 +444,7 @@ export async function runService({
         }
         const merged = {
           ...existing,
+          tracker:       { ...(existing.tracker       ?? {}), ...config.tracker },
           pushover:      { ...(existing.pushover      ?? {}), ...config.pushover },
           optics:        { ...(existing.optics        ?? {}), ...config.optics },
           externalLinks: { ...(existing.externalLinks ?? {}), ...config.externalLinks },
