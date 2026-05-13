@@ -231,18 +231,23 @@ function bestStatus(a, b) {
 
 /**
  * Convert a lifecycle map to a sorted array suitable for /api/state.
- * Order: imminent first (most urgent), then candidate, then radio, then
- * planned, then stale. Within each status, sorted by ETA.
+ *
+ * Order: newest first (highest `firstSeenMs`). A freshly-detected aircraft
+ * always appears at the top of the table; the next time another one
+ * appears, the previous head row slides down by one. Within identical
+ * firstSeenMs values the secondary sort is ETA, which keeps the order
+ * stable across ticks. Status urgency is conveyed by the per-row colour
+ * coding and the status pill, not by position.
  *
  * @param {Map<string, LifecycleEntry>} map
  * @param {number} nowMs
  */
 export function lifecycleArray(map, nowMs) {
-  const sortKey = (e) => {
-    const sk = STATUS_ORDER[e.status] ?? 0;
-    return -sk * 1e15 + (e.closestApproachAtMs - nowMs);
-  };
   return Array.from(map.values())
     .map(e => ({ ...e, etaMs: e.closestApproachAtMs - nowMs }))
-    .sort((a, b) => sortKey(a) - sortKey(b));
+    .sort((a, b) => {
+      const seenDelta = (b.firstSeenMs ?? 0) - (a.firstSeenMs ?? 0);
+      if (seenDelta !== 0) return seenDelta;
+      return (a.closestApproachAtMs - nowMs) - (b.closestApproachAtMs - nowMs);
+    });
 }

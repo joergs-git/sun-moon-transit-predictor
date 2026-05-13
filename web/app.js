@@ -378,7 +378,20 @@ function pinFromRow(source, index) {
 
 document.body.addEventListener('click', (ev) => {
   const row = ev.target.closest('tr.sketchable');
-  if (row) pinFromRow(row.dataset.source, row.dataset.index);
+  if (!row) return;
+  pinFromRow(row.dataset.source, row.dataset.index);
+  // Jump the viewport up to the FOV pane so the user actually sees the
+  // illustration they just pinned — without this the click on a History
+  // row at the bottom of the page only repaints something off-screen.
+  // Skip when the section is already comfortably visible to avoid
+  // scrolling around when the user is already looking at the pane.
+  const fov = $('#fov-section');
+  if (fov) {
+    const rect = fov.getBoundingClientRect();
+    if (rect.top < 0 || rect.bottom > window.innerHeight) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }
 });
 // Esc unpins, restoring auto mode — discoverable shortcut without a UI
 // button cluttering the sky-row pane.
