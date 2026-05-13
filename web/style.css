@@ -234,14 +234,20 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
   box-shadow: inset 3px 0 0 var(--accent), inset 6px 0 0 #ff5d8f;
 }
 
-/* Sky-row: a 2-column grid with three named areas. Sky-now sits top-left,
-   Alert learning bottom-left, FOV preview spans both rows on the right so
-   the illustration has room to breathe. On narrow screens the grid drops
-   to a single column and the order becomes Sky → FOV → Learning (most
-   important info first). */
+/* Sky-row: a 2-column grid with three named areas.
+     ┌────────┬──────────┐
+     │  Sky   │          │
+     ├────────┤   FOV    │
+     │ Learn  │ moon/sun │
+     └────────┴──────────┘
+   Sky-now sits top-left, Alert learning bottom-left, FOV preview spans
+   both rows on the right so the moon/sun illustration has room to breathe.
+   The breakpoint stays generous (≥ 640 px) so anything wider than a
+   portrait phone keeps the side-by-side arrangement — Alert learning is
+   never full-width below the row on a normal browser window. */
 .sky-row {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(360px, 1.6fr);
+  grid-template-columns: minmax(220px, 1fr) minmax(320px, 1.4fr);
   grid-template-areas:
     "sky   fov"
     "learn fov";
@@ -253,7 +259,10 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
 #fov-section      { grid-area: fov; }
 #learning-section { grid-area: learn; }
 
-@media (max-width: 859px) {
+/* Only fall back to a single stacked column on actual phone-portrait
+   widths. Anything from a half-screen browser window upward keeps Alert
+   learning next to the moon/sun pane. */
+@media (max-width: 639px) {
   .sky-row {
     grid-template-columns: 1fr;
     grid-template-areas:
