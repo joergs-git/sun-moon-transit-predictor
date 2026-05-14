@@ -7,8 +7,8 @@ Pushover notifications in two stages: an early candidate alert and a precise
 T-minus alert once live ADS-B has nailed down the transit time.
 
 ![Plane direction and FOV](/sunmoonplane2.png)
-
-![Plane direction and FOV](/sunplane.png)
+![Plane in front of sun](/sun-n-plane.png) 
+![Fov projection](/sunplane.png)
 
 
 ## Overview
