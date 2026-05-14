@@ -31,14 +31,17 @@ function fmtTime(ms)      { return new Date(ms).toLocaleTimeString(); }
 // Compact weekday + date + time for History rows where the user needs to
 // tell entries across multiple days apart. Today's rows collapse to just
 // the time so the column stays readable; older rows pick up the prefix.
+// Weekday and date are forced to en-GB ("Wed 13 May") regardless of the
+// browser locale so the column doesn't switch between languages — the
+// rest of the UI is in English anyway.
 const TODAY_KEY = () => new Date().toDateString();
 function fmtDateTime(ms) {
   if (ms == null) return '—';
   const d = new Date(ms);
   const time = d.toLocaleTimeString();
   if (d.toDateString() === TODAY_KEY()) return time;
-  const wd = d.toLocaleDateString(undefined, { weekday: 'short' });
-  const dt = d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' });
+  const wd = d.toLocaleDateString('en-GB', { weekday: 'short' });
+  const dt = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
   return `${wd} ${dt} ${time}`;
 }
 
@@ -249,6 +252,15 @@ async function pollLearning() {
     const res = await fetch('/api/learning?windowDays=14');
     if (!res.ok) return;
     const { aggregates: a, windowDays } = await res.json();
+    // Graze rate: of all detected aircraft, the share that actually
+    // crossed each body's disc (sep < grazeThresholdDeg, default 0.3°).
+    $('#learn-graze-sun').textContent  = fmtPct(a.sunGrazePct);
+    $('#learn-graze-moon').textContent = fmtPct(a.moonGrazePct);
+    $('#learn-graze-detail').textContent =
+      `${(a.sunGrazes ?? 0) + (a.moonGrazes ?? 0)} / ${a.totalEpisodes ?? 0} detected · sep < ${
+        a.grazeThresholdDeg != null ? a.grazeThresholdDeg.toFixed(2) : '0.30'
+      }°`;
+
     const hit = $('#learn-hit');
     hit.querySelector('.learn-num').textContent = fmtPct(a.hitRatePct);
     hit.querySelector('.learn-detail').textContent =

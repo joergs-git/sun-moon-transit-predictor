@@ -146,6 +146,35 @@ describe('HistoryStore', () => {
     }
   });
 
+  it('aggregates per-body disc-graze rates from episode min separations', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      const nowMs = 1_700_000_000_000;
+      const mk = (icao, body, sepDeg, closestAt) => {
+        const c = makeCandidate({ icao, body, sepDeg, closestInMs: 0 });
+        c.closestApproachAtMs = closestAt;
+        store.recordEvent('candidate', c, null, closestAt);
+      };
+      // 4 episodes total: 2× Sun (one graze 0.18°, one miss 0.5°),
+      //                  2× Moon (one graze 0.22°, one miss 0.7°).
+      mk('aaa', 'Sun',  0.18, nowMs - 1 * 3600_000);
+      mk('bbb', 'Sun',  0.50, nowMs - 2 * 3600_000);
+      mk('ccc', 'Moon', 0.22, nowMs - 3 * 3600_000);
+      mk('ddd', 'Moon', 0.70, nowMs - 4 * 3600_000);
+
+      const { aggregates: a } = store.episodes({ windowMs: 24 * 3600_000, nowMs });
+      expect(a.totalEpisodes).toBe(4);
+      expect(a.sunGrazes).toBe(1);
+      expect(a.moonGrazes).toBe(1);
+      expect(a.grazeThresholdDeg).toBe(0.3);
+      // Denominator is the full pool (4), so each body = 25 %.
+      expect(a.sunGrazePct).toBe(25);
+      expect(a.moonGrazePct).toBe(25);
+    } finally {
+      store.close();
+    }
+  });
+
   it('keeps two same-flight approaches more than an episode-window apart separate', () => {
     const store = new HistoryStore(':memory:');
     try {
