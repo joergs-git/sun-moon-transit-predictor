@@ -6,7 +6,8 @@ Pi OS Lite, 64-bit) alongside `dump1090-fa`, with a small browser UI and
 Pushover notifications in two stages: an early candidate alert and a precise
 T-minus alert once live ADS-B has nailed down the transit time.
 
-![Plane candidates overview](/sunmoonplane.png)
+![Plane direction and FOV](/sunmoonplane2.png)
+
 ![Plane direction and FOV](/sunplane.png)
 
 
