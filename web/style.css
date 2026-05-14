@@ -159,6 +159,26 @@ tr.empty td { color: var(--muted); text-align: center; padding: 16px; }
 #learn-surprise .learn-num { color: var(--accent); }
 #learn-hit      .learn-num { color: var(--ok); }
 #learn-episodes .learn-num { color: var(--fg); }
+
+/* Graze-rate card stacks Sun and Moon percentages on two lines so both
+   numbers fit even when the card is narrow. The body emoji on the left of
+   each line acts as a label — Sun yellow, Moon blue. */
+#learn-graze .learn-num {
+  display: flex;
+  flex-direction: column;
+  font-size: 16px;
+  gap: 1px;
+  line-height: 1.15;
+}
+.graze-line {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.graze-body { font-size: 14px; }
+.graze-body.body-Sun  { color: #ffcc40; }
+.graze-body.body-Moon { color: #b3e5ff; }
 .learn-label {
   font-size: 11px;
   text-transform: uppercase;

@@ -388,6 +388,20 @@ export class HistoryStore {
     const candidateOrImminent = episodes.filter(
       e => e.stages.includes('candidate') || e.stages.includes('imminent'),
     ).length;
+    // Disc-graze count per body. An episode counts as a "graze" when its
+    // tightest stage drove min separation below `grazeThresholdDeg` (default
+    // 0.3°). At typical airliner ranges (~10 km) the angular wingspan is
+    // ≈0.2°, the Sun/Moon disc radius is ≈0.27°, so a 0.3°-from-centre pass
+    // means the silhouette at least partially overlaps the disc edge — i.e.
+    // a real grazing transit, not a near-miss. The user wants this as a
+    // running quality signal that "refines with more data".
+    const grazeThresholdDeg = 0.3;
+    const sunGrazes = episodes.filter(
+      e => e.body === 'Sun'  && Number.isFinite(e.minSepDeg) && e.minSepDeg < grazeThresholdDeg,
+    ).length;
+    const moonGrazes = episodes.filter(
+      e => e.body === 'Moon' && Number.isFinite(e.minSepDeg) && e.minSepDeg < grazeThresholdDeg,
+    ).length;
     const aggregates = {
       totalEpisodes: total,
       radioFired,
@@ -395,6 +409,9 @@ export class HistoryStore {
       radioFaded,
       surprises,
       candidateOrImminent,
+      sunGrazes,
+      moonGrazes,
+      grazeThresholdDeg,
       // Hit rate: of all radio alerts, how many panned out into a tight
       // transit. The user's "wie oft kommt es vor, dass ein echter 1°
       // candidate tatsächlich ernst wird".
@@ -405,6 +422,11 @@ export class HistoryStore {
       surpriseRatePct: candidateOrImminent > 0
         ? (surprises / candidateOrImminent) * 100
         : null,
+      // Disc-graze rates: % of ALL detected aircraft (both bodies pooled in
+      // the denominator) that actually skimmed each body's disc within the
+      // graze threshold. Refines as the rolling window accumulates events.
+      sunGrazePct:  total > 0 ? (sunGrazes  / total) * 100 : null,
+      moonGrazePct: total > 0 ? (moonGrazes / total) * 100 : null,
     };
     return { windowMs, episodes, aggregates };
   }
