@@ -8,9 +8,9 @@
 #   bash scripts/install-pi5.sh --no-auto-update  # skip the nightly timer
 #
 # Env vars honoured in --non-interactive mode (or as defaults otherwise):
-#   STP_OBSERVER_NAME    e.g. "Rheine"
-#   STP_LAT              latitude  °N  e.g. "52.2833"
-#   STP_LON              longitude °E  e.g. "7.4406"
+#   STP_OBSERVER_NAME    e.g. "City"
+#   STP_LAT              latitude  °N  e.g. "52.1"
+#   STP_LON              longitude °E  e.g. "7.1"
 #   STP_ELEV             observer elevation (m HAE), e.g. "50"
 #   STP_GEOID_M          EGM2008 N at the site (m), e.g. "46"  (default 0)
 #   STP_ADSB_URL         e.g. "http://localhost:8080/data/aircraft.json"
@@ -108,9 +108,9 @@ SERVICE_FILE_LOCAL="$REPO_DIR/config/service.json"
 
 if [ ! -f "$OBSERVER_FILE" ] || [ "$OVERWRITE_CONFIG" -eq 1 ]; then
   log "Writing observer config ($OBSERVER_FILE) ..."
-  OBS_NAME=$(prompt   "Observer name"          "${STP_OBSERVER_NAME:-Rheine}")
-  OBS_LAT=$(prompt    "Latitude °N"            "${STP_LAT:-52.2833}")
-  OBS_LON=$(prompt    "Longitude °E"           "${STP_LON:-7.4406}")
+  OBS_NAME=$(prompt   "Observer name"          "${STP_OBSERVER_NAME:-City}")
+  OBS_LAT=$(prompt    "Latitude °N"            "${STP_LAT:-52.2}")
+  OBS_LON=$(prompt    "Longitude °E"           "${STP_LON:-7.5}")
   OBS_ELEV=$(prompt   "Elevation m (≈MSL)"     "${STP_ELEV:-50}")
   OBS_GEOID=$(prompt  "EGM2008 N (m, 0 to skip)" "${STP_GEOID_M:-0}")
   cat > "$OBSERVER_FILE" <<EOF
