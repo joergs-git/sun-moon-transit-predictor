@@ -263,6 +263,51 @@ load picks up wherever it left off, including the restored tracking list.
 | M16 | Editable tracker panel band (default 2°), near-hit row highlight (sep&lt;0.5°), weekday+date in History, learning block moved under Sky now | done |
 | M17 | 15-min look-ahead default + episode-consolidated History (one row per transit with Lead-time column) + planned suppression for live ADS-B callsigns | done |
 
+## Hardware + software bill of materials
+
+End-to-end the project needs the items below. The cheap-but-complete
+ADS-B receiver is the RTL-SDR + 1090 MHz antenna pair; everything else
+is the host computer it runs on.
+
+### Required hardware
+
+| Item | Notes |
+|---|---|
+| **Raspberry Pi 5** (4 GB or 8 GB) | The host. Earlier Pi models work too but the v0.7+ tracker tick + browser UI was profiled on the Pi 5. |
+| **microSD card** (≥ 16 GB, A1/A2 endurance) | Boot media. SanDisk High Endurance / Samsung PRO Endurance recommended — the SQLite history and lifecycle snapshot write small batches continuously. |
+| **USB-C power supply** (5 V / 5 A) | Official Raspberry Pi 5 PSU or equivalent. Skip if you go the PoE route below. |
+| **RTL-SDR USB stick** (RTL2832U + R820T2 tuner) | The 1090 MHz ADS-B receiver. The **RTL-SDR Blog v3** is the de-facto standard — clean clock, metal case, bias-T for active antennas. Any clone works as long as it decodes 1090 MHz Mode S. |
+| **1090 MHz ADS-B antenna** | A FlightAware 1090 MHz outdoor antenna or any λ/4 mag-mount tuned for 1090 MHz. Sky view = range. |
+| **Coax + adapters** | SMA male ↔ whatever your antenna terminates in. Short and shielded — every dB lost on the cable is range lost. |
+| **Network** | Ethernet *or* Wi-Fi to a router that can reach the Pi from your browser. The HTTP API is unauthenticated; keep the Pi on a trusted LAN or front it with a reverse proxy. |
+
+### Optional / situational
+
+| Item | When you want it |
+|---|---|
+| **Waveshare PoE HAT** (or equivalent IEEE 802.3af/at HAT) | If you want **PoE-only operation** — single Ethernet cable provides power *and* network, no USB-C PSU needed. Mounts on the Pi 5's 40-pin GPIO header. Verify the HAT's spec matches the Pi 5 power budget (≥ 5 V/5 A continuous including ADS-B-stick draw). |
+| **Active LNA** (Uputronics / RTL-SDR Blog) at the antenna feedpoint | Pulls weaker / further aircraft out of the noise; powered via the RTL-SDR's bias-T. Only worth it if you're seeing < 200 km range. |
+| **1090 MHz bandpass / SAW filter** | Cuts strong out-of-band signals (FM broadcast, cellular) that can desensitise the RTL. Often built into the LNAs above. |
+| **Active cooling case** (Argon ONE V3, Pi 5 official cooler, etc.) | The Pi 5 throttles under sustained load; the tracker tick is light but if you co-host other services you'll want active cooling. |
+| **External USB-C SSD** | Move `data/history.db` and `data/lifecycle.json` off the SD card by symlinking the `data/` directory. Massively extends SD-card life for multi-year deployments. |
+| **Pushover account** ([pushover.net](https://pushover.net)) | Phone notifications for the three transit stages. The pipeline runs fine without it (`pushover.enabled=false`), but you'll only see transits in the web UI. |
+
+### Required software (installed by `scripts/install-pi5.sh`)
+
+| Item | What it does |
+|---|---|
+| **Raspberry Pi OS Lite, 64-bit** (Bookworm) | Headless OS image flashed via Raspberry Pi Imager. Set hostname, SSH key, and Wi-Fi in the Imager's "Edit Settings" before flashing for a zero-touch first boot. |
+| **`dump1090-fa`** (FlightAware) | The ADS-B decoder. Listens to the RTL-SDR, parses Mode S messages, exposes the rolling `aircraft.json` on `http://localhost:8080/data/aircraft.json` that this service polls every 2 s. Install via `sudo apt install dump1090-fa`. |
+| **Node.js 22+** | Runtime. Pulled from NodeSource by the installer if absent. Needs `--experimental-sqlite` on Node 22; stable on Node 24+. |
+| **This repo** (`sun-moon-transit-predictor`) | `git clone https://github.com/joergs-git/sun-moon-transit-predictor.git` — contains `bin/stp.js`, the systemd units in `systemd/`, the install + auto-update scripts in `scripts/`, the web UI in `web/`. |
+
+### Optional external services
+
+| Item | What you get |
+|---|---|
+| **adsbdb.com** (no account needed) | IATA flight numbers, origin / destination airports, airline names attached to every candidate. Used live for the tracking panel and Pushover payload, cached for 1 h per callsign. Skip with `routes.enabled=false`. |
+| **OpenSky Network** account (free) | Optional schedule augmentation: backfills the predictor's watchlist with flights you may not have seen yourself yet. Configured via `scripts/refresh-schedule.js`. Off by default. |
+
 ## Quick install on the Pi 5
 
 Recommended OS image: **Raspberry Pi OS Lite (64-bit)** via the Pi Imager
