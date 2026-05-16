@@ -71,6 +71,36 @@ describe('Notifier', () => {
     expect(px.calls.length).toBe(0);
   });
 
+  it('records the radio stage to history even when the Pushover is suppressed (H)', async () => {
+    const px = new FakePushover();
+    const recorded = [];
+    const n = new Notifier({
+      pushover: px,                                   // default 1° phone band
+      onEvent: (evt) => recorded.push(evt),
+    });
+    // 1.6° → inside the 2° panel band but past the 1° phone band: the phone
+    // must stay silent, but History must still get the radio row so the
+    // lead-time (Transit − Recorded) reflects the true early detection.
+    const cand = makeCandidate({ closestInMs: 600_000, level: 'radio', sepDeg: 1.6 });
+    const events = await n.tick([cand], 1_000_000_000_000);
+    expect(events.length).toBe(0);          // no Pushover dispatched
+    expect(px.calls.length).toBe(0);
+    expect(recorded.length).toBe(1);        // but history recorded it
+    expect(recorded[0].stage).toBe('radio');
+    expect(recorded[0].recordedOnly).toBe(true);
+  });
+
+  it('does not double-record a stage across ticks', async () => {
+    const px = new FakePushover();
+    const recorded = [];
+    const n = new Notifier({ pushover: px, onEvent: (e) => recorded.push(e) });
+    const cand = makeCandidate({ closestInMs: 600_000, level: 'radio', sepDeg: 1.6 });
+    await n.tick([cand], 1_000_000_000_000);
+    await n.tick([cand], 1_000_000_000_000 + 2000);
+    await n.tick([cand], 1_000_000_000_000 + 4000);
+    expect(recorded.filter(e => e.stage === 'radio').length).toBe(1);
+  });
+
   it('still fires radio when the user widens radioThresholdDeg', async () => {
     const px = new FakePushover();
     const n = new Notifier({ pushover: px, radioThresholdDeg: 5.0 });

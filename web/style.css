@@ -481,3 +481,133 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
 }
 .settings-msg.ok  { color: var(--ok); }
 .settings-msg.err { color: var(--warn); }
+
+/* ===== v0.8.0 ============================================================ */
+
+/* I — small clarifying sub-label under a column header. Lower-case, lighter
+   and not uppercased so it reads as a caption, not a second header. */
+.th-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+/* D — History near-hit rows go GREEN (a sub-0.5° pass that actually made it
+   into the log is a *success*, not a warning). Tracking keeps the magenta
+   "look here" tint from the rule above; the #history ID selector outranks
+   it so only the History table is recoloured. */
+#history tr.sketchable.near-hit td { background: rgba(95, 208, 127, 0.14); }
+#history tr.sketchable.near-hit td:first-child { box-shadow: inset 3px 0 0 #5fd07f; }
+#history tr.sketchable.near-hit.fov-pinned td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent), inset 6px 0 0 #5fd07f;
+}
+
+/* F — detection funnel: three pure-CSS horizontal bars under Alert learning. */
+.detect-funnel {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.funnel-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.funnel-sub {
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.7;
+  font-style: italic;
+}
+.funnel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 3px 0;
+}
+.funnel-label {
+  flex: 0 0 52px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.funnel-track {
+  flex: 1 1 auto;
+  height: 10px;
+  background: rgba(139, 148, 158, 0.12);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.funnel-bar {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+.fb-total { background: #8b94a3; }
+.fb-band  { background: var(--accent); }
+.fb-near  { background: var(--ok); }
+.funnel-val {
+  flex: 0 0 36px;
+  text-align: right;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+/* E — offline airframe spec block under the FOV sketch. */
+.fov-specs {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.spec-head {
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.spec-klass {
+  font-size: 10px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.spec-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 1px 0;
+}
+.spec-k { color: var(--muted); }
+.spec-v {
+  color: var(--fg);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.spec-foot {
+  margin-top: 5px;
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.8;
+  line-height: 1.35;
+}
