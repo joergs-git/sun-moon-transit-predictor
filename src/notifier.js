@@ -165,7 +165,10 @@ export class Notifier {
       let st = this.state.get(key);
       if (!st) {
         st = {
+          // *Sent  → Pushover dispatch (gated by minStage + radioThresholdDeg)
+          // *Rec   → History record (panel band only, NO phone gates) — see H
           radioSent: false, candidateSent: false, imminentSent: false,
+          radioRec: false, candidateRec: false, imminentRec: false,
           lastClosestMs: cand.closestApproachAtMs,
         };
         this.state.set(key, st);
@@ -176,48 +179,38 @@ export class Notifier {
       const level = cand.level ?? 'candidate';   // back-compat for old callers
       const inImminentWindow = tMs <= this.imminentWindowMs && tMs > -this.imminentWindowMs;
 
-      // Pick the next stage to fire for this candidate. Stages progress
-      // monotonically: once a stage is sent, it is never re-sent. Higher
-      // stages can fire even if lower ones never did (e.g. an aircraft that
-      // appears straight on the line of sight skips 'radio' entirely).
-      let stage = null;
-      if (!st.imminentSent && inImminentWindow) {
-        stage = 'imminent';
-      } else if (!st.candidateSent && level === 'candidate') {
-        stage = 'candidate';
-      } else if (!st.radioSent && (level === 'radio' || level === 'candidate')) {
-        // 'candidate'-level matches also count as having entered the radio
-        // band, so we don't double-fire 'radio' for them retroactively.
-        stage = 'radio';
-      }
-      if (!stage) continue;
-      if (!this._stageAllowed(stage)) {
-        // Mark as "sent" (and all lower stages, by subsumption) so we don't
-        // reconsider on the next tick; the user has explicitly opted out.
-        if (stage === 'radio') st.radioSent = true;
-        if (stage === 'candidate') { st.radioSent = true; st.candidateSent = true; }
-        if (stage === 'imminent')  { st.radioSent = true; st.candidateSent = true; st.imminentSent = true; }
-        continue;
-      }
-      // Extra Pushover-only filter on the radio band: tracker emits matches
-      // out to looseThresholdDeg (5° by default), but the phone only buzzes
-      // when the projected minimum separation is below radioThresholdDeg
-      // (1° by default — i.e. only flights that might actually graze the
-      // body). Mark the stage sent so a still-loose match doesn't re-trigger
-      // it on every poll; an upgrade to candidate/imminent on a later tick
-      // still goes through under its own stage gate.
-      if (stage === 'radio'
-          && Number.isFinite(this.radioThresholdDeg)
-          && Number.isFinite(cand.closestApproachSepDeg)
-          && cand.closestApproachSepDeg > this.radioThresholdDeg) {
-        st.radioSent = true;
-        continue;
-      }
+      // Helper: mark a stage + all lower ones, on either the Sent or the Rec
+      // flag set (higher stages subsume lower — firing/recording 'imminent'
+      // implies the aircraft also passed through 'candidate' and 'radio').
+      const mark = (suffix, stage) => {
+        if (stage === 'radio') {
+          st[`radio${suffix}`] = true;
+        } else if (stage === 'candidate') {
+          st[`radio${suffix}`] = true; st[`candidate${suffix}`] = true;
+        } else if (stage === 'imminent') {
+          st[`radio${suffix}`] = true; st[`candidate${suffix}`] = true; st[`imminent${suffix}`] = true;
+        }
+      };
+      // Next not-yet-X stage entered, monotone. `flag` is 'Sent' or 'Rec'.
+      const nextStage = (flag) => {
+        if (!st[`imminent${flag}`] && inImminentWindow) return 'imminent';
+        if (!st[`candidate${flag}`] && level === 'candidate') return 'candidate';
+        // 'candidate'-level also counts as having entered the radio band, so
+        // we never retroactively re-emit 'radio' for it.
+        if (!st[`radio${flag}`] && (level === 'radio' || level === 'candidate')) return 'radio';
+        return null;
+      };
 
-      // Prefer a pre-enriched route on the candidate (set by the service so
-      // /api/state and the notifier share the same lookup). Fall back to our
-      // own lookup only if the candidate carries no `route` key — keeps the
-      // unit tests, which build raw candidates, working unchanged.
+      const recStage = nextStage('Rec');
+      const sendStage = nextStage('Sent');
+      // Nothing new this tick for either pipeline — skip the route lookup.
+      if (!recStage && !sendStage) continue;
+
+      // Resolve the route once, shared by the history record and the
+      // Pushover. Prefer a pre-enriched route on the candidate (set by the
+      // service so /api/state and the notifier share one lookup); fall back
+      // to our own lookup only when the candidate carries no `route` key —
+      // keeps the unit tests, which build raw candidates, working unchanged.
       let route;
       if ('route' in cand) {
         route = cand.route;
@@ -228,7 +221,48 @@ export class Notifier {
           route = null;
         }
       }
-      const payload = buildPayload(stage, cand, route, nowMs, this.baseUrl);
+
+      // ---- History record: full panel band, independent of phone gates ----
+      // The tracker only ever emits candidates already inside
+      // looseThresholdDeg, so every stage entered here is panel-worthy.
+      // Recording the radio stage the moment it is entered — even when the
+      // phone deliberately stays quiet for the wide early band — is what
+      // restores the real lead time in the History table (the v0.7.x bug
+      // where Recorded sat ~30 s before Transit: the radio/candidate rows
+      // were being suppressed alongside the Pushover, so only the late
+      // imminent row survived). Phone behaviour below is unchanged.
+      if (recStage) {
+        mark('Rec', recStage);
+        try {
+          this.onEvent({
+            stage: recStage, candidate: cand, route,
+            payload: null, sent: false, recordedOnly: true,
+          });
+        } catch { /* history must never break the notifier loop */ }
+      }
+
+      // ---- Pushover dispatch: unchanged gating ----
+      if (!sendStage) continue;
+      if (!this._stageAllowed(sendStage)) {
+        // minStage opt-out: mark sent (and lower, by subsumption) so we
+        // don't reconsider on the next tick.
+        mark('Sent', sendStage);
+        continue;
+      }
+      // Extra Pushover-only filter on the radio band: the panel still shows
+      // matches out to looseThresholdDeg, but the phone only buzzes when the
+      // projected minimum separation is at/below radioThresholdDeg (1° by
+      // default). Mark sent so a still-loose match doesn't re-trigger every
+      // poll; an upgrade to candidate/imminent still fires under its gate.
+      if (sendStage === 'radio'
+          && Number.isFinite(this.radioThresholdDeg)
+          && Number.isFinite(cand.closestApproachSepDeg)
+          && cand.closestApproachSepDeg > this.radioThresholdDeg) {
+        st.radioSent = true;
+        continue;
+      }
+
+      const payload = buildPayload(sendStage, cand, route, nowMs, this.baseUrl);
       let sent = false;
       let err = null;
       try {
@@ -237,23 +271,8 @@ export class Notifier {
       } catch (e) {
         err = e;
       }
-      // Higher stages subsume lower ones — firing 'imminent' implies the
-      // aircraft also passed through 'candidate' and 'radio' bands, so we
-      // never retroactively emit those on a later tick.
-      if (stage === 'radio') {
-        st.radioSent = true;
-      } else if (stage === 'candidate') {
-        st.radioSent = true;
-        st.candidateSent = true;
-      } else if (stage === 'imminent') {
-        st.radioSent = true;
-        st.candidateSent = true;
-        st.imminentSent = true;
-      }
-
-      const evt = { stage, candidate: cand, route, payload, sent, error: err };
-      this.onEvent(evt);
-      dispatched.push(evt);
+      mark('Sent', sendStage);
+      dispatched.push({ stage: sendStage, candidate: cand, route, payload, sent, error: err });
     }
 
     this.cleanup(nowMs);

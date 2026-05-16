@@ -18,8 +18,15 @@
 //   - 'imminent' : within ±imminentWindowMs of closestApproachAtMs.
 //   - 'stale'    : was actively matched on a previous tick but is not in the
 //                  current tracker output any more — held for `staleGraceMs`
-//                  (default 10 s) so the UI can show "no longer a candidate"
-//                  briefly, then dropped.
+//                  so the UI can show "no longer a candidate" before it is
+//                  dropped entirely.
+//
+// Coasting: a single ADS-B dropout (the receiver loses the squitter for a
+// few seconds, common near the horizon right before a transit) used to flip
+// an active contact straight to 'stale'. That is too harsh — the signal
+// almost always returns within a poll or two. An untouched but recently
+// active entry now *keeps its last live status* for `coastMs` (with a
+// `coasting` flag the UI can hint at) before it is allowed to go stale.
 
 const HOUR_MS = 3600_000;
 const DEFAULT_PLANNED_WINDOW_MS = HOUR_MS;
@@ -29,6 +36,10 @@ const DEFAULT_IMMINENT_WINDOW_MS = 30_000;
 // re-enable an absolute upper age (e.g. 60_000 for the old 1-min behaviour).
 const DEFAULT_STALE_GRACE_MS = 0;
 const DEFAULT_MAX_ENTRIES = 20;               // cap on the UI panel; FIFO on stale
+// How long an untouched but previously-active entry holds its last live
+// status through an ADS-B gap before it is allowed to decay to 'stale'.
+// 0 disables coasting entirely (old snap-to-stale behaviour).
+const DEFAULT_COAST_MS = 25_000;
 
 /**
  * @typedef {Object} LifecycleEntry
@@ -46,6 +57,8 @@ const DEFAULT_MAX_ENTRIES = 20;               // cap on the UI panel; FIFO on st
  * @property {object|null} route
  * @property {object|null} candidate     - raw tracker output (when applicable)
  * @property {object|null} watchlistEntry
+ * @property {boolean} [coasting]         - true while holding a stale-pending
+ *                                          status through a brief ADS-B gap
  */
 
 const STATUS_ORDER = { planned: 0, radio: 1, candidate: 2, imminent: 3, stale: -1 };
@@ -90,6 +103,7 @@ export function updateLifecycle({
   plannedWindowMs = DEFAULT_PLANNED_WINDOW_MS,
   staleGraceMs = DEFAULT_STALE_GRACE_MS,
   maxEntries = DEFAULT_MAX_ENTRIES,
+  coastMs = DEFAULT_COAST_MS,
 }) {
   /** @type {Map<string, LifecycleEntry>} */
   const next = new Map();
@@ -126,6 +140,7 @@ export function updateLifecycle({
       route: c.route ?? prevEntry?.route ?? null,
       candidate: c,
       watchlistEntry: prevEntry?.watchlistEntry ?? null,
+      coasting: false,   // live this tick — explicitly not coasting
     });
     touched.add(key);
   }
@@ -177,23 +192,39 @@ export function updateLifecycle({
     touched.add(key);
   }
 
-  // ---------- 3. Carry forward stale entries ----------
-  // Default behaviour (staleGraceMs <= 0): stale entries persist forever
-  // and only leave the panel when displaced by the 20-cap below (oldest
-  // stale first). Set staleGraceMs > 0 to also evict by absolute age.
+  // ---------- 3. Coast, then carry forward stale entries ----------
+  // Age is always measured from the last *real* contact (lastUpdateMs is
+  // never refreshed while coasting or stale) so the coast window and the
+  // absolute stale grace both decay correctly across consecutive misses.
+  //
+  //   age ≤ coastMs        → keep last live status, flag `coasting`
+  //   coastMs < age        → 'stale'
+  //   age > staleGraceMs   → drop entirely (when staleGraceMs > 0)
+  //
+  // staleGraceMs = 0 keeps the legacy behaviour: stale entries persist
+  // until the cap below evicts them (oldest stale first).
   for (const [key, prevEntry] of prev) {
     if (touched.has(key)) continue;
-    if (staleGraceMs > 0) {
-      const ageMs = nowMs - prevEntry.lastUpdateMs;
-      if (ageMs > staleGraceMs) continue;
-    }
-    // Don't downgrade a 'planned' entry to 'stale' — planned entries are
-    // forecast-only and naturally disappear/re-appear; only real ADS-B
-    // contacts get the "no candidate anymore" treatment.
+    // Don't downgrade a 'planned' entry — planned entries are forecast-only
+    // and naturally disappear/re-appear; only real ADS-B contacts coast/stale.
     if (prevEntry.status === 'planned') continue;
+    const ageMs = nowMs - prevEntry.lastUpdateMs;
+    const wasActive = prevEntry.status !== 'stale';
+    if (wasActive && coastMs > 0 && ageMs <= coastMs) {
+      // Brief ADS-B gap: hold the last live status so a flight does not
+      // visibly "drop and reappear" every time a squitter is missed.
+      next.set(key, {
+        ...prevEntry,
+        coasting: true,
+        lastUpdateMs: prevEntry.lastUpdateMs,
+      });
+      continue;
+    }
+    if (staleGraceMs > 0 && ageMs > staleGraceMs) continue;
     next.set(key, {
       ...prevEntry,
       status: 'stale',
+      coasting: false,
       lastUpdateMs: prevEntry.lastUpdateMs,
     });
   }

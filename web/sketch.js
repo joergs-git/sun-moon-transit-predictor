@@ -2,6 +2,8 @@
 // telescope eyepiece / camera frame. Given a normalised transit entry (from a
 // Tracking row or a parsed History payload), produces an SVG string that the
 // caller injects into the popup.
+
+import { resolveAircraftType } from './aircraft-types.js';
 //
 // Coordinate convention inside the FOV box:
 //   - x = (aircraftAz - bodyAz) * cos(bodyEl)   [degrees, east-positive]
@@ -24,9 +26,10 @@ const OPTICS = {
   SENSOR_NAME: 'ZWO ASI174MM',
 };
 
-// Generic airliner silhouette dimensions, used until a per-aircraft type
-// lookup is wired in. ~A320/B737 envelope; off by no more than ~30 % for
-// most narrow- and wide-bodies, which is below the sketch's visual fidelity.
+// Generic airliner fallback envelope (~A320/B737), used only when the ADS-B
+// feed gave us no resolvable ICAO type code. When a type *is* known the
+// silhouette is scaled to that airframe's real wingspan/length instead — see
+// the per-entry wingspanM/lengthM fields wired in from aircraft-types.js.
 const AC_WINGSPAN_M = 36;
 const AC_LENGTH_M = 38;
 
@@ -91,8 +94,25 @@ function aircraftAngularDeg(meters, rangeM) {
  * @property {number|null} closestAtMs
  * @property {string|null} flight
  * @property {string|null} icao
+ * @property {string|null} typeCode      - ICAO type designator, if resolvable
+ * @property {number|null} wingspanM     - real wingspan when the type is known
+ * @property {number|null} lengthM       - real length when the type is known
  * @property {Array<{tOffsetMs: number, aircraftAz: number, aircraftEl: number, bodyAz: number, bodyEl: number}>} transitPath
  */
+
+/**
+ * Resolve the per-airframe silhouette dimensions from an ADS-B `typeCode`.
+ * Returns nulls (→ generic fallback) when the type is unknown or absent.
+ * @param {string|null|undefined} typeCode
+ */
+function dimsFromType(typeCode) {
+  const spec = resolveAircraftType(typeCode);
+  return {
+    typeCode: typeCode ?? null,
+    wingspanM: spec?.wingspanM ?? null,
+    lengthM: spec?.lengthM ?? null,
+  };
+}
 
 /**
  * Normalise a lifecycle entry (live tracking) into SketchInput.
@@ -117,6 +137,7 @@ export function fromLifecycleEntry(entry) {
     closestAtMs: entry.closestApproachAtMs ?? c.closestApproachAtMs ?? null,
     flight: entry.flight ?? entry.callsign ?? null,
     icao: entry.icao ?? null,
+    ...dimsFromType(c.aircraft?.typeCode),
     transitPath: Array.isArray(c.transitPath) ? c.transitPath : [],
   };
 }
@@ -146,6 +167,7 @@ export function fromHistoryRow(row) {
     closestAtMs: row.closest_at_ms ?? c.closestApproachAtMs ?? null,
     flight: row.flight ?? row.callsign ?? null,
     icao: row.icao ?? null,
+    ...dimsFromType(c.aircraft?.typeCode),
     transitPath: Array.isArray(c.transitPath) ? c.transitPath : [],
   };
 }
@@ -330,17 +352,21 @@ export function buildSketchSvg(d) {
     headingRad = Math.atan2(b.y - a.y, b.x - a.x);
   }
 
-  // Aircraft silhouette size from line-of-sight distance.
-  const wingspanDeg = aircraftAngularDeg(AC_WINGSPAN_M, d.aircraftAt.rangeM);
-  const lengthDeg   = aircraftAngularDeg(AC_LENGTH_M,   d.aircraftAt.rangeM);
+  // Aircraft silhouette size from line-of-sight distance. Use the resolved
+  // type's real dimensions when available, otherwise the generic envelope.
+  const wsM  = Number.isFinite(d.wingspanM) ? d.wingspanM : AC_WINGSPAN_M;
+  const lenM = Number.isFinite(d.lengthM)   ? d.lengthM   : AC_LENGTH_M;
+  const wingspanDeg = aircraftAngularDeg(wsM,  d.aircraftAt.rangeM);
+  const lengthDeg   = aircraftAngularDeg(lenM, d.aircraftAt.rangeM);
   // Enforce a small visual minimum (3 px) so a very distant aircraft is
   // still discernible — purely a UI affordance, the labels carry the truth.
   const wingPx = Math.max(wingspanDeg * pxPerDeg, 3);
   const lenPx  = Math.max(lengthDeg   * pxPerDeg, 3);
 
   // ---- Compose SVG ----------------------------------------------------------
+  const acTag = d.typeCode ? ` · ${d.typeCode}` : '';
   const header =
-    `${txt(PAD, HEADER_H, `${d.body} transit · ${d.flight ?? '—'}`, { fill: '#e6edf3', size: 13, weight: 600 })}` +
+    `${txt(PAD, HEADER_H, `${d.body} transit · ${d.flight ?? '—'}${acTag}`, { fill: '#e6edf3', size: 13, weight: 600 })}` +
     `${txt(SVG_W - PAD, HEADER_H, `Sep ${fmtSepArcmin(d.sepDeg)}  ·  ${fmtTime(d.closestAtMs)}`, { fill: '#e6edf3', size: 12, anchor: 'end' })}`;
 
   const fovRect =
