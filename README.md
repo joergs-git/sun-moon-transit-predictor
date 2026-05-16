@@ -189,8 +189,8 @@ input:
 
 | Artefact | Written when | Used for |
 |---|---|---|
-| `transit_history` (SQLite) | on every Pushover dispatch | History panel, watchlist source, episode classification |
-| `lifecycle.json` (JSON) | every 30 s + on `SIGTERM` | Tracking panel survives restarts |
+| `transit_history` (SQLite) | when a stage is first entered inside the panel band (v0.8.0: independent of the Pushover phone filter, so the early radio row is logged and `Lead` reflects the true advance warning) | History panel, watchlist source, episode classification |
+| `lifecycle.json` (JSON) | every 30 s + on `SIGTERM` | Tracking panel survives restarts (entries coast through brief ADS-B gaps, v0.8.0) |
 | `config/observer.json` + `service.json` | on Settings save | Hot-reload + survive restart |
 
 **Episode classification** runs lazily on `/api/learning` and `/api/history`
@@ -263,6 +263,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M15 | Tighter 1°-only radio Pushovers + alert-learning stats (hit / surprise rate, per-row outcome tags) | done |
 | M16 | Editable tracker panel band (default 2°), near-hit row highlight (sep&lt;0.5°), weekday+date in History, learning block moved under Sky now | done |
 | M17 | 15-min look-ahead default + episode-consolidated History (one row per transit with Lead-time column) + planned suppression for live ADS-B callsigns | done |
+| M18 (v0.8.0) | History logged at the panel band independent of the phone filter (true Lead time); lifecycle coasting through brief ADS-B gaps + 10-row panel / 30-min stale eviction; offline airframe spec block (ICAO type → real span/length, no network/photos) beside the FOV; session detection-funnel bar chart; "LIVE-TRACKING-SIGNALS" rename; green near-hit rows in History; column sub-labels | done |
 
 ## Hardware + software bill of materials
 

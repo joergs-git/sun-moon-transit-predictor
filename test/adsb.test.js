@@ -15,6 +15,10 @@ const SAMPLE = {
       track: 89.5,
       geom_rate: -64,
       seen_pos: 0.7,
+      t: 'A359',
+      r: 'D-AIXA',
+      desc: 'AIRBUS A-350-900',
+      category: 'A5',
     },
     {
       hex: 'NOPOSITION',
@@ -63,6 +67,24 @@ describe('parseAircraftJson', () => {
     expect(dlh.trackDeg).toBe(89.5);
     expect(dlh.verticalRateMs).toBeCloseTo(-64 * 0.00508, 3);
     expect(dlh.receivedAtMs).toBe(1750000000500 - 700);
+  });
+
+  it('captures optional airframe enrichment (type / registration) when present', () => {
+    const list = parseAircraftJson(SAMPLE);
+    const dlh = list.find(a => a.icao === 'abc123');
+    expect(dlh.typeCode).toBe('A359');
+    expect(dlh.registration).toBe('D-AIXA');
+    expect(dlh.typeDesc).toBe('AIRBUS A-350-900');
+    expect(dlh.category).toBe('A5');
+  });
+
+  it('leaves airframe enrichment null when the feed omits it', () => {
+    const list = parseAircraftJson(SAMPLE);
+    const baro = list.find(a => a.icao === 'baroonly');
+    expect(baro.typeCode).toBeNull();
+    expect(baro.registration).toBeNull();
+    expect(baro.typeDesc).toBeNull();
+    expect(baro.category).toBeNull();
   });
 
   it('drops aircraft without position', () => {

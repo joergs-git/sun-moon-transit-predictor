@@ -132,6 +132,7 @@ describe('updateLifecycle', () => {
       liveAircraft: [],
     });
     // Next tick 5 s later — aircraft no longer flagged by the tracker.
+    // coastMs:0 disables the v0.8.0 coast so this stays a pure stale test.
     const second = updateLifecycle({
       prev: first,
       nowMs: NOW + 5000,
@@ -139,6 +140,7 @@ describe('updateLifecycle', () => {
       expected: [],
       liveAircraft: [],
       staleGraceMs: 10_000,
+      coastMs: 0,
     });
     expect(second.size).toBe(1);
     expect(Array.from(second.values())[0].status).toBe('stale');
@@ -159,6 +161,7 @@ describe('updateLifecycle', () => {
       expected: [],
       liveAircraft: [],
       staleGraceMs: 10_000,
+      coastMs: 0,
     });
     expect(second.size).toBe(0);
   });
@@ -304,5 +307,77 @@ describe('lifecycleArray', () => {
     // Both seeded in the same tick → firstSeenMs is identical → tiebreak by
     // ETA: 'near' (25 s) comes before 'far' (200 s).
     expect(arr.map(e => e.icao)).toEqual(['near', 'far']);
+  });
+});
+
+describe('updateLifecycle — coasting (v0.8.0)', () => {
+  it('holds the last live status through a brief ADS-B gap', () => {
+    const first = updateLifecycle({
+      prev: new Map(), nowMs: NOW,
+      trackerCandidates: [trackerCand({ level: 'candidate' })],
+      expected: [], liveAircraft: [],
+    });
+    // 5 s gap, default coastMs (25 s) → still 'candidate', flagged coasting.
+    const second = updateLifecycle({
+      prev: first, nowMs: NOW + 5000,
+      trackerCandidates: [], expected: [], liveAircraft: [],
+    });
+    const e = Array.from(second.values())[0];
+    expect(e.status).toBe('candidate');
+    expect(e.coasting).toBe(true);
+  });
+
+  it('decays to stale once the coast window is exceeded', () => {
+    const first = updateLifecycle({
+      prev: new Map(), nowMs: NOW,
+      trackerCandidates: [trackerCand({ level: 'candidate' })],
+      expected: [], liveAircraft: [],
+    });
+    const second = updateLifecycle({
+      prev: first, nowMs: NOW + 30_000,   // > 25 s coast window
+      trackerCandidates: [], expected: [], liveAircraft: [],
+    });
+    const e = Array.from(second.values())[0];
+    expect(e.status).toBe('stale');
+    expect(e.coasting).toBe(false);
+  });
+
+  it('measures the coast window from the last real contact, not per tick', () => {
+    let map = updateLifecycle({
+      prev: new Map(), nowMs: NOW,
+      trackerCandidates: [trackerCand({ level: 'candidate' })],
+      expected: [], liveAircraft: [],
+    });
+    // Three consecutive missed ticks. lastUpdateMs must NOT be refreshed
+    // while coasting, otherwise the entry would coast forever.
+    map = updateLifecycle({ prev: map, nowMs: NOW + 10_000,
+      trackerCandidates: [], expected: [], liveAircraft: [] });
+    expect(Array.from(map.values())[0].status).toBe('candidate');
+    map = updateLifecycle({ prev: map, nowMs: NOW + 20_000,
+      trackerCandidates: [], expected: [], liveAircraft: [] });
+    expect(Array.from(map.values())[0].status).toBe('candidate');
+    map = updateLifecycle({ prev: map, nowMs: NOW + 30_000,
+      trackerCandidates: [], expected: [], liveAircraft: [] });
+    expect(Array.from(map.values())[0].status).toBe('stale');
+  });
+
+  it('a re-acquired contact clears the coasting flag', () => {
+    let map = updateLifecycle({
+      prev: new Map(), nowMs: NOW,
+      trackerCandidates: [trackerCand({ level: 'candidate' })],
+      expected: [], liveAircraft: [],
+    });
+    map = updateLifecycle({ prev: map, nowMs: NOW + 5000,
+      trackerCandidates: [], expected: [], liveAircraft: [] });
+    expect(Array.from(map.values())[0].coasting).toBe(true);
+    // Signal returns on the next tick.
+    map = updateLifecycle({
+      prev: map, nowMs: NOW + 7000,
+      trackerCandidates: [trackerCand({ level: 'candidate' })],
+      expected: [], liveAircraft: [],
+    });
+    const e = Array.from(map.values())[0];
+    expect(e.status).toBe('candidate');
+    expect(e.coasting).toBe(false);
   });
 });

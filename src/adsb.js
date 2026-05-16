@@ -20,6 +20,10 @@ const MAX_POSITION_AGE_S = 30;
  * @property {number}        verticalRateMs
  * @property {number}        seenPosS
  * @property {number}        receivedAtMs   - wall-clock ms when sample was taken
+ * @property {string|null}   typeCode       - ICAO type designator (e.g. 'A320'), if the feed enriches it
+ * @property {string|null}   registration   - tail number (e.g. 'D-AIWA'), if available
+ * @property {string|null}   typeDesc       - free-text type description from the feed, if any
+ * @property {string|null}   category       - ADS-B emitter category (e.g. 'A3'), if any
  */
 
 function ftToMeters(ft) {
@@ -40,6 +44,16 @@ function normalizeAircraft(raw, baseTimestampMs) {
   if (seenPosS > MAX_POSITION_AGE_S) return null;
 
   const callsign = typeof raw.flight === 'string' ? raw.flight.trim() || null : null;
+  // Airframe enrichment is optional in dump1090-fa: `t` (ICAO type
+  // designator), `r` (registration / tail number), `desc` (free-text type)
+  // and `category` (ADS-B emitter category) only appear when the receiver
+  // has the aircraft database loaded. Treat every one as best-effort — the
+  // tracker never depends on them, they only feed the UI spec panel.
+  const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const typeCode = str(raw.t);
+  const registration = str(raw.r);
+  const typeDesc = str(raw.desc);
+  const category = str(raw.category);
   const groundSpeedMs = typeof raw.gs === 'number' ? raw.gs * KT_TO_MS : null;
   const trackDeg = typeof raw.track === 'number' ? raw.track : null;
   const vertRateFtpm = typeof raw.geom_rate === 'number'
@@ -58,6 +72,10 @@ function normalizeAircraft(raw, baseTimestampMs) {
     verticalRateMs: vertRateFtpm * FTPM_TO_MS,
     seenPosS,
     receivedAtMs: baseTimestampMs - Math.round(seenPosS * 1000),
+    typeCode,
+    registration,
+    typeDesc,
+    category,
   };
 }
 

@@ -75,6 +75,29 @@
           <span class="learn-detail">in last 14 days</span>
         </div>
       </div>
+
+      <!-- Detection funnel (v0.8.0). Three horizontal bars: every unique
+           airframe the receiver saw this session, how many ever projected
+           inside the panel band, and how many ever skimmed < 0.5°. Bars are
+           pure CSS (no chart library — keeps the zero-dependency frontend). -->
+      <div class="detect-funnel" id="detect-funnel" title="Cumulative since the service started (resets on restart). 'Detected' counts every distinct aircraft with a usable position, regardless of how far it was from the Sun/Moon line.">
+        <div class="funnel-title">Detection funnel <span class="funnel-sub" id="funnel-sub">since start</span></div>
+        <div class="funnel-row">
+          <span class="funnel-label">detected</span>
+          <span class="funnel-track"><span class="funnel-bar fb-total" id="fb-total"></span></span>
+          <span class="funnel-val" id="fv-total">—</span>
+        </div>
+        <div class="funnel-row">
+          <span class="funnel-label" id="fl-band">&lt; 2°</span>
+          <span class="funnel-track"><span class="funnel-bar fb-band" id="fb-band"></span></span>
+          <span class="funnel-val" id="fv-band">—</span>
+        </div>
+        <div class="funnel-row">
+          <span class="funnel-label">&lt; 0.5°</span>
+          <span class="funnel-track"><span class="funnel-bar fb-near" id="fb-near"></span></span>
+          <span class="funnel-val" id="fv-near">—</span>
+        </div>
+      </div>
     </section>
 
     <section id="fov-section">
@@ -84,36 +107,40 @@
       </h2>
       <p class="hint" id="fov-hint">Waiting for a close approach (separation &lt; 1°). Click any tracking or history row to pin it here.</p>
       <div id="fov-body" class="fov-body"></div>
+      <!-- Offline airframe specs for the shown transit. Filled from the
+           ADS-B `t` (ICAO type) field via web/aircraft-types.js — no network,
+           no photos. Hidden until a type is resolvable. -->
+      <div id="fov-specs" class="fov-specs" hidden></div>
     </section>
   </div>
 
   <section>
-    <h2>Tracking</h2>
+    <h2>LIVE-TRACKING-SIGNALS</h2>
     <p class="hint">
       Unified list, sorted by urgency. Status transitions in real time as
       flights are detected, projected, and either confirmed or dropped:
     </p>
     <ul class="legend">
       <li><span class="status status-planned">📅 planned</span> watchlist entry expected within ~1 h; no live ADS-B match yet.</li>
-      <li><span class="status status-radio">📡 radio</span> in ADS-B range, projected to pass within ~5° of the body — early-warning band.</li>
+      <li><span class="status status-radio">📡 radio</span> in ADS-B range, projected to pass within the panel band (≤ 2°) of the body — early-warning.</li>
       <li><span class="status status-candidate">✈️ candidate</span> projected to pass within 0.3° (tight transit band); camera-prep.</li>
       <li><span class="status status-imminent">🎯 imminent</span> closest approach within ±30 s; press the shutter.</li>
-      <li><span class="status status-stale">❌ stale</span> was a contact, no longer matches — held briefly so you see it drop out.</li>
+      <li><span class="status status-stale">❌ stale</span> contact lost — held while coasting through a brief gap, then ≤ 30 min before it drops.</li>
     </ul>
     <table id="tracking">
       <thead>
         <tr>
-          <th title="Lifecycle stage: planned → radio → candidate → imminent → stale. Driven live by the tracker + predictor.">Status</th>
-          <th title="Time until closest approach. Negative when the predicted moment has already passed.">ETA</th>
-          <th title="Wall-clock time of the predicted closest approach (camera-ready moment).">Time</th>
-          <th title="Sun or Moon — which body this entry transits.">Body</th>
-          <th title="IATA flight number, or the ADS-B callsign if no route lookup is available.">Flight</th>
-          <th title="ADS-B 24-bit ICAO hex code identifying the airframe.">ICAO</th>
-          <th title="Origin → Destination IATA codes from the adsbdb.com route lookup.">Route</th>
-          <th title="Aircraft altitude above mean sea level, rounded to the nearest 100 m. Uses GNSS altitude where available, otherwise barometric.">Alt</th>
-          <th title="Ground speed in km/h.">Speed</th>
-          <th title="Line-of-sight distance from the observer to the aircraft at closest approach.">Dist</th>
-          <th title="Minimum angular separation between aircraft and the body disc at closest approach. Below ~0.27° = on-disc transit for the Sun.">Sep</th>
+          <th title="Lifecycle stage: planned → radio → candidate → imminent → stale. Driven live by the tracker + predictor.">Status<span class="th-sub">lifecycle</span></th>
+          <th title="Time until closest approach. Negative when the predicted moment has already passed.">ETA<span class="th-sub">until crossing</span></th>
+          <th title="Wall-clock time of the predicted closest approach (camera-ready moment) — NOT the detection time.">Time<span class="th-sub">predicted crossing</span></th>
+          <th title="Sun or Moon — which body this entry transits.">Body<span class="th-sub">Sun / Moon</span></th>
+          <th title="IATA flight number, or the ADS-B callsign if no route lookup is available.">Flight<span class="th-sub">IATA / callsign</span></th>
+          <th title="ADS-B 24-bit ICAO hex code identifying the airframe.">ICAO<span class="th-sub">airframe hex</span></th>
+          <th title="Origin → Destination IATA codes from the adsbdb.com route lookup.">Route<span class="th-sub">from → to</span></th>
+          <th title="Aircraft altitude above mean sea level, rounded to the nearest 100 m. Uses GNSS altitude where available, otherwise barometric.">Alt<span class="th-sub">MSL</span></th>
+          <th title="Ground speed in km/h.">Speed<span class="th-sub">ground</span></th>
+          <th title="Line-of-sight distance from the observer to the aircraft at closest approach.">Dist<span class="th-sub">at closest</span></th>
+          <th title="Minimum angular separation between aircraft and the body disc at closest approach. Below ~0.27° = on-disc transit for the Sun.">Sep<span class="th-sub">min angular</span></th>
         </tr>
       </thead>
       <tbody><tr class="empty"><td colspan="11">Tracking list empty.</td></tr></tbody>
@@ -123,27 +150,29 @@
   <section>
     <h2>History</h2>
     <p class="hint">
-      Persisted notifications (early + precise stages). <b>Transit</b> = the
-      predicted closest-approach time (camera-ready moment). <b>Recorded</b>
-      = when the notification fired (always ≤ Transit for early stage, ≈
-      Transit for precise stage).
+      One row per real transit. <b>Transit</b> = predicted closest-approach
+      time (camera-ready moment). <b>Recorded</b> = when the pipeline
+      <i>first</i> saw it (the earliest stage that fired). Since v0.8.0 the
+      early stages are logged at the full panel band independent of the
+      Pushover phone filter, so <b>Lead</b> (Transit − Recorded) now reflects
+      the true advance warning — minutes, not the old ~30 s.
     </p>
     <table id="history">
       <thead>
         <tr>
-          <th title="Predicted closest-approach time — the camera-ready moment for this transit.">Transit</th>
-          <th title="Wall-clock time of the FIRST stage that fired for this transit. The recorded-vs-transit gap shows how much advance warning the pipeline gave.">Recorded</th>
-          <th title="Lead time = Transit - Recorded. How early the pipeline saw the transit coming. Big lead = good early detection.">Lead</th>
-          <th title="Highest stage reached for this transit: radio (early-warning, ≤1°), candidate (tight band, ≤0.3°), or imminent (±30 s).">Stage</th>
-          <th title="Episode outcome (computed across all stages of the same transit): graduated = early radio alert paid off; faded = radio fired but no tighter stage followed; surprise = candidate/imminent fired without prior radio.">Outcome</th>
-          <th title="Sun or Moon — which body this entry transits.">Body</th>
-          <th title="IATA flight number, or the ADS-B callsign if no route lookup was available at the time.">Flight</th>
-          <th title="ADS-B 24-bit ICAO hex code identifying the airframe.">ICAO</th>
-          <th title="Origin → Destination IATA codes from the adsbdb.com route lookup.">Route</th>
-          <th title="Aircraft altitude above mean sea level, rounded to the nearest 100 m.">Alt</th>
-          <th title="Ground speed in km/h.">Speed</th>
-          <th title="Line-of-sight distance from the observer to the aircraft at closest approach.">Dist</th>
-          <th title="Tightest angular separation observed across all stages of this transit (typically from the imminent stage's refined geometry).">Sep</th>
+          <th title="Predicted closest-approach time — the camera-ready moment for this transit.">Transit<span class="th-sub">crossing clock</span></th>
+          <th title="Wall-clock time of the FIRST stage that fired for this transit. The recorded-vs-transit gap shows how much advance warning the pipeline gave.">Recorded<span class="th-sub">first detection</span></th>
+          <th title="Lead time = Transit - Recorded. How early the pipeline saw the transit coming. Big lead = good early detection.">Lead<span class="th-sub">Transit − Recorded</span></th>
+          <th title="Highest stage reached for this transit: radio (early-warning, panel band ≤2°), candidate (tight band, ≤0.3°), or imminent (±30 s).">Stage<span class="th-sub">highest reached</span></th>
+          <th title="Episode outcome (computed across all stages of the same transit): graduated = early radio alert paid off; faded = radio fired but no tighter stage followed; surprise = candidate/imminent fired without prior radio.">Outcome<span class="th-sub">episode result</span></th>
+          <th title="Sun or Moon — which body this entry transits.">Body<span class="th-sub">Sun / Moon</span></th>
+          <th title="IATA flight number, or the ADS-B callsign if no route lookup was available at the time.">Flight<span class="th-sub">IATA / callsign</span></th>
+          <th title="ADS-B 24-bit ICAO hex code identifying the airframe.">ICAO<span class="th-sub">airframe hex</span></th>
+          <th title="Origin → Destination IATA codes from the adsbdb.com route lookup.">Route<span class="th-sub">from → to</span></th>
+          <th title="Aircraft altitude above mean sea level, rounded to the nearest 100 m.">Alt<span class="th-sub">MSL</span></th>
+          <th title="Ground speed in km/h.">Speed<span class="th-sub">ground</span></th>
+          <th title="Line-of-sight distance from the observer to the aircraft at closest approach.">Dist<span class="th-sub">at closest</span></th>
+          <th title="Tightest angular separation observed across all stages of this transit (typically from the imminent stage's refined geometry).">Sep<span class="th-sub">tightest</span></th>
         </tr>
       </thead>
       <tbody><tr class="empty"><td colspan="13">Loading…</td></tr></tbody>

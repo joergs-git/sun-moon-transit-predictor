@@ -56,8 +56,14 @@ export const DEFAULT_CONFIG = {
   lifecycle: {
     plannedWindowMs: 3600_000,    // surface watchlist entries within ±1 h
     imminentWindowMs: 30_000,     // ±30 s around closest-approach → imminent
-    staleGraceMs: 0,              // 0 = no time eviction; cap below does FIFO
-    maxEntries: 20,               // tracking-list cap; oldest stale dropped first
+    // v0.8.0: stale entries now auto-vanish 30 min after the last real
+    // contact (was 0 = never, cap-only). Combined with the smaller panel
+    // cap this keeps "LIVE-TRACKING-SIGNALS" genuinely live.
+    staleGraceMs: 1_800_000,      // 30 min absolute stale age → drop
+    maxEntries: 10,               // tracking-list cap (was 20)
+    // Hold the last live status through a brief ADS-B dropout so a flight
+    // does not flip to 'stale' on a single missed squitter near the horizon.
+    coastMs: 25_000,
   },
   server: { port: 8081, host: '0.0.0.0', publicUrl: '' },
   store: { path: './data/history.db' },
@@ -175,6 +181,15 @@ export async function runService({
     baseUrl: config.server.publicUrl || undefined,
   });
 
+  // Detection funnel — cumulative for the running session. Sets of ICAO
+  // hex strings; memory is bounded by real traffic (a busy European site
+  // sees a few thousand distinct airframes per day) and reset on restart,
+  // which the UI labels explicitly ("since start").
+  const detectedIcaos = new Set();
+  const inBandIcaos = new Set();
+  const nearIcaos = new Set();
+  const state_sinceMs = Date.now();
+
   const state = {
     observer,
     nowMs: Date.now(),
@@ -187,6 +202,14 @@ export async function runService({
     watchlistMeta: { lastBuildMs: 0, entries: 0 },
     optics: config.optics,     // surfaced so the FOV sketch picks up edits live
     externalLinks: config.externalLinks,
+    // Session-cumulative detection funnel for the bar chart under "Alert
+    // learning": every unique airframe the receiver saw, how many ever
+    // projected inside the panel band, and how many ever skimmed < 0.5°.
+    detectStats: {
+      totalUnique: 0, inBand: 0, near: 0,
+      bandDeg: config.tracker.looseThresholdDeg, nearDeg: 0.5,
+      sinceMs: state_sinceMs,
+    },
   };
 
   // Lifecycle map persists across ticks — that's what gives the UI the
@@ -523,6 +546,27 @@ export async function runService({
     state.candidates = enriched;
     state.lastUpdateMs = nowMs;
 
+    // Detection funnel: every airframe with a usable fix counts toward the
+    // total regardless of how far off the Sun/Moon line it is; a candidate
+    // (tracker only emits ≤ looseThresholdDeg) folds it into the in-band
+    // bucket, and a sub-0.5° projected min separation into the near bucket.
+    for (const a of aircraft) {
+      if (a.icao) detectedIcaos.add(a.icao);
+    }
+    for (const c of enriched) {
+      if (!c.icao || !Number.isFinite(c.closestApproachSepDeg)) continue;
+      if (c.closestApproachSepDeg < config.tracker.looseThresholdDeg) inBandIcaos.add(c.icao);
+      if (c.closestApproachSepDeg < 0.5) nearIcaos.add(c.icao);
+    }
+    state.detectStats = {
+      totalUnique: detectedIcaos.size,
+      inBand: inBandIcaos.size,
+      near: nearIcaos.size,
+      bandDeg: config.tracker.looseThresholdDeg,
+      nearDeg: 0.5,
+      sinceMs: state_sinceMs,
+    };
+
     // Refresh the predictor watchlist on the configured cadence, then surface
     // upcoming-today expected events. The rebuild is async but cheap (single
     // SELECT) — it runs at most once per `rebuildIntervalMs`.
@@ -546,6 +590,7 @@ export async function runService({
       plannedWindowMs: config.lifecycle.plannedWindowMs,
       staleGraceMs: config.lifecycle.staleGraceMs,
       maxEntries: config.lifecycle.maxEntries,
+      coastMs: config.lifecycle.coastMs,
     });
     state.lifecycle = lifecycleArray(lifecycleMap, nowMs);
 

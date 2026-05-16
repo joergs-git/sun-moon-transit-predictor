@@ -1,4 +1,5 @@
 import { buildSketchSvg, fromHistoryRow, fromLifecycleEntry, setOptics } from './sketch.js';
+import { resolveAircraftType, designAgePhrase, klassLabel } from './aircraft-types.js';
 
 const STATE_INTERVAL_MS = 2000;
 const HISTORY_INTERVAL_MS = 15000;
@@ -190,6 +191,26 @@ function renderHistory(events) {
   }
 }
 
+// Detection funnel bar chart (v0.8.0). Three bars, all scaled to the total
+// so the eye reads the drop-off "everything seen → projected near the line →
+// actually grazed". Counts are session-cumulative (the card title says so).
+function renderDetectFunnel(stats) {
+  const box = $('#detect-funnel');
+  if (!box || !stats) return;
+  const total = stats.totalUnique ?? 0;
+  const pct = (n) => (total > 0 ? Math.max(2, Math.round((n / total) * 100)) : 0);
+  $('#fb-total').style.width = total > 0 ? '100%' : '0%';
+  $('#fb-band').style.width  = `${pct(stats.inBand ?? 0)}%`;
+  $('#fb-near').style.width  = `${pct(stats.near ?? 0)}%`;
+  $('#fv-total').textContent = String(total);
+  $('#fv-band').textContent  = String(stats.inBand ?? 0);
+  $('#fv-near').textContent  = String(stats.near ?? 0);
+  // Label the middle bar with the live panel band (defaults 2°, but the
+  // user can widen/narrow it in Settings).
+  const band = Number.isFinite(stats.bandDeg) ? stats.bandDeg : 2;
+  $('#fl-band').innerHTML = `&lt; ${band}°`;
+}
+
 async function pollState() {
   try {
     const res = await fetch('/api/state');
@@ -197,6 +218,7 @@ async function pollState() {
     const state = await res.json();
     renderSky(state);
     renderTracking(state);
+    renderDetectFunnel(state.detectStats);
     // Push live optics into the FOV sketch module so a Settings edit is
     // reflected on the next render of the inline preview pane.
     if (state.optics) setOptics(state.optics);
@@ -380,6 +402,68 @@ function describeEntry(entry) {
   return `${entry.body} · ${flight} · sep ${sep}`;
 }
 
+// ---- Airframe spec block (E) ------------------------------------------------
+// The ADS-B `t`/`r`/`desc` fields ride along on candidate.aircraft (live) or
+// payload.candidate.aircraft (history). We only need the identifying bits;
+// web/aircraft-types.js turns the ICAO type code into nominal dimensions
+// offline (no network, no photos).
+function acMetaFromLifecycle(entry) {
+  const a = entry?.candidate?.aircraft;
+  if (!a) return null;
+  return { typeCode: a.typeCode ?? null, registration: a.registration ?? null,
+           typeDesc: a.typeDesc ?? null, icao: entry.icao ?? a.icao ?? null };
+}
+function acMetaFromHistory(row) {
+  const a = row?.payload?.candidate?.aircraft;
+  return { typeCode: a?.typeCode ?? null, registration: a?.registration ?? null,
+           typeDesc: a?.typeDesc ?? null, icao: row?.icao ?? a?.icao ?? null };
+}
+
+const fovSpecs = $('#fov-specs');
+
+function specRow(label, value) {
+  return `<div class="spec-row"><span class="spec-k">${label}</span>`
+       + `<span class="spec-v">${value}</span></div>`;
+}
+
+// Render the spec panel for whatever airframe is currently shown in the FOV.
+// Three cases: known type (full specs), unknown type but we at least have a
+// type/registration string (show that + "not in offline DB"), or nothing
+// identifying at all (hide the panel entirely).
+function renderFovSpecs(meta) {
+  if (!fovSpecs) return;
+  const spec = resolveAircraftType(meta?.typeCode);
+  if (spec) {
+    const seats = spec.seats == null ? 'n/a (non-pax)' : `~${spec.seats}`;
+    fovSpecs.innerHTML =
+      `<div class="spec-head">${spec.manufacturer} ${spec.model}`
+        + `<span class="spec-klass">${klassLabel(spec.klass)}</span></div>`
+      + specRow('Type', `${meta.typeCode}${meta.registration ? ` · ${meta.registration}` : ''}`)
+      + specRow('Length', `${spec.lengthM.toFixed(1)} m`)
+      + specRow('Wingspan', `${spec.wingspanM.toFixed(1)} m`)
+      + specRow('MTOW', `${Math.round(spec.mtowKg / 1000)} t`)
+      + specRow('Seating', seats)
+      + specRow('Vintage', designAgePhrase(spec.firstYear))
+      + `<div class="spec-foot">Silhouette in the frame is scaled to this airframe's real span/length.</div>`;
+    fovSpecs.hidden = false;
+    return;
+  }
+  const tc = meta?.typeCode;
+  const reg = meta?.registration;
+  if (tc || reg) {
+    fovSpecs.innerHTML =
+      `<div class="spec-head">${tc ?? 'Unknown type'}`
+        + `${reg ? `<span class="spec-klass">${reg}</span>` : ''}</div>`
+      + (meta.typeDesc ? specRow('Desc', meta.typeDesc) : '')
+      + `<div class="spec-foot">Type not in the offline spec DB — generic silhouette used.</div>`;
+    fovSpecs.hidden = false;
+    return;
+  }
+  // Nothing identifying (feed without aircraft-DB enrichment) → no panel.
+  fovSpecs.hidden = true;
+  fovSpecs.innerHTML = '';
+}
+
 function refreshFovPane() {
   const auto = pickAutoEntry(lastLifecycle);
 
@@ -394,14 +478,17 @@ function refreshFovPane() {
 
   if (pin) {
     renderFovSketch(pin.input, { pinned: true, label: pin.label });
+    renderFovSpecs(pin.acMeta);
   } else if (auto) {
     renderFovSketch(fromLifecycleEntry(auto),
       { pinned: false, label: describeEntry(auto) });
+    renderFovSpecs(acMetaFromLifecycle(auto));
   } else {
     renderFovEmpty(
       `No close approach right now (sep &lt; ${FOV_NEAR_DEG.toFixed(0)}°). ` +
       'Click any tracking or history row to pin a specific transit here.',
     );
+    renderFovSpecs(null);
   }
   highlightPinnedRow();
 }
@@ -412,7 +499,8 @@ function pinFromRow(source, index) {
     const entry = lastLifecycle[idx];
     const input = entry ? fromLifecycleEntry(entry) : null;
     if (!input) return;
-    pin = { key: entry.key, firstSeenMs: Date.now(), input, label: describeEntry(entry) };
+    pin = { key: entry.key, firstSeenMs: Date.now(), input,
+            label: describeEntry(entry), acMeta: acMetaFromLifecycle(entry) };
   } else if (source === 'history') {
     const row = lastHistory[idx];
     const input = row ? fromHistoryRow(row) : null;
@@ -426,6 +514,7 @@ function pinFromRow(source, index) {
       firstSeenMs: Date.now(),
       input,
       label: `${row.body} · ${row.flight ?? row.callsign ?? row.icao} (history)`,
+      acMeta: acMetaFromHistory(row),
     };
   }
   refreshFovPane();
