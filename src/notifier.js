@@ -49,8 +49,15 @@ function fmtCountdown(ms) {
   const s = Math.round(ms / 1000);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}m ${r}s`;
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+// Wall-clock time of the (predicted) closest approach — the "target time"
+// the user aims the camera at. Server-local timezone.
+function fmtClock(ms) {
+  return new Date(ms).toLocaleTimeString();
 }
 
 function buildPayload(stage, candidate, route, nowMs, baseUrl) {
@@ -82,17 +89,24 @@ function buildPayload(stage, candidate, route, nowMs, baseUrl) {
         ? `${bodySym} candidate`
         : `${bodySym} approach`;
   }
-  const title = `${titlePrefix} T-${eta}: ${flight}`;
+  const clock = fmtClock(candidate.closestApproachAtMs);
+  const title = `${titlePrefix} ${flight} · sep ${sep}° · T-${eta}`;
 
+  // Lead with what the user actually asked for: "<Sun/Moon> crosser with
+  // X sep in Y from now", plus the target (closest-approach) wall-clock
+  // time and the flight number. Context (airframe/alt/speed/range) follows.
+  const crosser = candidate.isISS
+    ? `🛰 ISS ${bodySym} transit`
+    : `${bodySym} crosser`;
   const rangeM = candidate.aircraftAtClosest?.rangeM;
   const rangeStr = fmtRangeM(rangeM);
   const lines = [
+    `${crosser} — sep ${sep}° in ${eta}, at ${clock}`,
     `${flight}${routeStr}`,
     `${ac.icao.toUpperCase()} · ${fmtAlt(ac.altMmsl)} · ${fmtSpeedMs(ac.groundSpeedMs)}`
-      + (rangeStr ? ` · ${rangeStr}` : ''),
-    `min sep ${sep}° · duration ${dur}s · in ${eta}`,
+      + (rangeStr ? ` · ${rangeStr}` : '') + ` · ${dur}s on disc`,
   ];
-  if (route?.airline?.name) lines.unshift(route.airline.name);
+  if (route?.airline?.name) lines.splice(1, 0, route.airline.name);
 
   // Pushover renders `timestamp` as the moment the event happened; for the
   // earlier stages the closest approach is in the *future*, so omit it. On

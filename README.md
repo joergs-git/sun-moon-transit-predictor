@@ -292,6 +292,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M29 (v0.10.7) | Install fixes from on-Pi testing: manual path now installs `git` first (absent on Pi OS Lite); FlightAware repo package bumped `1.2 → 1.3` (the 1.2 URL 404s) in the README + `bootstrap-pi5.sh`, with a version-drift note | done |
 | M30 (v0.10.8) | Docs: `rbfeeder`/AirNav-RadarBox sharing-key sidenote + MLAT explainer in the ADS-B section (independent of the predictor; same WGS84 location) | done |
 | M31 (v0.10.9) | ISS transits only push/log within `iss.notifyWithinMs` (default 72 h) — far-future SGP4 is noise that flips with each daily TLE, so this kills phantom-transit Pushover spam + "surprise" stat pollution; Sky-now still previews the soonest, flagged "tentative". README "Good to know" facts: ISS prediction reliability + observer coordinate/elevation pitfalls | done |
+| M32 (v0.11.0) | **Settings save bug fixed** — the look-ahead input's `step=30/min=10` made every round value (incl. the 900 default) a native `stepMismatch`, so browser form-validation silently blocked *all* saves (only 10 s was accepted). Form now `novalidate` (server validates with clear messages) + sane steps. Per-field subtitle hints under every Settings field (esp. Tracker). Pushover message reworded to lead with "&lt;Sun/Moon&gt; crosser — sep X° in Y, at &lt;target time&gt;" + flight | done |
 
 ## Hardware + software bill of materials
 
