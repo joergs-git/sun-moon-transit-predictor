@@ -75,17 +75,25 @@ Status: complete, awaiting commit/push/merge confirmation.
 
 ---
 
-# NEXT — ISS transit prediction (decided: embedded SGP4 + TLE, offline)
+# DONE — v0.9.0 ISS transit prediction (branch feature/iss-sgp4)
 
-Own branch/effort. Scope:
-- New `src/iss.js`: dependency-free SGP4 propagator + topocentric Az/El
-  reduction for the observer; forward scan over the next N hours with
-  fine stepping near Sun/Moon conjunction (transit lasts ~0.5–1.3 s).
-- TLE refresh: opt-in script (Celestrak), file on disk — mirrors the
-  existing optional OpenSky pattern; runtime stays offline.
-- Feed the lifecycle as a distinct source (own status/colour), in front
-  of BOTH Sun and Moon; surface in LIVE-TRACKING-SIGNALS + History + FOV.
-- Reuse the disc-crossing column (already generic on ω).
+- [x] `src/sgp4.js`: dependency-free near-Earth SGP4 + TLE parse + GMST +
+      TEME→ECEF. Validated to <100 m against the official 88888 vectors
+      (test/sgp4.test.js). Fixed two transcription bugs found via the
+      verification vector (Kozai-recovery factor-2, aycof coefficient).
+- [x] `src/geometry.js`: `targetEcefAzEl()` — topocentric Az/El from a
+      known ECEF (satellite), reusing the existing ENU reduction.
+- [x] `src/iss.js`: load TLE (2-/3-line), coarse scan + golden-section
+      refine vs Sun/Moon, tracker-shaped candidates (+isISS), synthetic
+      groundSpeed so the Disc-xing column reproduces the true ω.
+- [x] `service.js`: config.iss, slow recompute + TLE reload, merged into
+      the lifecycle (NOT the notifier), one History row per real transit.
+- [x] UI: cyan row highlight + 🛰 in LIVE-TRACKING-SIGNALS & History;
+      station glyph in the FOV sketch. lifecycle carries `isISS`.
+- [x] `scripts/refresh-tle.js` opt-in Celestrak fetcher; config example;
+      README M20 + ISS section. Version 0.9.0. Tests: 131 pass (+11).
+
+Status: complete, awaiting commit/push/merge confirmation.
 
 # DONE — click-to-update (folded into v0.8.1)
 

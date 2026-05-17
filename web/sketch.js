@@ -95,6 +95,7 @@ function aircraftAngularDeg(meters, rangeM) {
  * @property {string|null} flight
  * @property {string|null} icao
  * @property {string|null} typeCode      - ICAO type designator, if resolvable
+ * @property {boolean} [isISS]           - draw the station glyph, not a plane
  * @property {number|null} wingspanM     - real wingspan when the type is known
  * @property {number|null} lengthM       - real length when the type is known
  * @property {Array<{tOffsetMs: number, aircraftAz: number, aircraftEl: number, bodyAz: number, bodyEl: number}>} transitPath
@@ -137,6 +138,7 @@ export function fromLifecycleEntry(entry) {
     closestAtMs: entry.closestApproachAtMs ?? c.closestApproachAtMs ?? null,
     flight: entry.flight ?? entry.callsign ?? null,
     icao: entry.icao ?? null,
+    isISS: c.isISS === true || c.aircraft?.typeCode === 'ISS',
     ...dimsFromType(c.aircraft?.typeCode),
     transitPath: Array.isArray(c.transitPath) ? c.transitPath : [],
   };
@@ -167,6 +169,7 @@ export function fromHistoryRow(row) {
     closestAtMs: row.closest_at_ms ?? c.closestApproachAtMs ?? null,
     flight: row.flight ?? row.callsign ?? null,
     icao: row.icao ?? null,
+    isISS: c.isISS === true || c.aircraft?.typeCode === 'ISS' || row.icao === 'ISS',
     ...dimsFromType(c.aircraft?.typeCode),
     transitPath: Array.isArray(c.transitPath) ? c.transitPath : [],
   };
@@ -220,6 +223,30 @@ function relOffsetDeg(p, refEl) {
  * Length axis = +x; wingspan axis = ±y. Simple, recognisable shape — fuselage
  * ellipse, swept wings, T-tail.
  */
+// ISS glyph: a central core along +x with a cross-truss along ±y carrying
+// two solar-array panels. Returned as an SVG fragment (caller transforms it).
+// Drawn at the origin like aircraftPath; sized to be visible even when the
+// true angular size is sub-pixel.
+function issGlyph(coreLen, span) {
+  const L = Math.max(coreLen, 7);
+  const W = Math.max(span, 14);
+  const half = W / 2;
+  const c = COLOURS.ac;
+  const s = COLOURS.acStroke;
+  const panel = '#5a8fb0';
+  const panelW = W * 0.42;
+  const panelH = L * 0.5;
+  return (
+    // core module
+    `<rect x="${-L / 2}" y="${-L * 0.16}" width="${L}" height="${L * 0.32}" rx="${L * 0.12}" fill="${c}" stroke="${s}" stroke-width="0.5"/>` +
+    // truss
+    `<line x1="0" y1="${-half}" x2="0" y2="${half}" stroke="${s}" stroke-width="1"/>` +
+    // two solar arrays
+    `<rect x="${-panelH / 2}" y="${-half}" width="${panelH}" height="${panelW}" fill="${panel}" stroke="${s}" stroke-width="0.5"/>` +
+    `<rect x="${-panelH / 2}" y="${half - panelW}" width="${panelH}" height="${panelW}" fill="${panel}" stroke="${s}" stroke-width="0.5"/>`
+  );
+}
+
 function aircraftPath(lengthPx, wingspanPx) {
   const L = lengthPx;
   const W = wingspanPx;
@@ -410,10 +437,16 @@ export function buildSketchSvg(d) {
     pathSvg += `<polygon points="${tipX},${tipY} ${baseLX},${baseLY} ${baseRX},${baseRY}" fill="${COLOURS.pathStroke}" />`;
   }
 
-  // Aircraft silhouette: translate to anchor, rotate to apparent heading.
+  // Silhouette: an aircraft outline, or — for the ISS — a small station
+  // glyph (core module + two solar-array wings) so it never reads as a
+  // plane. Both are translated to the anchor and rotated to the apparent
+  // direction of travel.
+  const glyph = d.isISS
+    ? issGlyph(Math.max(lenPx, 7), Math.max(wingPx, 14))
+    : `<path d="${aircraftPath(lenPx, wingPx)}" fill="${COLOURS.ac}" stroke="${COLOURS.acStroke}" stroke-width="0.5"/>`;
   const acGroup =
     `<g transform="translate(${anchor.x.toFixed(1)} ${anchor.y.toFixed(1)}) rotate(${(headingRad * RAD).toFixed(1)})">` +
-    `<path d="${aircraftPath(lenPx, wingPx)}" fill="${COLOURS.ac}" stroke="${COLOURS.acStroke}" stroke-width="0.5"/>` +
+    glyph +
     `</g>`;
 
   // Axis labels (AZ on FOV bottom, EL on FOV left side). Helps users tell

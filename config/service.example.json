@@ -48,5 +48,18 @@
     "enabled": false,
     "airports": ["EDDF", "EDDL", "EHAM"],
     "lookbackDays": 7
+  },
+  "iss": {
+    "enabled": true,
+    "tlePath": "./data/iss.tle",
+    "horizonMs": 172800000,
+    "recomputeMs": 600000,
+    "thresholdDeg": 0.3,
+    "looseThresholdDeg": 1.0
+  },
+  "update": {
+    "enabled": true,
+    "triggerPath": "./data/update.request",
+    "debounceMs": 30000
   }
 }

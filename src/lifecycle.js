@@ -59,6 +59,8 @@ const DEFAULT_COAST_MS = 25_000;
  * @property {object|null} watchlistEntry
  * @property {boolean} [coasting]         - true while holding a stale-pending
  *                                          status through a brief ADS-B gap
+ * @property {boolean} [isISS]            - true for an ISS (SGP4) entry, so
+ *                                          the UI can highlight it distinctly
  */
 
 const STATUS_ORDER = { planned: 0, radio: 1, candidate: 2, imminent: 3, stale: -1 };
@@ -141,6 +143,7 @@ export function updateLifecycle({
       candidate: c,
       watchlistEntry: prevEntry?.watchlistEntry ?? null,
       coasting: false,   // live this tick — explicitly not coasting
+      isISS: c.isISS === true,
     });
     touched.add(key);
   }

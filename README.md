@@ -265,6 +265,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M17 | 15-min look-ahead default + episode-consolidated History (one row per transit with Lead-time column) + planned suppression for live ADS-B callsigns | done |
 | M18 (v0.8.0) | History logged at the panel band independent of the phone filter (true Lead time); lifecycle coasting through brief ADS-B gaps + 10-row panel / 30-min stale eviction; offline airframe spec block (ICAO type → real span/length, no network/photos) beside the FOV; session detection-funnel bar chart; "LIVE-TRACKING-SIGNALS" rename; green near-hit rows in History; column sub-labels | done |
 | M19 (v0.8.1) | History pager (page 1 = today + yesterday, older in 50-row pages); detection-funnel `< 0.2°` bar; "Sun/Moon below observable limit" banner; History "Disc xing" column (approx full-disc crossing time from ω ≈ ground speed / slant range); running-version badge with safe click-to-update (trigger file + systemd `stp-update.path`) | done |
+| M20 (v0.9.0) | ISS transit prediction — dependency-free embedded SGP4 (validated against the official 88888 verification vectors), offline TLE file with opt-in `refresh-tle.js` fetcher; ISS surfaced in LIVE-TRACKING-SIGNALS + History + FOV in front of Sun **and** Moon with a distinct cyan highlight + 🛰 / station glyph, reusing the Disc-xing column | done |
 
 ## Hardware + software bill of materials
 
@@ -555,6 +556,37 @@ NAT does not expose. Workable patterns if you need near-real-time updates:
   `bash scripts/auto-update.sh` on the Pi after each merge to `main`.
 
 For a hobby setup the bundled nightly timer is almost always enough.
+
+## ISS transits (v0.9.0)
+
+The International Space Station is predicted alongside aircraft and shown in
+**LIVE-TRACKING-SIGNALS**, **History** and the **FOV preview**, in front of
+both the Sun and the Moon, with its own cyan highlight + 🛰 badge (and a
+small station glyph instead of an aircraft silhouette in the sketch).
+
+* **Offline, dependency-free.** Position comes from an embedded **SGP4**
+  propagator (`src/sgp4.js`, validated against the official Spacetrack
+  #3 / Vallado *88888* verification vectors) applied to a local TLE file —
+  the running service never touches the network for this.
+* **Get / refresh the TLE** (opt-in; the feature stays inactive until the
+  file exists). An ISS TLE older than ~3 days noticeably degrades transit
+  timing, so refresh it daily:
+
+  ```bash
+  node scripts/refresh-tle.js          # → data/iss.tle (Celestrak, CATNR 25544)
+  # cron example (06:15 daily):
+  # 15 6 * * *  cd /home/<user>/sun-moon-transit-predictor && node scripts/refresh-tle.js
+  ```
+
+* **Tuning** (`config/service.json → iss`): `horizonMs` (how far ahead to
+  scan for the next pass, default 48 h — an ISS solar/lunar transit at a
+  fixed site is weeks apart, so a long horizon is normal), `recomputeMs`
+  (scan cadence, default 10 min), `thresholdDeg` / `looseThresholdDeg`.
+  Set `"enabled": false` to switch it off entirely.
+* An ISS pass that actually skims the disc is written to History like any
+  transit and feeds the **Disc xing** column (its angular rate is huge, so
+  the full-disc crossing time is well under a second). The notifier is
+  intentionally *not* fed ISS events — no surprise phone buzz days ahead.
 
 ## Where files live
 
