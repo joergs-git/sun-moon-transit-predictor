@@ -568,7 +568,11 @@ export function buildMiniMapSvg(m) {
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">`
     + `<rect x="0" y="0" width="${W}" height="${H}" fill="${COLOURS.fovFill}" stroke="${COLOURS.fovStroke}" stroke-width="1" rx="3"/>`
     + ring(R) + ring(R / 2)
-    + txt(cx, 12, 'N ↑', { fill: COLOURS.label, size: 9, anchor: 'middle' })
+    // What this is: a top-down plan view (not the eyepiece). Rings = great-
+    // circle distance from the observer; this is "where on the ground", the
+    // FOV sketch above is "where in the eyepiece".
+    + txt(6, 12, 'PLAN VIEW · rings = km from you', { fill: COLOURS.label, size: 9 })
+    + txt(cx, 24, 'N ↑', { fill: COLOURS.label, size: 9, anchor: 'middle' })
     // sight line observer → aircraft
     + `<line x1="${cx}" y1="${cy}" x2="${sx.toFixed(1)}" y2="${sy.toFixed(1)}" `
     + `stroke="${COLOURS.pathStroke}" stroke-width="1" stroke-dasharray="4 3" stroke-opacity="0.8"/>`

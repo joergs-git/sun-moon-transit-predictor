@@ -657,7 +657,7 @@ function renderFovMap(meta) {
     && Number.isFinite(meta.lat) && Number.isFinite(meta.lon)
     && Number.isFinite(lastObserver.latitudeDeg)
     && Number.isFinite(lastObserver.longitudeDeg);
-  if (!ok) { fovMap.hidden = true; fovMap.innerHTML = ''; return; }
+  if (!ok) { fovMap.innerHTML = ''; syncFovAux(); return; }
   fovMap.innerHTML = buildMiniMapSvg({
     obsLat: lastObserver.latitudeDeg,
     obsLon: lastObserver.longitudeDeg,
@@ -667,7 +667,7 @@ function renderFovMap(meta) {
     rangeM: meta.rangeM ?? null,
     label: meta.registration ?? meta.icao ?? '',
   });
-  fovMap.hidden = !fovMap.innerHTML;
+  syncFovAux();
 }
 
 // ---- AirNav on-demand info (lazy, click + hover, shared session cache) ----
@@ -727,38 +727,47 @@ function acPhotoImg(info) {
     : '';
 }
 function acinfoHtml(info) {
-  // Photo and data sit side by side (each ~half width) so the box stays
-  // short and the FOV sketch remains the dominant element. Falls back to
-  // stacked on a very narrow pane (CSS flex-wrap).
-  const photo = acPhotoImg(info);
+  // Right column of the combined box: photo on top, data below it (the
+  // data area scrolls if long so the column stays flush with the map).
   return '<div class="spec-head">AirNav<span class="spec-klass">on-demand</span></div>'
-    + '<div class="acinfo-cols">'
-    + (photo ? `<div class="acinfo-photo">${photo}</div>` : '')
+    + acPhotoImg(info)
     + `<div class="acinfo-data">${acinfoRows(info)}</div>`
-    + '</div>'
     + '<div class="spec-foot">AirNav On-Demand API · billed per call · cached this session.</div>';
+}
+// The combined box is visible only while a column has content; an empty
+// column collapses so the other takes the full width (e.g. auto-FOV =
+// map only, no AirNav until you click).
+function syncFovAux() {
+  const box = $('#fov-aux');
+  if (!box) return;
+  const mapHas = !!(fovMap && fovMap.innerHTML);
+  const acHas = !!(fovAcinfo && fovAcinfo.innerHTML);
+  if (fovMap) fovMap.hidden = !mapHas;
+  if (fovAcinfo) fovAcinfo.hidden = !acHas;
+  box.hidden = !(mapHas || acHas);
 }
 async function renderFovAcinfo(meta) {
   if (!fovAcinfo) return;
   const hex = String(meta?.icao ?? '').toLowerCase();
   if (!meta || meta.isISS || !/^[0-9a-f]{6}$/.test(hex)) {
-    fovAcinfo.hidden = true; fovAcinfo.innerHTML = ''; fovAcinfo.dataset.hex = '';
+    fovAcinfo.innerHTML = ''; fovAcinfo.dataset.hex = ''; syncFovAux();
     return;
   }
   // refreshFovPane runs every 2 s — if this aircraft is already shown, do
   // nothing (no flicker, no re-render; the fetch is cached anyway).
   if (fovAcinfo.dataset.hex === hex) return;
   fovAcinfo.dataset.hex = hex;
-  fovAcinfo.hidden = false;
   fovAcinfo.innerHTML = '<div class="spec-head">AirNav<span class="spec-klass">loading…</span></div>';
+  syncFovAux();
   const info = await fetchAcInfo(hex);
   // A newer pin may have replaced this one while we awaited — bail if so.
   if (!pin || String(pin.acMeta?.icao ?? '').toLowerCase() !== hex) return;
   if (!info) {
-    fovAcinfo.hidden = true; fovAcinfo.innerHTML = ''; fovAcinfo.dataset.hex = '';
-    return;
+    fovAcinfo.innerHTML = ''; fovAcinfo.dataset.hex = '';
+  } else {
+    fovAcinfo.innerHTML = acinfoHtml(info);
   }
-  fovAcinfo.innerHTML = acinfoHtml(info);
+  syncFovAux();
 }
 
 function specRow(label, value) {

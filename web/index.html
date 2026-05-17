@@ -127,14 +127,14 @@
            ADS-B `t` (ICAO type) field via web/aircraft-types.js — no network,
            no photos. Hidden until a type is resolvable. -->
       <div id="fov-specs" class="fov-specs" hidden></div>
-      <!-- Offline plan-view mini-map (observer + aircraft + sight line),
-           pure SVG from our own ADS-B data — no tiles/API. Hidden for ISS
-           or when no lat/lon is available. -->
-      <div id="fov-map" class="fov-map" hidden></div>
-      <!-- AirNav On-Demand details (photo + airframe + live route) for the
-           pinned aircraft. Fetched via our /api/acinfo proxy on click only
-           (each upstream call is billed). Hidden until data arrives. -->
-      <div id="fov-acinfo" class="fov-acinfo" hidden></div>
+      <!-- One combined box: LEFT = offline plan-view mini-map (radii, our
+           own ADS-B data); RIGHT = AirNav photo on top, aircraft data
+           below. The right column ends flush with the left (equal height).
+           The box hides when both halves are empty (ISS / no data). -->
+      <div id="fov-aux" class="fov-aux" hidden>
+        <div id="fov-map" class="fov-aux-left" hidden></div>
+        <div id="fov-acinfo" class="fov-aux-right" hidden></div>
+      </div>
     </section>
   </div>
 

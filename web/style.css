@@ -613,40 +613,45 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
   border-radius: 4px;
   font-size: 12px;
 }
-/* Offline mini-map under the specs — SVG scales to the pane width. */
-.fov-map { margin-top: 8px; }
-.fov-map svg { display: block; width: 100%; height: auto; }
-
-/* AirNav on-demand box under the FOV (reuses the .spec-* row styling). */
-.fov-acinfo {
+/* Combined box: LEFT = mini-map (radii), RIGHT = AirNav photo over data.
+   One panel; the two columns stretch to equal height so the right column
+   (photo + data) ends flush with the map. Empty columns collapse via
+   [hidden] so the other takes the full width. Kept compact so the FOV
+   sketch above stays the dominant element. */
+.fov-aux {
   margin-top: 8px;
   padding: 8px 10px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 4px;
   font-size: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
 }
+.fov-aux-left  { flex: 1 1 50%; min-width: 0; }
+.fov-aux-right {
+  flex: 1 1 50%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* A hidden column collapses; the surviving flex item (flex-grow:1, now the
+   only laid-out child) expands to the full box width on its own. */
+.fov-aux > [hidden] { display: none; }
+.fov-aux-left svg { display: block; width: 100%; height: auto; }
 .ac-photo {
   display: block;
   width: 100%;
-  max-height: 150px;
+  max-height: 140px;
   object-fit: cover;
   border-radius: 3px;
-  margin-bottom: 6px;
+  margin: 4px 0 6px;
   background: var(--bg);
 }
-/* AirNav box: photo | data side by side (each ~half) so it stays short and
-   the FOV sketch stays the larger element. Wraps to stacked only when the
-   pane is genuinely too narrow for two readable columns. */
-.acinfo-cols {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: flex-start;
-}
-.acinfo-photo { flex: 1 1 45%; min-width: 130px; }
-.acinfo-photo .ac-photo { margin-bottom: 0; }
-.acinfo-data { flex: 1 1 45%; min-width: 150px; }
+/* Data fills the rest of the right column and scrolls if longer than the
+   map, so the column bottom stays flush with the left. */
+.acinfo-data { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* Flight-number cell is hover-interactive (AirNav popover). */
 .flight-cell { cursor: help; }
 #tracking .flight-cell, #history .flight-cell { text-decoration: underline dotted var(--line); }
