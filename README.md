@@ -292,6 +292,8 @@ load picks up wherever it left off, including the restored tracking list.
 | M29 (v0.10.7) | Install fixes from on-Pi testing: manual path now installs `git` first (absent on Pi OS Lite); FlightAware repo package bumped `1.2 → 1.3` (the 1.2 URL 404s) in the README + `bootstrap-pi5.sh`, with a version-drift note | done |
 | M30 (v0.10.8) | Docs: `rbfeeder`/AirNav-RadarBox sharing-key sidenote + MLAT explainer in the ADS-B section (independent of the predictor; same WGS84 location) | done |
 | M31 (v0.10.9) | ISS transits only push/log within `iss.notifyWithinMs` (default 72 h) — far-future SGP4 is noise that flips with each daily TLE, so this kills phantom-transit Pushover spam + "surprise" stat pollution; Sky-now still previews the soonest, flagged "tentative". README "Good to know" facts: ISS prediction reliability + observer coordinate/elevation pitfalls | done |
+| M39 (v0.14.0) | **Persistent aircraft-sightings stats** over *all* detected ADS-B traffic (new `aircraft_sightings` SQLite table; survives restarts). A "visit" = a fresh sighting after a ≥ 30-min gap (`sightings.gapMs`); per-tick DB writes throttled via a session map (visit hits SQLite immediately, continuous presence flushes `last_seen` every `flushMs`). `GET /api/acstats`; new "Aircraft stats" section with TOP-10 horizontal bars by airframe (ICAO hex) and by ADS-B callsign + unique/visit totals | done |
+| M38 (v0.13.3) | Mini-map heading vector doubled in length + recoloured amber so it reads distinctly from the blue observer→aircraft sight line | done |
 | M37 (v0.13.2) | Mini-map + AirNav merged into **one compact box** — LEFT = plan-view radii map (now titled "PLAN VIEW · rings = km from you" so its purpose is clear), RIGHT = photo over aircraft data; equal-height columns (right ends flush with the map), empty halves collapse. Roughly half the prior footprint so the FOV transit sketch stays the dominant element | done |
 | M36 (v0.13.1) | AirNav FOV box laid out as **photo \| data side by side** (each ~half width, wraps to stacked only on a very narrow pane) — roughly half the previous height so the FOV sketch stays the dominant element | done |
 | M35 (v0.13.0) | **AirNav On-Demand API v2 integration** (optional, opt-in token in Settings — masked, server-side only). New `src/airnav.js` client + `GET /api/acinfo` proxy (token never reaches the browser; aggressive per-hex session cache since calls are billed). On a row **click** the FOV box shows airframe (reg/type/operator/MSN/first-flight) + live route + a photo; **hovering a flight number** pops an ad-hoc photo+route card (450 ms dwell, shares the cache). Header gains an "AirNav ↗" stations link | done |
@@ -1448,7 +1450,7 @@ from the notifier — happy to add that as a config switch if useful.
 │   ├── stp-update.path           click-to-update trigger watcher
 │   ├── stp-tle.service           ISS TLE refresh oneshot template
 │   └── stp-tle.timer             daily ISS TLE schedule (05:40 ±20 min)
-└── test/                         16 vitest files, 144 cases
+└── test/                         16 vitest files, 147 cases
 ```
 
 ## License

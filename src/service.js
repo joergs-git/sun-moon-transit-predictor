@@ -135,6 +135,10 @@ export const DEFAULT_CONFIG = {
     thresholdDeg: 0.3,          // tight → candidate
     looseThresholdDeg: 1.0,     // surface approaches up to here
   },
+  // Persistent "how often did it come by" tally over ALL detected ADS-B
+  // traffic (airframe hex + ADS-B callsign), kept in SQLite so it survives
+  // restarts. A visit = a fresh sighting ≥ gapMs after the last one.
+  sightings: { enabled: true, gapMs: 1_800_000, flushMs: 300_000 },
   routes: { enabled: true, ttlMs: 3600_000, negativeTtlMs: 300_000 },
   // AirNav On-Demand API v2 (optional; off until a token is set). The
   // token lives ONLY here / in service.json (masked in /api/config) — the
@@ -190,6 +194,7 @@ function mergeConfig(user) {
     server:    { ...DEFAULT_CONFIG.server,    ...(user.server    ?? {}) },
     store:     { ...DEFAULT_CONFIG.store,     ...(user.store     ?? {}) },
     routes:    { ...DEFAULT_CONFIG.routes,    ...(user.routes    ?? {}) },
+    sightings: { ...DEFAULT_CONFIG.sightings, ...(user.sightings ?? {}) },
     iss:       { ...DEFAULT_CONFIG.iss,       ...(user.iss       ?? {}) },
     airnav:    { ...DEFAULT_CONFIG.airnav,    ...(user.airnav    ?? {}) },
     update:    { ...DEFAULT_CONFIG.update,    ...(user.update    ?? {}) },
@@ -269,6 +274,11 @@ export async function runService({
   const nearIcaos = new Set();
   const veryNearIcaos = new Set();
   const state_sinceMs = Date.now();
+
+  // Per-session memory for the persistent sightings tally — avoids a DB
+  // write every 2 s for an aircraft that just sits in reception. Keyed
+  // `${kind}:${key}` → { lastSeenMs, lastFlushMs }.
+  const sightSeen = new Map();
 
   // ISS prediction cache. Recomputed on a slow cadence (config.iss.recomputeMs)
   // and whenever the TLE file changes on disk. The notifier de-dupes the
@@ -741,6 +751,38 @@ export async function runService({
     for (const a of aircraft) {
       if (a.icao) detectedIcaos.add(a.icao);
     }
+
+    // Persistent sightings tally over ALL detected traffic. The in-memory
+    // map throttles DB writes: a real visit (fresh / ≥ gap) hits SQLite
+    // immediately (the count must never be lost); continuous presence only
+    // flushes last_seen every flushMs. recordSighting also re-checks the
+    // stored last_seen so a plane seen before a restart still counts as a
+    // new visit if the gap elapsed.
+    if (config.sightings?.enabled) {
+      const gapMs = config.sightings.gapMs ?? 1_800_000;
+      const flushMs = config.sightings.flushMs ?? 300_000;
+      const bump = (kind, key) => {
+        if (!key) return;
+        const mk = `${kind}:${key}`;
+        const mem = sightSeen.get(mk);
+        try {
+          if (!mem || (nowMs - mem.lastSeenMs) > gapMs) {
+            store.recordSighting(kind, key, nowMs, gapMs);
+            sightSeen.set(mk, { lastSeenMs: nowMs, lastFlushMs: nowMs });
+          } else {
+            mem.lastSeenMs = nowMs;
+            if (nowMs - mem.lastFlushMs > flushMs) {
+              store.touchSighting(kind, key, nowMs);
+              mem.lastFlushMs = nowMs;
+            }
+          }
+        } catch (e) { logger.error?.('sighting record failed:', e?.message ?? e); }
+      };
+      for (const a of aircraft) {
+        if (a.icao) bump('icao', String(a.icao).toLowerCase());
+        if (a.callsign) bump('flight', String(a.callsign).trim().toUpperCase());
+      }
+    }
     for (const c of enriched) {
       if (!c.icao || !Number.isFinite(c.closestApproachSepDeg)) continue;
       if (c.closestApproachSepDeg < config.tracker.looseThresholdDeg) inBandIcaos.add(c.icao);
@@ -927,6 +969,14 @@ export async function runService({
       // a tick still leaves a fresh tracking list on disk for the next start.
       await snapshotLifecycle();
       if (httpServer) await httpServer.stop();
+      // Best-effort: persist the latest last_seen for everything still in
+      // session memory (visit counts were already written immediately).
+      try {
+        for (const [mk, mem] of sightSeen) {
+          const i = mk.indexOf(':');
+          store.touchSighting(mk.slice(0, i), mk.slice(i + 1), mem.lastSeenMs);
+        }
+      } catch { /* shutting down — ignore */ }
       store.close();
     },
   };
