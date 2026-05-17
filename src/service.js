@@ -27,7 +27,7 @@ import { PushoverClient } from './pushover.js';
 import { createHttpServer } from './server.js';
 import { HistoryStore } from './store.js';
 import { findTransits } from './tracker.js';
-import { loadIssTle, predictIssTransits } from './iss.js';
+import { loadIssTle, predictIssTransits, nextIssVisiblePass } from './iss.js';
 
 export const DEFAULT_CONFIG = {
   adsb: {
@@ -225,12 +225,12 @@ export async function runService({
   const state_sinceMs = Date.now();
 
   // ISS prediction cache. Recomputed on a slow cadence (config.iss.recomputeMs)
-  // and whenever the TLE file changes on disk. issRecordedKeys de-dupes the
-  // one History row we write per ISS transit when its closest approach passes.
+  // and whenever the TLE file changes on disk. The notifier de-dupes the
+  // Pushover + History rows per (icao,body), so no extra bookkeeping here.
   let issTle = config.iss?.enabled ? loadIssTle(config.iss.tlePath) : null;
   let issEvents = [];
+  let issVisiblePass = null;
   let lastIssComputeMs = 0;
-  const issRecordedKeys = new Set();
 
   const state = {
     observer,
@@ -635,6 +635,7 @@ export async function runService({
     }
     state.detectStats = {
       totalUnique: detectedIcaos.size,
+      liveCount: aircraft.length,        // aircraft with a usable fix right now
       inBand: inBandIcaos.size,
       near: nearIcaos.size,
       veryNear: veryNearIcaos.size,
@@ -654,10 +655,12 @@ export async function runService({
     state.expected = upcomingExpected(watchlist, nowMs, config.predictor.lookAheadMs);
 
     // ISS transits — recomputed on a slow cadence (rare-event work) and fed
-    // into the lifecycle as ordinary candidates so the list / FOV / Disc-xing
-    // all reuse. The notifier is intentionally NOT given these (no surprise
-    // phone buzz days ahead); a real transit is logged to History below when
-    // its closest approach passes, so it still shows up there too.
+    // into the lifecycle AND the notifier as ordinary candidates, so the
+    // list / FOV / Disc-xing reuse and the user gets a Pushover the moment
+    // a Sun/Moon transit is predicted (v0.10.0 — was previously suppressed;
+    // the user explicitly wants the early heads-up for these rare events).
+    // The notifier also writes the History row(s) via its onEvent hook, so
+    // no separate ISS recordEvent is needed here.
     if (config.iss?.enabled
         && (issTle == null || nowMs - lastIssComputeMs >= config.iss.recomputeMs)) {
       const fresh = loadIssTle(config.iss.tlePath);
@@ -676,9 +679,21 @@ export async function runService({
           logger.warn?.('ISS prediction failed:', e?.message ?? e);
           issEvents = [];
         }
+        try {
+          issVisiblePass = nextIssVisiblePass(observer, issTle.satrec, {
+            fromMs: nowMs,
+            horizonMs: config.iss.horizonMs,
+          });
+        } catch (e) {
+          logger.warn?.('ISS visible-pass calc failed:', e?.message ?? e);
+          issVisiblePass = null;
+        }
       }
       lastIssComputeMs = nowMs;
     }
+    // Drop a visible pass once it is over so the Sky-now line never shows a
+    // stale "next pass" that already happened.
+    if (issVisiblePass && issVisiblePass.endMs < nowMs) issVisiblePass = null;
     // TLE age in days (epoch is a Julian date; JD 2440587.5 = Unix epoch).
     const issTleAgeDays = issTle
       ? (nowMs / 86400000 + 2440587.5 - issTle.satrec.jdsatepoch)
@@ -689,26 +704,16 @@ export async function runService({
       tleAgeDays: issTleAgeDays != null ? Math.round(issTleAgeDays * 10) / 10 : null,
       upcoming: issEvents.length,
       nextAtMs: issEvents.find(e => e.closestApproachAtMs >= nowMs)?.closestApproachAtMs ?? null,
+      visiblePass: issVisiblePass,
     };
 
     // Surface ISS events that are upcoming (or just passed, so the row can
-    // still flash 'imminent' for a moment). Record the one History row per
-    // transit as its closest approach goes by.
-    const issForLifecycle = [];
-    for (const ev of issEvents) {
-      if (ev.closestApproachAtMs >= nowMs - config.lifecycle.imminentWindowMs) {
-        issForLifecycle.push(ev);
-      }
-      const key = `${ev.body}|${Math.round(ev.closestApproachAtMs / 1000)}`;
-      if (ev.closestApproachAtMs <= nowMs && !issRecordedKeys.has(key)) {
-        issRecordedKeys.add(key);
-        const stage = ev.closestApproachSepDeg <= config.iss.thresholdDeg
-          ? 'imminent'
-          : (ev.closestApproachSepDeg <= config.iss.looseThresholdDeg ? 'candidate' : 'radio');
-        try { store.recordEvent(stage, ev, null, nowMs); }
-        catch (e) { logger.error?.('ISS history record failed:', e); }
-      }
-    }
+    // still flash 'imminent' for a moment). The notifier (below) handles
+    // both the Pushover and the History row(s) for these, exactly like an
+    // aircraft candidate — one code path, automatic episode consolidation.
+    const issForLifecycle = issEvents.filter(
+      ev => ev.closestApproachAtMs >= nowMs - config.lifecycle.imminentWindowMs,
+    );
 
     // Unified lifecycle state — merges live tracker + watchlist + previous
     // tick's contacts. The notifier still drives Pushover; the lifecycle
@@ -737,7 +742,12 @@ export async function runService({
     }
 
     try {
-      await notifier.tick(enriched, nowMs);
+      // ISS rides the same notifier path as aircraft → Pushover the moment a
+      // transit is predicted, plus the History row(s) via its onEvent hook.
+      await notifier.tick(
+        issForLifecycle.length ? enriched.concat(issForLifecycle) : enriched,
+        nowMs,
+      );
     } catch (e) {
       logger.error?.('notifier tick failed:', e);
     }

@@ -71,13 +71,65 @@ export function loadIssTle(path) {
   }
 }
 
+const EARTH_R_M = 6378137.0;
+
 /** ISS topocentric Az/El + slant range (m) at a wall-clock time, or null. */
 function issAzEl(satrec, obsEcef, obsLat, obsLon, whenMs) {
   const tsinceMin = (unixToJulian(whenMs) - satrec.jdsatepoch) * 1440.0;
   const teme = sgp4(satrec, tsinceMin);
   if (!teme) return null;
   const ecef = temeToEcef(teme.r, new Date(whenMs));
-  return targetEcefAzEl(obsEcef, obsLat, obsLon, ecef);
+  return { ...targetEcefAzEl(obsEcef, obsLat, obsLon, ecef), ecef };
+}
+
+/** ISS ECEF position only (m) at a time, or null. */
+function issEcef(satrec, whenMs) {
+  const tsinceMin = (unixToJulian(whenMs) - satrec.jdsatepoch) * 1440.0;
+  const teme = sgp4(satrec, tsinceMin);
+  if (!teme) return null;
+  return temeToEcef(teme.r, new Date(whenMs));
+}
+
+/**
+ * Unit vector (ECEF) from Earth centre toward the Sun. The Sun is ~1 AU
+ * away, so the observer→Sun direction equals the geocentric direction to
+ * well within the precision a shadow test needs. Built from the Sun's
+ * topocentric Az/El by the inverse of geometry.js's ENU rotation.
+ */
+function sunUnitEcef(observer, whenMs) {
+  const s = bodyAzEl(observer, 'Sun', new Date(whenMs));
+  const az = s.azimuthDeg * Math.PI / 180;
+  const el = s.elevationDeg * Math.PI / 180;
+  const e = Math.cos(el) * Math.sin(az);
+  const n = Math.cos(el) * Math.cos(az);
+  const u = Math.sin(el);
+  const phi = observer.latitudeDeg * Math.PI / 180;
+  const lam = observer.longitudeDeg * Math.PI / 180;
+  const sp = Math.sin(phi);
+  const cp = Math.cos(phi);
+  const sl = Math.sin(lam);
+  const cl = Math.cos(lam);
+  // Transpose of ecefDeltaToEnu (orthonormal → inverse = transpose).
+  const x = -sl * e - sp * cl * n + cp * cl * u;
+  const y = cl * e - sp * sl * n + cp * sl * u;
+  const z = cp * n + sp * u;
+  const m = Math.hypot(x, y, z) || 1;
+  return { x: x / m, y: y / m, z: z / m };
+}
+
+/**
+ * Is the ISS sunlit at this ECEF position? Cylindrical-umbra approximation
+ * (ignores penumbra / shadow cone taper — sub-second at LEO, irrelevant for
+ * a visible-pass heads-up): in shadow iff it sits on the anti-Sun side and
+ * its perpendicular distance from the Earth–Sun axis is less than R⊕.
+ */
+function issSunlit(issEcefM, sunHat) {
+  const proj = issEcefM.x * sunHat.x + issEcefM.y * sunHat.y + issEcefM.z * sunHat.z;
+  if (proj >= 0) return true;                       // Sun-facing hemisphere
+  const px = issEcefM.x - proj * sunHat.x;
+  const py = issEcefM.y - proj * sunHat.y;
+  const pz = issEcefM.z - proj * sunHat.z;
+  return Math.hypot(px, py, pz) >= EARTH_R_M;
 }
 
 /**
@@ -235,4 +287,75 @@ function buildIssCandidate(
     transitPath,
     route: null,
   };
+}
+
+/**
+ * Next *visible* ISS pass for the observer: the station climbs above
+ * `minElevationDeg`, the sky is dark enough (Sun below `sunBelowDeg`, i.e.
+ * after dusk / before dawn) and the ISS itself is sunlit (not in Earth's
+ * shadow) — the classic naked-eye pass. Returns the first such pass within
+ * the horizon, or null.
+ *
+ * @param {import('./geometry.js').Observer} observer
+ * @param {object} satrec
+ * @param {{ fromMs?: number, horizonMs?: number, stepMs?: number,
+ *           minElevationDeg?: number, sunBelowDeg?: number }} [opts]
+ * @returns {{ startMs:number, peakMs:number, endMs:number,
+ *             maxElevationDeg:number, startAzDeg:number, endAzDeg:number,
+ *             durationS:number }|null}
+ */
+export function nextIssVisiblePass(observer, satrec, opts = {}) {
+  const {
+    fromMs = Date.now(),
+    horizonMs = 48 * 3600_000,
+    stepMs = 15_000,
+    minElevationDeg = 20,
+    sunBelowDeg = -6,            // civil dusk; "nach Dämmerung"
+  } = opts;
+
+  const obsEcef = observerEcef(observer);
+  const obsLat = observer.latitudeDeg;
+  const obsLon = observer.longitudeDeg;
+
+  let cur = null;   // pass being accumulated
+
+  for (let t = fromMs; t <= fromMs + horizonMs; t += stepMs) {
+    const iss = issAzEl(satrec, obsEcef, obsLat, obsLon, t);
+    // Cheap reject first: ISS itself must be high enough. Skips the Sun /
+    // shadow maths for the ~98 % of the orbit the station is low or down.
+    if (!iss || iss.elevationDeg < minElevationDeg) {
+      if (cur) { finalisePass(cur); return cur; }
+      continue;
+    }
+    const sun = bodyAzEl(observer, 'Sun', new Date(t));
+    const dark = sun.elevationDeg < sunBelowDeg;
+    const lit = issSunlit(iss.ecef, sunUnitEcef(observer, t));
+    if (dark && lit) {
+      if (!cur) {
+        cur = {
+          startMs: t, peakMs: t, endMs: t,
+          maxElevationDeg: iss.elevationDeg,
+          startAzDeg: iss.azimuthDeg, endAzDeg: iss.azimuthDeg,
+        };
+      }
+      if (iss.elevationDeg > cur.maxElevationDeg) {
+        cur.maxElevationDeg = iss.elevationDeg;
+        cur.peakMs = t;
+      }
+      cur.endMs = t;
+      cur.endAzDeg = iss.azimuthDeg;
+    } else if (cur) {
+      finalisePass(cur);
+      return cur;
+    }
+  }
+  if (cur) { finalisePass(cur); return cur; }
+  return null;
+}
+
+function finalisePass(p) {
+  p.durationS = Math.round((p.endMs - p.startMs) / 1000);
+  p.maxElevationDeg = Math.round(p.maxElevationDeg);
+  p.startAzDeg = Math.round(p.startAzDeg);
+  p.endAzDeg = Math.round(p.endAzDeg);
 }

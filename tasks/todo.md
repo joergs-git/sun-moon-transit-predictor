@@ -106,7 +106,31 @@ Status: merged to main (v0.9.0, cbb5a6c).
       Tracking keeps col 5; added .th-icon/.td-icon styling. Version 0.9.1.
       Frontend-only; 131 tests still pass.
 
-Status: complete, awaiting commit/push/merge confirmation.
+Status: merged to main (v0.9.1, 818bf18).
+
+---
+
+# v0.10.0 — ISS Pushover + visible pass + learning audit + Tracking reorder + funnel
+
+Branch: feature/iss-pushover-visible-pass
+
+- [x] (c) AUDIT Alert-learning: logic is consistent and actually improved by
+      the H change (radio now recorded at the 2° panel band → graduated/
+      faded/hit-rate meaningful). BUG found & fixed: ISS history rows
+      contaminated the aircraft aggregates → `episodes()` now excludes
+      `icao='ISS'`; `consolidatedHistory()` (History table) still keeps it.
+- [x] (a) ISS Pushover: ISS fed to the notifier (same path as aircraft),
+      manual ISS recordEvent removed (notifier.onEvent records → one path,
+      auto episode consolidation), ISS-flavoured Pushover title.
+- [x] (b) `nextIssVisiblePass()` (el>20°, Sun<−6°, station sunlit via
+      cylindrical Earth-shadow test) → state.iss.visiblePass → Sky-now line.
+- [x] (d) Tracking reordered like History: leading Sun/Moon icon (Body
+      column dropped), Sep·Dist·Speed·Alt block, Flight/ICAO/Route at right.
+- [x] (e) Detection funnel: new "Live planes" bar (state.detectStats
+      .liveCount = aircraft this tick); "detected" → "Total detected".
+- [x] Version 0.10.0; README M22 + ISS section. Tests: 134 pass (+3).
+
+Status: complete.
 
 # DONE — click-to-update (folded into v0.8.1)
 

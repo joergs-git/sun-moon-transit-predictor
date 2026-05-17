@@ -267,6 +267,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M19 (v0.8.1) | History pager (page 1 = today + yesterday, older in 50-row pages); detection-funnel `< 0.2°` bar; "Sun/Moon below observable limit" banner; History "Disc xing" column (approx full-disc crossing time from ω ≈ ground speed / slant range); running-version badge with safe click-to-update (trigger file + systemd `stp-update.path`) | done |
 | M20 (v0.9.0) | ISS transit prediction — dependency-free embedded SGP4 (validated against the official 88888 verification vectors), offline TLE file with opt-in `refresh-tle.js` fetcher; ISS surfaced in LIVE-TRACKING-SIGNALS + History + FOV in front of Sun **and** Moon with a distinct cyan highlight + 🛰 / station glyph, reusing the Disc-xing column | done |
 | M21 (v0.9.1) | History column reorder: Sun/Moon shown as a leading icon (Body text column dropped); geometry block `Sep · Dist · Disc xing · Speed · Alt` moved between Lead and Stage; Flight / ICAO / Route moved to the far right | done |
+| M22 (v0.10.0) | ISS Pushover (heads-up the moment a Sun/Moon transit is predicted) + History rows via the shared notifier path; "next visible ISS pass" line in Sky-now (el > 20°, after dusk, station sunlit — offline cylindrical-shadow test); Alert-learning aggregates exclude ISS (kept in the History table); Tracking table reordered like History (leading Sun/Moon icon, Flight/ICAO/Route to the right); detection funnel gains a live "Live planes" bar and "detected" → "Total detected" | done |
 
 ## Hardware + software bill of materials
 
@@ -584,10 +585,21 @@ small station glyph instead of an aircraft silhouette in the sketch).
   fixed site is weeks apart, so a long horizon is normal), `recomputeMs`
   (scan cadence, default 10 min), `thresholdDeg` / `looseThresholdDeg`.
   Set `"enabled": false` to switch it off entirely.
-* An ISS pass that actually skims the disc is written to History like any
-  transit and feeds the **Disc xing** column (its angular rate is huge, so
-  the full-disc crossing time is well under a second). The notifier is
-  intentionally *not* fed ISS events — no surprise phone buzz days ahead.
+* An ISS transit is written to History like any transit and feeds the
+  **Disc xing** column (its angular rate is huge, so the full-disc crossing
+  time is well under a second).
+* **Pushover (v0.10.0).** ISS transits ride the same notifier path as
+  aircraft, so you get a heads-up the moment a Sun/Moon transit is
+  predicted (and again ±30 s before). Titles read `🛰 ISS Sun transit
+  predicted …`. Disable per the usual `pushover` settings if unwanted.
+* **Next visible pass (v0.10.0).** The Sky-now panel shows the next
+  naked-eye ISS pass for the site — station above 20°, sky dark (Sun below
+  −6°, "after dusk") and the ISS sunlit (offline cylindrical Earth-shadow
+  test). It is a *visibility* line, independent of any disc transit.
+* **Alert-learning** hit/surprise/graze rates are an ADS-B-traffic quality
+  signal and therefore *exclude* ISS rows (a deliberately-hunted orbital
+  event would otherwise skew them); the ISS still appears in the History
+  table itself.
 
 ## Where files live
 

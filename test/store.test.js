@@ -194,4 +194,27 @@ describe('HistoryStore', () => {
       store.close();
     }
   });
+
+  it('excludes ISS rows from learning aggregates but keeps them in History', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      const nowMs = 1_000_000_000_000;
+      const plane = makeCandidate({ icao: 'abc123', sepDeg: 0.15, closestInMs: 0 });
+      const iss = makeCandidate({ icao: 'ISS', callsign: 'ISS (ZARYA)', sepDeg: 0.1, closestInMs: 60_000 });
+      store.recordEvent('candidate', plane, null, nowMs - 1000);
+      store.recordEvent('imminent',  iss,   null, nowMs - 500);
+
+      // Learning: ISS must NOT contaminate the episode aggregates.
+      const { episodes, aggregates } = store.episodes({ windowMs: 24 * 3600_000, nowMs: nowMs + 120_000 });
+      expect(episodes.every(e => e.icao !== 'ISS')).toBe(true);
+      expect(aggregates.totalEpisodes).toBe(1);
+
+      // History table: ISS row IS still present.
+      const hist = store.consolidatedHistory({ nowMs: nowMs + 120_000 });
+      expect(hist.some(r => r.icao === 'ISS')).toBe(true);
+      expect(hist.some(r => r.icao === 'abc123')).toBe(true);
+    } finally {
+      store.close();
+    }
+  });
 });
