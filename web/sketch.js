@@ -555,13 +555,14 @@ export function buildMiniMapSvg(m) {
     + txt(cx + 2, cy - rad * scale - 2, `${(rad / 1000).toFixed(0)} km`,
       { fill: COLOURS.label, size: 9 });
 
-  // Heading tick (8 px) from the aircraft in its track direction.
+  // Heading vector from the aircraft in its track direction — doubled
+  // length (24 px) and amber so it stands out from the blue sight line.
   let headSvg = '';
   if (Number.isFinite(m.trackDeg)) {
-    const hx = sx + Math.sin(m.trackDeg * DEG) * 12;
-    const hy = sy - Math.cos(m.trackDeg * DEG) * 12;
+    const hx = sx + Math.sin(m.trackDeg * DEG) * 24;
+    const hy = sy - Math.cos(m.trackDeg * DEG) * 24;
     headSvg = `<line x1="${sx.toFixed(1)}" y1="${sy.toFixed(1)}" `
-      + `x2="${hx.toFixed(1)}" y2="${hy.toFixed(1)}" stroke="${COLOURS.pathStroke}" stroke-width="1.5"/>`;
+      + `x2="${hx.toFixed(1)}" y2="${hy.toFixed(1)}" stroke="#ffba70" stroke-width="2"/>`;
   }
 
   return (
