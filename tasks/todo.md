@@ -130,6 +130,28 @@ Branch: feature/iss-pushover-visible-pass
       .liveCount = aircraft this tick); "detected" → "Total detected".
 - [x] Version 0.10.0; README M22 + ISS section. Tests: 134 pass (+3).
 
+Status: merged to main (v0.10.0, ab525d2).
+
+---
+
+# v0.10.1 — click-to-update no longer fails silently (branch bugfix/click-update-feedback)
+
+ROOT CAUSE: the endpoint only writes data/update.request; the executor is
+the systemd stp-update.path unit (Linux/Pi only, added in v0.8.1).
+auto-update.sh does NOT install systemd units, so a Pi upgraded from
+< v0.8.1 by code-pull never got the watcher → trigger written, nothing
+consumes it. (macOS dev box: no systemd at all → also a no-op, expected.)
+Plus a UI bug: the frontend swallowed the result (ok:false @ HTTP 200, and
+no success message) so it looked dead either way.
+
+- [x] service.js: tick() self-diagnostic → state.update {status:
+      idle|pending|consumed|stuck, ageMs, triggerPath}; richer requestUpdate
+      message.
+- [x] app.js: honest #update-msg line; surface ok:false; renderUpdateStatus
+      reflects pending/consumed/stuck; badge restore on failure/stuck.
+- [x] auto-update.sh: journal WARNING when stp-update.path inactive + fix.
+- [x] README troubleshooting + M23; version 0.10.1. Tests: 134 pass.
+
 Status: complete.
 
 # DONE — click-to-update (folded into v0.8.1)
