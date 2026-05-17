@@ -266,6 +266,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M18 (v0.8.0) | History logged at the panel band independent of the phone filter (true Lead time); lifecycle coasting through brief ADS-B gaps + 10-row panel / 30-min stale eviction; offline airframe spec block (ICAO type → real span/length, no network/photos) beside the FOV; session detection-funnel bar chart; "LIVE-TRACKING-SIGNALS" rename; green near-hit rows in History; column sub-labels | done |
 | M19 (v0.8.1) | History pager (page 1 = today + yesterday, older in 50-row pages); detection-funnel `< 0.2°` bar; "Sun/Moon below observable limit" banner; History "Disc xing" column (approx full-disc crossing time from ω ≈ ground speed / slant range); running-version badge with safe click-to-update (trigger file + systemd `stp-update.path`) | done |
 | M20 (v0.9.0) | ISS transit prediction — dependency-free embedded SGP4 (validated against the official 88888 verification vectors), offline TLE file with opt-in `refresh-tle.js` fetcher; ISS surfaced in LIVE-TRACKING-SIGNALS + History + FOV in front of Sun **and** Moon with a distinct cyan highlight + 🛰 / station glyph, reusing the Disc-xing column | done |
+| M21 (v0.9.1) | History column reorder: Sun/Moon shown as a leading icon (Body text column dropped); geometry block `Sep · Dist · Disc xing · Speed · Alt` moved between Lead and Stage; Flight / ICAO / Route moved to the far right | done |
 
 ## Hardware + software bill of materials
 
