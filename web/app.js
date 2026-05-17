@@ -1,9 +1,16 @@
-import { buildSketchSvg, fromHistoryRow, fromLifecycleEntry, setOptics } from './sketch.js';
+import {
+  buildSketchSvg, fromHistoryRow, fromLifecycleEntry, setOptics, SKETCH_GEOMETRY,
+} from './sketch.js';
 import { resolveAircraftType, designAgePhrase, klassLabel } from './aircraft-types.js';
 
 const STATE_INTERVAL_MS = 2000;
 const HISTORY_INTERVAL_MS = 15000;
 const LEARNING_INTERVAL_MS = 60_000;
+// History pager (v0.8.1): page 0 = today + yesterday, older entries split
+// into fixed-size pages. Fetch a wide window so the older pages have rows
+// without per-page API calls (server caps /api/history at 500).
+const HISTORY_PAGE_SIZE = 50;
+const HISTORY_FETCH_LIMIT = 500;
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -12,6 +19,7 @@ const $ = (sel) => document.querySelector(sel);
 // JSON-stringifying the entry onto a data-* attribute on every render tick.
 let lastLifecycle = [];
 let lastHistory = [];
+let historyPage = 0;   // 0 = today+yesterday; ≥1 = older, HISTORY_PAGE_SIZE/page
 
 function fmtCountdown(ms) {
   if (ms <= 0) return 'now';
@@ -26,6 +34,44 @@ function fmtSpeed(ms)     { return ms == null ? '—' : `${Math.round(ms * 3.6)}
 function fmtDistance(m)   { return m  == null ? '—' : `${(m / 1000).toFixed(1)} km`; }
 function fmtSep(d)        { return d  == null ? '—' : `${d.toFixed(2)}°`; }
 function fmtDuration(ms)  { return ms == null ? '—' : `${(ms / 1000).toFixed(1)}s`; }
+
+// Live telescope focal length (mm), refreshed from /api/state every poll so
+// the disc-crossing sensor speed reflects the current optical setup.
+let currentFocalMm = 500;
+
+// Approximate disc-transit kinematics for one history row.
+//
+// The object's angular rate across the sky is approximated as
+//   ω ≈ v_ground / slant_range            [rad/s]
+// (i.e. velocity treated as perpendicular to the line of sight near the
+// near-overhead transit — deliberately approximate, per the request). From
+// that, the time to sweep the FULL Sun/Moon disc is
+//   t = disc_diameter° / ω°               [s]
+// and the speed of the silhouette on the sensor is
+//   v_sensor ≈ focal_mm · ω               [mm/s]   (small-angle)
+// Returns null when speed/range are missing (older rows show "—").
+function discTransit(row) {
+  const v = row.ground_speed_ms;
+  const r = row.range_m;
+  if (!Number.isFinite(v) || !Number.isFinite(r) || r <= 0 || v <= 0) return null;
+  const omegaRad = v / r;                          // rad/s
+  const omegaDeg = omegaRad * 180 / Math.PI;       // °/s
+  const discDeg = SKETCH_GEOMETRY.BODY_DIAMETER_DEG[row.body] ?? 0.53;
+  const sec = discDeg / omegaDeg;                  // full-disc crossing time
+  const mmPerSec = currentFocalMm * omegaRad;      // small-angle image speed
+  return { sec, omegaDeg, mmPerSec, discDeg };
+}
+function fmtDiscTransit(dt) {
+  if (!dt) return '—';
+  return dt.sec >= 10 ? `${dt.sec.toFixed(0)} s` : `${dt.sec.toFixed(2)} s`;
+}
+function dtTooltip(dt) {
+  if (!dt) return 'Disc-crossing time unavailable (no speed/range on this row).';
+  return `Approx. time to sweep the full disc. `
+    + `ω ${dt.omegaDeg.toFixed(2)}°/s · ${dt.mmPerSec.toFixed(1)} mm/s on sensor `
+    + `@ ${Math.round(currentFocalMm)} mm · disc ${dt.discDeg.toFixed(2)}°. `
+    + `Approximation: ω ≈ ground speed / slant range.`;
+}
 function fmtRoute(o, d)   { return o && d ? `${o}→${d}` : (o || d || '—'); }
 function fmtTime(ms)      { return new Date(ms).toLocaleTimeString(); }
 
@@ -83,7 +129,26 @@ function renderTracking(state) {
   const rows = state.lifecycle ?? [];
   lastLifecycle = rows;
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="10">Tracking list empty.</td></tr>';
+    // If BOTH bodies are below the 20° observability floor the tracker
+    // returns nothing no matter how much ADS-B traffic there is — make that
+    // explicit so an empty panel isn't mistaken for a fault (SkyAware will
+    // still be showing aircraft). Otherwise it's just "no flight on the
+    // Sun/Moon line right now", which is the normal idle state.
+    const bodies = state.bodies ?? {};
+    const names = Object.keys(bodies);
+    const anyObservable = names.some((n) => bodies[n]?.observable);
+    if (names.length && !anyObservable) {
+      const lo = names.join(' & ');
+      tbody.innerHTML =
+        `<tr class="empty"><td colspan="11" class="no-bodies">`
+        + `☀🌙 ${lo} below the observable limit (&lt; 20° elevation).`
+        + `<br>No transit candidates can occur until one rises — ADS-B traffic`
+        + ` elsewhere is expected and not tracked.</td></tr>`;
+    } else {
+      tbody.innerHTML =
+        '<tr class="empty"><td colspan="11">Tracking list empty — no aircraft'
+        + ' currently projected onto the Sun/Moon line.</td></tr>';
+    }
     return;
   }
   for (const [i, e] of rows.entries()) {
@@ -149,46 +214,112 @@ function fmtLead(ms) {
   return `${h}h${r ? ` ${r}m` : ''}`;
 }
 
+// Midnight at the start of *yesterday* (local) — the inclusive lower bound
+// for what counts as "today + yesterday" on history page 1.
+function recentCutoffMs() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime() - 24 * 60 * 60 * 1000;
+}
+
+// Build one history row. `absIdx` is the index into `lastHistory` (NOT the
+// paginated slice) so the click→pin handler keeps resolving correctly.
+function historyTr(e, absIdx) {
+  const tr = document.createElement('tr');
+  const nearHit = isNearHit(e.closest_sep_deg);
+  tr.className = `sketchable${nearHit ? ' near-hit' : ''}`;
+  tr.dataset.source = 'history';
+  tr.dataset.index = String(absIdx);
+  const oc = e.outcome ? OUTCOME_LABELS[e.outcome] : null;
+  const outcomeCell = oc
+    ? `<span class="outcome outcome-${e.outcome}" title="${oc.title}">${oc.icon} ${oc.label}</span>`
+    : '<span class="outcome outcome-none" title="Episode not yet classified — still in flight, or the window has no companion stages to compare against.">—</span>';
+  // leadTimeMs is set by the server's consolidated view; fall back to
+  // computing it ourselves so a partial response still renders cleanly.
+  const leadMs = Number.isFinite(e.leadTimeMs)
+    ? e.leadTimeMs
+    : (e.closest_at_ms - e.recorded_at_ms);
+  const dt = discTransit(e);
+  tr.innerHTML = `
+    <td class="stage-${e.stage}">${fmtDateTime(e.closest_at_ms)}</td>
+    <td>${fmtDateTime(e.recorded_at_ms)}</td>
+    <td title="Lead time = ${leadMs} ms">${fmtLead(leadMs)}</td>
+    <td class="stage-${e.stage}">${e.stage}</td>
+    <td>${outcomeCell}</td>
+    <td class="body-${e.body}">${e.body}</td>
+    <td>${e.flight ?? e.callsign ?? ''}</td>
+    <td>${e.icao.toUpperCase()}</td>
+    <td>${fmtRoute(e.origin, e.destination)}</td>
+    <td>${fmtAlt(e.altitude_m)}</td>
+    <td>${fmtSpeed(e.ground_speed_ms)}</td>
+    <td>${fmtDistance(e.range_m)}</td>
+    <td>${fmtSep(e.closest_sep_deg)}</td>
+    <td title="${dtTooltip(dt)}">${fmtDiscTransit(dt)}</td>
+  `;
+  return tr;
+}
+
+// Paginated render. Page 0 shows everything from today + yesterday; older
+// episodes are chunked into HISTORY_PAGE_SIZE pages. Pure client-side over
+// the rows already fetched — navigating pages never hits the API, and the
+// 15 s poll keeps the current page (clamped if the data shrank).
 function renderHistory(events) {
   const tbody = $('#history tbody');
+  const pager = $('#history-pager');
   tbody.innerHTML = '';
   lastHistory = events ?? [];
-  if (!events || events.length === 0) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="13">No history yet.</td></tr>';
+  if (!lastHistory.length) {
+    tbody.innerHTML = '<tr class="empty"><td colspan="14">No history yet.</td></tr>';
+    if (pager) pager.hidden = true;
     return;
   }
-  for (const [i, e] of events.entries()) {
-    const tr = document.createElement('tr');
-    const nearHit = isNearHit(e.closest_sep_deg);
-    tr.className = `sketchable${nearHit ? ' near-hit' : ''}`;
-    tr.dataset.source = 'history';
-    tr.dataset.index = String(i);
-    const oc = e.outcome ? OUTCOME_LABELS[e.outcome] : null;
-    const outcomeCell = oc
-      ? `<span class="outcome outcome-${e.outcome}" title="${oc.title}">${oc.icon} ${oc.label}</span>`
-      : '<span class="outcome outcome-none" title="Episode not yet classified — still in flight, or the window has no companion stages to compare against.">—</span>';
-    // leadTimeMs is set by the server's consolidated view; fall back to
-    // computing it ourselves so a partial response still renders cleanly.
-    const leadMs = Number.isFinite(e.leadTimeMs)
-      ? e.leadTimeMs
-      : (e.closest_at_ms - e.recorded_at_ms);
-    tr.innerHTML = `
-      <td class="stage-${e.stage}">${fmtDateTime(e.closest_at_ms)}</td>
-      <td>${fmtDateTime(e.recorded_at_ms)}</td>
-      <td title="Lead time = ${leadMs} ms">${fmtLead(leadMs)}</td>
-      <td class="stage-${e.stage}">${e.stage}</td>
-      <td>${outcomeCell}</td>
-      <td class="body-${e.body}">${e.body}</td>
-      <td>${e.flight ?? e.callsign ?? ''}</td>
-      <td>${e.icao.toUpperCase()}</td>
-      <td>${fmtRoute(e.origin, e.destination)}</td>
-      <td>${fmtAlt(e.altitude_m)}</td>
-      <td>${fmtSpeed(e.ground_speed_ms)}</td>
-      <td>${fmtDistance(e.range_m)}</td>
-      <td>${fmtSep(e.closest_sep_deg)}</td>
-    `;
-    tbody.appendChild(tr);
+
+  const cutoff = recentCutoffMs();
+  const recent = [];
+  const older = [];
+  lastHistory.forEach((e, i) => {
+    const t = e.closest_at_ms ?? e.recorded_at_ms;
+    (Number.isFinite(t) && t >= cutoff ? recent : older).push([i, e]);
+  });
+
+  const olderPages = Math.ceil(older.length / HISTORY_PAGE_SIZE);
+  const totalPages = 1 + olderPages;            // page 0 always exists
+  historyPage = Math.min(Math.max(0, historyPage), totalPages - 1);
+
+  let slice;
+  let label;
+  if (historyPage === 0) {
+    slice = recent;
+    label = 'today + yesterday';
+  } else {
+    const start = (historyPage - 1) * HISTORY_PAGE_SIZE;
+    slice = older.slice(start, start + HISTORY_PAGE_SIZE);
+    label = 'older';
   }
+
+  if (slice.length === 0) {
+    tbody.innerHTML =
+      '<tr class="empty"><td colspan="14">Nothing recorded today or yesterday yet — use “Older ▶”.</td></tr>';
+  } else {
+    for (const [absIdx, e] of slice) tbody.appendChild(historyTr(e, absIdx));
+  }
+
+  if (pager) {
+    if (totalPages <= 1) {
+      pager.hidden = true;
+    } else {
+      pager.hidden = false;
+      $('#hp-info').textContent = `${historyPage + 1} / ${totalPages} · ${label}`;
+      $('#hp-newer').disabled = historyPage === 0;
+      $('#hp-older').disabled = historyPage >= totalPages - 1;
+    }
+  }
+}
+
+function gotoHistoryPage(delta) {
+  historyPage += delta;
+  renderHistory(lastHistory);   // re-render in place; no refetch
+  highlightPinnedRow();         // repaint wipes the pinned marker
 }
 
 // Detection funnel bar chart (v0.8.0). Three bars, all scaled to the total
@@ -202,9 +333,11 @@ function renderDetectFunnel(stats) {
   $('#fb-total').style.width = total > 0 ? '100%' : '0%';
   $('#fb-band').style.width  = `${pct(stats.inBand ?? 0)}%`;
   $('#fb-near').style.width  = `${pct(stats.near ?? 0)}%`;
+  $('#fb-vnear').style.width = `${pct(stats.veryNear ?? 0)}%`;
   $('#fv-total').textContent = String(total);
   $('#fv-band').textContent  = String(stats.inBand ?? 0);
   $('#fv-near').textContent  = String(stats.near ?? 0);
+  $('#fv-vnear').textContent = String(stats.veryNear ?? 0);
   // Label the middle bar with the live panel band (defaults 2°, but the
   // user can widen/narrow it in Settings).
   const band = Number.isFinite(stats.bandDeg) ? stats.bandDeg : 2;
@@ -221,7 +354,12 @@ async function pollState() {
     renderDetectFunnel(state.detectStats);
     // Push live optics into the FOV sketch module so a Settings edit is
     // reflected on the next render of the inline preview pane.
-    if (state.optics) setOptics(state.optics);
+    if (state.optics) {
+      setOptics(state.optics);
+      if (Number.isFinite(state.optics.telescopeFocalMm)) {
+        currentFocalMm = state.optics.telescopeFocalMm;
+      }
+    }
     if (state.externalLinks) applyExternalLinks(state.externalLinks);
     // The preview pane needs the latest lifecycle on every tick — both to
     // pick a fresh auto entry and to refresh the pinned row's highlight.
@@ -230,6 +368,10 @@ async function pollState() {
     const age = Math.round((Date.now() - state.lastUpdateMs) / 1000);
     status.textContent = `live · ${age}s ago · ${state.aircraftCount ?? 0} aircraft`;
     status.className = age > 10 ? 'status stale' : 'status live';
+    if (state.version) {
+      const v = $('#app-version');
+      if (v) v.textContent = `v${state.version}`;
+    }
     if (state.observer) {
       $('#observer').textContent =
         `Observer ${state.observer.name ?? ''} ` +
@@ -255,7 +397,7 @@ function applyExternalLinks(links) {
 
 async function pollHistory() {
   try {
-    const res = await fetch('/api/history?limit=100');
+    const res = await fetch(`/api/history?limit=${HISTORY_FETCH_LIMIT}`);
     if (!res.ok) return;
     const { events } = await res.json();
     renderHistory(events);
@@ -645,6 +787,54 @@ settingsForm.addEventListener('submit', async (ev) => {
 });
 
 $('#settings-btn').addEventListener('click', openSettings);
+// History pager: "Newer" steps towards today (page 0), "Older" further back.
+$('#hp-newer').addEventListener('click', () => gotoHistoryPage(-1));
+$('#hp-older').addEventListener('click', () => gotoHistoryPage(+1));
+
+// Click-to-update from the version badge. Confirmed POST → the server only
+// drops a trigger file; a privileged systemd .path unit runs the actual
+// git pull + restart. The page will briefly disconnect when the service
+// restarts — that is expected and the status line already reflects it.
+let updateInFlight = false;
+async function triggerUpdate() {
+  if (updateInFlight) return;
+  const badge = $('#app-version');
+  const ok = window.confirm(
+    'Pull the latest version from origin/main and restart the service?\n\n'
+    + 'The page will reconnect automatically once the service is back. '
+    + 'Local config (observer / service.json) is preserved.',
+  );
+  if (!ok) return;
+  updateInFlight = true;
+  badge.classList.add('updating');
+  const prev = badge.textContent;
+  badge.textContent = 'updating…';
+  try {
+    const res = await fetch('/api/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    // Keep the "updating…" badge; pollState's disconnect handling takes
+    // over when the service restarts, then the version refreshes on its own.
+    if (body.pending) {
+      badge.textContent = prev;
+      badge.classList.remove('updating');
+    }
+  } catch (e) {
+    badge.textContent = prev;
+    badge.classList.remove('updating');
+    window.alert(`Update could not be started: ${e.message ?? e}`);
+  } finally {
+    updateInFlight = false;
+  }
+}
+$('#app-version').addEventListener('click', triggerUpdate);
+$('#app-version').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); triggerUpdate(); }
+});
 document.body.addEventListener('click', (ev) => {
   if (ev.target.closest('[data-close-settings="1"]')) closeSettings();
 });

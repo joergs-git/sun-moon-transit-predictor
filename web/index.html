@@ -9,7 +9,7 @@
 <body>
   <header>
     <div class="brand">
-      <h1>Sun-Moon Transit Predictor</h1>
+      <h1>Sun-Moon Transit Predictor <span class="app-version" id="app-version" role="button" tabindex="0" title="Running build version. Click to pull origin/main and restart the service (no SSH needed).">v—</span></h1>
       <div class="identity">
         <span>© <span id="copyright-year">2026</span> joergsflow</span>
         <span class="sep">·</span>
@@ -97,6 +97,11 @@
           <span class="funnel-track"><span class="funnel-bar fb-near" id="fb-near"></span></span>
           <span class="funnel-val" id="fv-near">—</span>
         </div>
+        <div class="funnel-row">
+          <span class="funnel-label" title="Tightest bucket — a sub-0.2° projected pass is a near-certain on-disc transit (Sun/Moon disc radius ≈ 0.27°).">&lt; 0.2°</span>
+          <span class="funnel-track"><span class="funnel-bar fb-vnear" id="fb-vnear"></span></span>
+          <span class="funnel-val" id="fv-vnear">—</span>
+        </div>
       </div>
     </section>
 
@@ -173,10 +178,19 @@
           <th title="Ground speed in km/h.">Speed<span class="th-sub">ground</span></th>
           <th title="Line-of-sight distance from the observer to the aircraft at closest approach.">Dist<span class="th-sub">at closest</span></th>
           <th title="Tightest angular separation observed across all stages of this transit (typically from the imminent stage's refined geometry).">Sep<span class="th-sub">tightest</span></th>
+          <th title="Approximate time for the object to sweep the FULL Sun/Moon disc, from ω ≈ ground speed / slant range. Hover a row for the sensor speed (mm/s) at the configured focal length.">Disc xing<span class="th-sub">full-disc time</span></th>
         </tr>
       </thead>
-      <tbody><tr class="empty"><td colspan="13">Loading…</td></tr></tbody>
+      <tbody><tr class="empty"><td colspan="14">Loading…</td></tr></tbody>
     </table>
+    <!-- History pager (v0.8.1). Page 1 = today + yesterday; older entries
+         are split into fixed 50-row pages so the table stays short. Pure
+         client-side over the rows already fetched — no extra API calls. -->
+    <div id="history-pager" class="history-pager" hidden>
+      <button type="button" class="btn pager-btn" id="hp-newer" title="Towards today">◀ Newer</button>
+      <span class="pager-info" id="hp-info">—</span>
+      <button type="button" class="btn pager-btn" id="hp-older" title="Further back">Older ▶</button>
+    </div>
   </section>
 
   <footer>

@@ -4,6 +4,14 @@
 
 import { promises as fsp, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { createRequire } from 'node:module';
+
+// Single source of truth for the running version — read from package.json so
+// the UI badge can never drift from the actual deployed build.
+const PKG_VERSION = (() => {
+  try { return createRequire(import.meta.url)('../package.json').version ?? null; }
+  catch { return null; }
+})();
 
 import { fetchAircraft } from './adsb.js';
 import { RouteLookup } from './adsbdb.js';
@@ -88,6 +96,16 @@ export const DEFAULT_CONFIG = {
   externalLinks: {
     dump1090Url: '',          // empty → frontend derives from window.location
   },
+  // Click-to-update from the version badge. The HTTP layer only ever drops
+  // `triggerPath` (no shell/sudo); a privileged systemd stp-update.path unit
+  // watches it and runs stp-update.service. Path sits under data/ which the
+  // service already has write access to. debounceMs swallows double-clicks
+  // and rapid LAN re-triggers. Set enabled:false to take the endpoint out.
+  update: {
+    enabled: true,
+    triggerPath: './data/update.request',
+    debounceMs: 30_000,
+  },
   routes: { enabled: true, ttlMs: 3600_000, negativeTtlMs: 300_000 },
   predictor: {
     enabled: true,
@@ -130,6 +148,7 @@ function mergeConfig(user) {
     server:    { ...DEFAULT_CONFIG.server,    ...(user.server    ?? {}) },
     store:     { ...DEFAULT_CONFIG.store,     ...(user.store     ?? {}) },
     routes:    { ...DEFAULT_CONFIG.routes,    ...(user.routes    ?? {}) },
+    update:    { ...DEFAULT_CONFIG.update,    ...(user.update    ?? {}) },
     predictor: { ...DEFAULT_CONFIG.predictor, ...(user.predictor ?? {}) },
     opensky:   { ...DEFAULT_CONFIG.opensky,   ...(user.opensky   ?? {}) },
     lifecycle: { ...DEFAULT_CONFIG.lifecycle, ...(user.lifecycle ?? {}) },
@@ -188,10 +207,12 @@ export async function runService({
   const detectedIcaos = new Set();
   const inBandIcaos = new Set();
   const nearIcaos = new Set();
+  const veryNearIcaos = new Set();
   const state_sinceMs = Date.now();
 
   const state = {
     observer,
+    version: PKG_VERSION,
     nowMs: Date.now(),
     lastUpdateMs: 0,
     aircraftCount: 0,
@@ -206,8 +227,8 @@ export async function runService({
     // learning": every unique airframe the receiver saw, how many ever
     // projected inside the panel band, and how many ever skimmed < 0.5°.
     detectStats: {
-      totalUnique: 0, inBand: 0, near: 0,
-      bandDeg: config.tracker.looseThresholdDeg, nearDeg: 0.5,
+      totalUnique: 0, inBand: 0, near: 0, veryNear: 0,
+      bandDeg: config.tracker.looseThresholdDeg, nearDeg: 0.5, veryNearDeg: 0.2,
       sinceMs: state_sinceMs,
     },
   };
@@ -500,6 +521,36 @@ export async function runService({
     return { ok: true, applied, warnings };
   }
 
+  // Click-to-update: drop a trigger file the privileged systemd
+  // stp-update.path unit watches. The HTTP layer never runs git/systemctl
+  // itself, so the unauthenticated LAN UI gains no shell. Debounced so a
+  // double-click (or two LAN clients) can't queue the updater twice.
+  let lastUpdateRequestMs = 0;
+  async function requestUpdate() {
+    if (!config.update?.enabled) {
+      return { ok: false, message: 'click-to-update is disabled (update.enabled=false in service.json)' };
+    }
+    const now = Date.now();
+    const debounce = config.update.debounceMs ?? 30_000;
+    if (now - lastUpdateRequestMs < debounce) {
+      return { ok: true, pending: true, message: 'Update already requested — the service will pull & restart shortly.' };
+    }
+    const p = config.update.triggerPath;
+    try {
+      const dir = dirname(p);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      await fsp.writeFile(p, JSON.stringify({ requestedAtMs: now }), 'utf8');
+      lastUpdateRequestMs = now;
+      logger.info?.(`update requested via web UI → wrote trigger ${p}`);
+      return {
+        ok: true, pending: false,
+        message: 'Update requested — the service will pull origin/main and restart in a moment.',
+      };
+    } catch (e) {
+      return { ok: false, message: describeFsError(e, p) };
+    }
+  }
+
   const httpServer = noServer ? null : createHttpServer({
     port: config.server.port,
     host: config.server.host,
@@ -508,6 +559,7 @@ export async function runService({
     webRoot: config.webRoot,
     getConfig: () => publicConfig(),
     updateConfig: applyConfigUpdate,
+    requestUpdate,
   });
   if (httpServer) await httpServer.start();
 
@@ -557,13 +609,16 @@ export async function runService({
       if (!c.icao || !Number.isFinite(c.closestApproachSepDeg)) continue;
       if (c.closestApproachSepDeg < config.tracker.looseThresholdDeg) inBandIcaos.add(c.icao);
       if (c.closestApproachSepDeg < 0.5) nearIcaos.add(c.icao);
+      if (c.closestApproachSepDeg < 0.2) veryNearIcaos.add(c.icao);
     }
     state.detectStats = {
       totalUnique: detectedIcaos.size,
       inBand: inBandIcaos.size,
       near: nearIcaos.size,
+      veryNear: veryNearIcaos.size,
       bandDeg: config.tracker.looseThresholdDeg,
       nearDeg: 0.5,
+      veryNearDeg: 0.2,
       sinceMs: state_sinceMs,
     };
 

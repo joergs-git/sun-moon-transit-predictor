@@ -81,10 +81,14 @@ async function readJsonBody(req, maxBytes = 64 * 1024) {
  *   webRoot: string,
  *   getConfig?: () => object,
  *   updateConfig?: (patch: object) => Promise<{ ok: boolean, applied: object, warnings?: string[] }>,
+ *   requestUpdate?: () => Promise<{ ok: boolean, pending?: boolean, message?: string }>,
  * }} opts
  */
 export function createHttpServer(opts) {
-  const { port, host = '0.0.0.0', getState, store, webRoot, getConfig, updateConfig } = opts;
+  const {
+    port, host = '0.0.0.0', getState, store, webRoot,
+    getConfig, updateConfig, requestUpdate,
+  } = opts;
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
@@ -106,6 +110,29 @@ export function createHttpServer(opts) {
           return jsonResponse(res, 200, result);
         } catch (e) {
           return jsonResponse(res, 400, { error: String(e?.message ?? e) });
+        }
+      }
+      if (url.pathname === '/api/update' && req.method === 'POST') {
+        // Click-to-update from the version badge. This endpoint deliberately
+        // does NOT run git/systemctl itself — it only drops a trigger file
+        // (see service.js → requestUpdate). A privileged systemd .path unit
+        // observes that file and runs the existing stp-update.service with
+        // the right permissions, so the unauthenticated LAN HTTP layer never
+        // gains shell/sudo. requestJsonBody is required (so a cross-site
+        // form/`fetch` without the JSON content-type can't drive-by trigger
+        // it — that request would need a CORS preflight this server ignores).
+        if (!requestUpdate) return jsonResponse(res, 404, { error: 'update api disabled' });
+        let body;
+        try { body = await readJsonBody(req); }
+        catch (e) { return jsonResponse(res, 400, { error: `bad json: ${e.message}` }); }
+        if (body?.confirm !== true) {
+          return jsonResponse(res, 400, { error: 'confirmation required ({ "confirm": true })' });
+        }
+        try {
+          const result = await requestUpdate();
+          return jsonResponse(res, 200, result);
+        } catch (e) {
+          return jsonResponse(res, 500, { error: String(e?.message ?? e) });
         }
       }
       if (url.pathname === '/api/history') {
