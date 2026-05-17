@@ -311,11 +311,36 @@ export function buildSketchSvg(d) {
   // popup reflects the new rig without page reload.
   const fovWDeg = fovDeg(OPTICS.TELESCOPE_FOCAL_MM, OPTICS.SENSOR_W_MM);
   const fovHDeg = fovDeg(OPTICS.TELESCOPE_FOCAL_MM, OPTICS.SENSOR_H_MM);
+  const refEl = d.bodyAt.el;
   const innerW = SVG_W - 2 * PAD;
   const innerH = SVG_H - HEADER_H - FOOTER_H - 2 * PAD;
-  const pxPerDegW = innerW / fovWDeg;
-  const pxPerDegH = innerH / fovHDeg;
-  const pxPerDeg = Math.min(pxPerDegW, pxPerDegH);
+
+  // Closest-approach offset of the aircraft from the body centre, in
+  // degrees (≈ sepDeg). Prefer the refined t=0 path sample; fall back to
+  // the aircraftAt/bodyAt deltas when there is no path.
+  const mid0 = (d.transitPath ?? []).find(p => p.tOffsetMs === 0);
+  const off0 = mid0
+    ? relOffsetDeg(mid0, refEl)
+    : {
+      dx: (d.aircraftAt.az - d.bodyAt.az) * Math.cos(refEl * DEG),
+      dy: d.aircraftAt.el - d.bodyAt.el,
+    };
+  const anchorRDeg = Math.hypot(off0.dx, off0.dy);
+
+  // Scale that fills the inner box at the true optical FOV.
+  const fitScale = Math.min(innerW / fovWDeg, innerH / fovHDeg);
+  // Auto zoom-out: when the closest approach falls outside the drawn FOV
+  // box, shrink the WHOLE sketch (FOV rect + disc + path) so the aircraft
+  // still fits — a true-to-scale feel of how far it was from the field of
+  // view. Otherwise keep the optical scale (the aircraft is in-frame).
+  const innerHalf = Math.min(innerW, innerH) / 2;
+  let pxPerDeg = fitScale;
+  let zoomedOut = false;
+  if (anchorRDeg * fitScale > innerHalf * 0.90) {
+    pxPerDeg = (innerHalf * 0.80) / Math.max(anchorRDeg, 1e-6);
+    zoomedOut = true;
+  }
+
   const fovPxW = fovWDeg * pxPerDeg;
   const fovPxH = fovHDeg * pxPerDeg;
   const fovX = (SVG_W - fovPxW) / 2;
@@ -334,7 +359,6 @@ export function buildSketchSvg(d) {
   // tracking-mount eyepiece where the disc stays centred. Each point carries
   // its angular offset (degOff) so we can drop the wild-distance samples
   // that older recordings produced — see the visibility filter below.
-  const refEl = d.bodyAt.el;
   const pathPts = (d.transitPath ?? []).map(p => {
     const { dx, dy } = relOffsetDeg(p, refEl);
     return {
@@ -352,8 +376,12 @@ export function buildSketchSvg(d) {
   // recordings (dense ±5 s) this drops only the farthest tail samples, for
   // old recordings it leaves at most the t=0 sample (which is by definition
   // at sep < 1°) so no misleading polyline is drawn at all.
-  const fovDiagDeg = Math.hypot(fovWDeg, fovHDeg);
-  const visiblePathPts = pathPts.filter(p => p.degOff <= 2 * fovDiagDeg);
+  // Keep path samples that fall inside the actually-drawn area (half its
+  // diagonal, in degrees, at the current scale). Scale-correct for both
+  // the normal optical view AND the zoomed-out view, and still drops the
+  // wild ±60 s tails of pre-v0.7.6 recordings.
+  const viewMaxDeg = Math.hypot(innerW, innerH) / pxPerDeg / 2;
+  const visiblePathPts = pathPts.filter(p => p.degOff <= viewMaxDeg);
 
   // Aircraft anchor point at closest approach. Prefer the tOffsetMs=0 path
   // sample (computed at the refined closest time) so it lands on the line.
@@ -399,6 +427,15 @@ export function buildSketchSvg(d) {
   const fovRect =
     `<rect x="${fovX}" y="${fovY}" width="${fovPxW}" height="${fovPxH}" ` +
     `fill="${COLOURS.fovFill}" stroke="${COLOURS.fovStroke}" stroke-width="1" rx="2"/>`;
+
+  // When auto-zoomed, tell the user the scale changed and by how much, so
+  // the tiny FOV box + disc are read as "this far outside the frame".
+  const zoomNote = zoomedOut
+    ? txt(SVG_W / 2, HEADER_H + 12,
+      `⤢ zoomed out · aircraft ${fmtSepArcmin(d.sepDeg)} from disc — `
+      + `FOV ${fovWDeg.toFixed(2)}°×${fovHDeg.toFixed(2)}° box & disc shown to scale`,
+      { fill: COLOURS.label, size: 10, anchor: 'middle' })
+    : '';
 
   // Axis crosshair through the body centre — subtle, helps eye lock to the
   // disc when the aircraft passes off-centre.
@@ -470,6 +507,7 @@ export function buildSketchSvg(d) {
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SVG_W} ${SVG_H}" width="${SVG_W}" height="${SVG_H}">` +
     header +
+    zoomNote +
     fovRect +
     cross +
     bodyDisc +
