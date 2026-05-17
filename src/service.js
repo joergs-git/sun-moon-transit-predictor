@@ -123,6 +123,13 @@ export const DEFAULT_CONFIG = {
     // returns at the FIRST pass it finds, so a 30-day cap just means "tell me
     // the next one even if it's weeks out" without scanning 30 days.
     visibleHorizonMs: 30 * 24 * 3600_000,
+    // Only feed an ISS transit to the notifier + History once it is this
+    // close. SGP4+TLE drifts ~1–3 km/day cross-track; the transit centre
+    // line is a few km wide, so a prediction >~3 days out is noise that
+    // appears/vanishes with every daily TLE refresh. Beyond this the
+    // Sky-now line still PREVIEWS the soonest predicted transit, flagged
+    // "tentative" — it just won't push/log a phantom.
+    notifyWithinMs: 3 * 24 * 3600_000,   // 72 h
     recomputeMs: 600_000,       // re-scan every 10 min
     thresholdDeg: 0.3,          // tight → candidate
     looseThresholdDeg: 1.0,     // surface approaches up to here
@@ -750,32 +757,39 @@ export async function runService({
       ? (nowMs / 86400000 + 2440587.5 - issTle.satrec.jdsatepoch)
       : null;
     const nextTransit = issEvents.find(e => e.closestApproachAtMs >= nowMs) ?? null;
+    const notifyWithinMs = config.iss.notifyWithinMs ?? 3 * 24 * 3600_000;
     state.iss = {
       active: Boolean(issTle),
       name: issTle?.name ?? null,
       tleAgeDays: issTleAgeDays != null ? Math.round(issTleAgeDays * 10) / 10 : null,
       upcoming: issEvents.length,
       nextAtMs: nextTransit?.closestApproachAtMs ?? null,
-      // Full next-transit summary so Sky-now can show body + separation even
-      // when it is weeks out; horizonDays lets the UI say "none in N days".
+      // Full next-transit summary so Sky-now can preview body + separation
+      // even when it is weeks out. `tentative` = beyond the trustworthy
+      // notify window: SGP4+TLE that far out is noise that shifts with
+      // every daily TLE refresh, so we show it but do NOT push/log it.
       nextTransit: nextTransit
         ? {
           atMs: nextTransit.closestApproachAtMs,
           body: nextTransit.body,
           sepDeg: nextTransit.closestApproachSepDeg,
           level: nextTransit.level,
+          tentative: (nextTransit.closestApproachAtMs - nowMs) > notifyWithinMs,
         }
         : null,
       horizonDays: Math.round((config.iss.horizonMs / 86400000) * 10) / 10,
+      notifyWithinDays: Math.round((notifyWithinMs / 86400000) * 10) / 10,
       visiblePass: issVisiblePass,
     };
 
-    // Surface ISS events that are upcoming (or just passed, so the row can
-    // still flash 'imminent' for a moment). The notifier (below) handles
-    // both the Pushover and the History row(s) for these, exactly like an
-    // aircraft candidate — one code path, automatic episode consolidation.
+    // Feed the lifecycle + notifier only the ISS transits that are close
+    // enough to be trustworthy (≤ notifyWithinMs). Beyond that a far-future
+    // SGP4 prediction would push a Pushover + write a History row that the
+    // next daily TLE makes vanish ("phantom transit" / surprise-stat noise)
+    // — the Sky-now line still previews it, flagged tentative.
     const issForLifecycle = issEvents.filter(
-      ev => ev.closestApproachAtMs >= nowMs - config.lifecycle.imminentWindowMs,
+      ev => ev.closestApproachAtMs >= nowMs - config.lifecycle.imminentWindowMs
+        && (ev.closestApproachAtMs - nowMs) <= notifyWithinMs,
     );
 
     // Unified lifecycle state — merges live tracker + watchlist + previous

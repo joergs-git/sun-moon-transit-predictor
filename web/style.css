@@ -653,6 +653,7 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
 .iss-pass b { color: #7fb0ff; }
 .iss-pass-2 { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(74, 144, 255, 0.22); }
 .iss-pass code { font-size: 11px; opacity: 0.9; }
+.iss-tentative { color: var(--muted); font-style: italic; font-size: 11px; }
 
 /* Click-to-update status line (v0.10.1). Sits under the title; honest
    feedback so a requested-but-not-consumed update is never silent. */

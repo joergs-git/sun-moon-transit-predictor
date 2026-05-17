@@ -291,6 +291,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M28 (v0.10.6) | Docs: validated **Raspberry Pi OS Lite (Legacy, 64-bit)** as the known-good image (exact Imager path; current/Bookworm caused dependency trouble) + a copy-paste, no-experiments **ADS-B receiver setup** for dump1090-fa with the AirNav FlightStick (FlightAware apt repo + DVB-T blacklist + verify); `--with-dump1090` aligned to the same reliable steps | done |
 | M29 (v0.10.7) | Install fixes from on-Pi testing: manual path now installs `git` first (absent on Pi OS Lite); FlightAware repo package bumped `1.2 → 1.3` (the 1.2 URL 404s) in the README + `bootstrap-pi5.sh`, with a version-drift note | done |
 | M30 (v0.10.8) | Docs: `rbfeeder`/AirNav-RadarBox sharing-key sidenote + MLAT explainer in the ADS-B section (independent of the predictor; same WGS84 location) | done |
+| M31 (v0.10.9) | ISS transits only push/log within `iss.notifyWithinMs` (default 72 h) — far-future SGP4 is noise that flips with each daily TLE, so this kills phantom-transit Pushover spam + "surprise" stat pollution; Sky-now still previews the soonest, flagged "tentative". README "Good to know" facts: ISS prediction reliability + observer coordinate/elevation pitfalls | done |
 
 ## Hardware + software bill of materials
 
@@ -746,6 +747,57 @@ small station glyph instead of an aircraft silhouette in the sketch).
   signal and therefore *exclude* ISS rows (a deliberately-hunted orbital
   event would otherwise skew them); the ISS still appears in the History
   table itself.
+
+### Good to know — ISS transit prediction is only reliable a few days out
+
+SGP4 propagated from a TLE drifts roughly **1–3 km/day cross-track** (more
+after a reboost). The ISS transit *centre line* is only a few km wide and
+the Sun/Moon disc is 0.5°, so a transit predicted **> ~3 days** ahead is
+essentially noise: it appears, then **vanishes after the next daily TLE
+refresh** (and a different phantom may appear). This is physics, not a bug.
+
+Consequences in this tool (v0.10.9+):
+
+* A transit only fires **Pushover** and gets a **History** row once it is
+  within `iss.notifyWithinMs` (default **3 days / 72 h**) — close enough
+  that SGP4+TLE is trustworthy. This stops phantom-transit alert spam and
+  the "⚡ surprise" pollution it caused in the learning stats.
+* The Sky-now **"Next ISS Sun/Moon transit"** line still *previews* the
+  soonest predicted transit even weeks out, but anything beyond the notify
+  window is shown **flagged "tentative — refines with each daily TLE"**.
+  So Sky-now saying "none in the next N days" while an old, now-stale row
+  sits in History is expected — they reflect *different TLEs* at different
+  times, each correct for its own.
+* **Visible passes** (the other Sky-now line) are unaffected — they recur
+  ~daily and the *next* one is near, so it stays accurate.
+* Want it sooner/later anyway? Tune `iss.notifyWithinMs` in
+  `config/service.json`. Reliable horizon for sub-disc accuracy is roughly
+  **≤ 48–72 h**; keep the TLE fresh (the daily `stp-tle.timer`).
+
+### Good to know — observer coordinates & elevation
+
+* `latitudeDeg` / `longitudeDeg` are **decimal degrees, WGS84** (e.g.
+  `52.2870`, `7.4223`). There is **no aviation-vs-astronomy datum
+  difference** — ADS-B, AirNav and this tool all use WGS84. The same point
+  just has several notations; mixing them up is the usual confusion:
+  * `52°17'13.7"N` = degrees-minutes-**seconds** → `52 + 17/60 + 13.7/3600`
+    = **52.2871°** decimal.
+  * `52.1714` is **not** decimal degrees — it is the packed
+    aviation/NMEA "degrees + decimal-minutes" form (`52°17.14'`) ≈
+    **52.2857°**. Putting that into `latitudeDeg` lands you ~13 km off.
+  Use the **decimal** form (your phone GPS / Google-Maps right-click at the
+  antenna gives it directly), and use the **same** value for the rbfeeder
+  /AirNav station so the feed and the predictor agree.
+* `elevationM` is the **WGS84 ellipsoidal height of your site** — in
+  practice your local **height above sea level is fine** (the geometry is
+  robust to a few tens of metres of observer height). It is **not** "height
+  above ground" and **not** the antenna's height over the roof — just the
+  site elevation (Rheine ≈ 40–50 m), never `0`.
+* `geoidUndulationM` is a *separate* field: EGM2008 N at the site (Rheine
+  ≈ **+46 m**). It only corrects aircraft *barometric* altitude (≈ MSL) to
+  ellipsoidal before the geometric comparison — it is **not** applied to
+  your own elevation. Set it (~46 for Rheine) for the best aircraft-
+  altitude accuracy; `0` is tolerable.
 
 ## Where files live
 
