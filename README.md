@@ -286,6 +286,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M23 (v0.10.1) | Click-to-update no longer fails silently: server self-diagnostic (`state.update`: pending → consumed → stuck), honest UI status line, `ok:false` surfaced; `auto-update.sh` warns when `stp-update.path` is missing; troubleshooting docs (the missing-watcher root cause on Pis upgraded from < v0.8.1) | done |
 | M24 (v0.10.2) | Fixed badge stuck on "updating…" forever (a consumed-but-no-restart / no-op update never cleared, survived refresh): server auto-clears `consumed`→idle after 20 s and `stuck`→idle after 10 min (cleaning the stale trigger); frontend state machine always restores the version badge. Sky-now now shows the next visible ISS pass **and** the next Sun/Moon transit even weeks out (with date), via a 30-day visible-pass horizon (early-return, cheap) and a 14-day transit horizon | done |
 | M25 (v0.10.3) | "No ISS info" out of the box fixed: `install-pi5.sh` now does an initial TLE fetch and installs a daily `stp-tle.timer` + `stp-tle.service` (the running service still never fetches — offline by default) so `data/iss.tle` exists and stays fresh automatically | done |
+| M26 (v0.10.4) | ISS rows in Live-Tracking + History recoloured **blue** (was cyan) for an unambiguous identity, matched by the Sky-now ISS line; ISS rows show the 🛰 satellite symbol in the status cell instead of the ✈️ aircraft glyph so they can't be mistaken for traffic | done |
 
 ## Hardware + software bill of materials
 

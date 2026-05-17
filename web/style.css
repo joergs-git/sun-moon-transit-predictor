@@ -211,21 +211,17 @@ tr.row-imminent  { background: rgba(240, 160, 32, 0.08); }
 tr.row-candidate { background: rgba(95, 208, 127, 0.04); }
 tr.row-stale td  { color: var(--muted); }
 
-/* ISS rows (SGP4, not ADS-B) — a distinct cyan identity + left marker so a
-   space-station pass never reads as just another aircraft. The tint wins
-   over the status tint above via source order; near-hit magenta still
-   overrides it (an actual ISS disc graze is the headline event). */
-tr.row-iss td { background: rgba(80, 200, 230, 0.10); }
-tr.row-iss td:first-child { box-shadow: inset 3px 0 0 #50c8e6; }
-/* History "Flight" cell carries the 🛰 ISS tag — it now sits at column 12
-   after the v0.9.1 reorder (icon, Transit, Recorded, Lead, Sep, Dist, Xing,
-   Speed, Alt, Stage, Outcome, Flight, ICAO, Route). Tracking is unchanged
-   (Flight is its 5th column) so keep both. */
-/* History "Flight" cell is column 12; Tracking "Flight" is column 9 after
-   the v0.10.0 reorder (icon, Status, ETA, Time, Sep, Dist, Speed, Alt,
-   Flight, ICAO, Route). The 🛰 ISS tag lives there in both. */
-#history tr.row-iss td:nth-child(12) { color: #8fe3f5; font-weight: 600; }
-#tracking tr.row-iss td:nth-child(9) { color: #8fe3f5; font-weight: 600; }
+/* ISS rows (SGP4, not ADS-B) — a distinct BLUE identity + left marker so a
+   space-station pass never reads as just another aircraft (the status cell
+   also uses 🛰 instead of ✈️, set in app.js). The tint wins over the
+   status tint via source order; near-hit magenta still overrides it (an
+   actual ISS disc graze is the headline event). */
+tr.row-iss td { background: rgba(74, 144, 255, 0.15); }
+tr.row-iss td:first-child { box-shadow: inset 3px 0 0 #4a90ff; }
+/* The 🛰 ISS tag sits in the Flight cell: History column 12, Tracking
+   column 9 (after the v0.10.0 reorders) — emphasise it in both. */
+#history tr.row-iss td:nth-child(12) { color: #7fb0ff; font-weight: 600; }
+#tracking tr.row-iss td:nth-child(9) { color: #7fb0ff; font-weight: 600; }
 
 /* Narrow leading Sun/Moon icon column (replaces the Body text column in
    both tables — the glyph carries the same info in far less width). */
@@ -649,13 +645,13 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
   padding: 6px 8px;
   font-size: 12px;
   line-height: 1.4;
-  color: #cdeefb;
-  background: rgba(80, 200, 230, 0.10);
-  border: 1px solid rgba(80, 200, 230, 0.30);
+  color: #d4e4ff;
+  background: rgba(74, 144, 255, 0.13);
+  border: 1px solid rgba(74, 144, 255, 0.32);
   border-radius: 4px;
 }
-.iss-pass b { color: #8fe3f5; }
-.iss-pass-2 { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(80, 200, 230, 0.20); }
+.iss-pass b { color: #7fb0ff; }
+.iss-pass-2 { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(74, 144, 255, 0.22); }
 .iss-pass code { font-size: 11px; opacity: 0.9; }
 
 /* Click-to-update status line (v0.10.1). Sits under the title; honest

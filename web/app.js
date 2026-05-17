@@ -159,7 +159,11 @@ function renderTracking(state) {
     tr.className = `row-${e.status} sketchable${nearHit ? ' near-hit' : ''}${iss ? ' row-iss' : ''}`;
     tr.dataset.source = 'live';
     tr.dataset.index = String(i);
-    const meta = STATUS_LABELS[e.status] ?? { icon: '', label: e.status };
+    const baseMeta = STATUS_LABELS[e.status] ?? { icon: '', label: e.status };
+    // ISS rows never show the ✈️ (candidate) glyph — that confuses users
+    // into thinking it's an aircraft. Use the 🛰 satellite symbol for the
+    // status icon regardless of stage; the label text still says the stage.
+    const meta = iss ? { icon: '🛰', label: baseMeta.label } : baseMeta;
     const eta = e.etaMs > 0 ? fmtCountdownLong(e.etaMs)
               : Math.abs(e.etaMs) < 60_000 ? 'now'
               : `−${fmtCountdownLong(-e.etaMs)}`;
