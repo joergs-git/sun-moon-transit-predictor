@@ -61,7 +61,7 @@ sudo_run apt-get install -y git curl ca-certificates
 # ---------------------------------------------------------------------------
 if [ "$WITH_DUMP1090" -eq 1 ]; then
   log "Installing dump1090-fa via the FlightAware apt repository ..."
-  if curl -fsSL https://www.flightaware.com/adsb/piaware/files/packages/pool/piaware/f/flightaware-apt-repository/flightaware-apt-repository_1.2_all.deb -o /tmp/fa-repo.deb; then
+  if curl -fsSL https://www.flightaware.com/adsb/piaware/files/packages/pool/piaware/f/flightaware-apt-repository/flightaware-apt-repository_1.3_all.deb -o /tmp/fa-repo.deb; then
     sudo_run dpkg -i /tmp/fa-repo.deb || true
     sudo_run apt-get update || true
     if sudo_run apt-get install -y dump1090-fa; then

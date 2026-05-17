@@ -289,6 +289,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M26 (v0.10.4) | ISS rows in Live-Tracking + History recoloured **blue** (was cyan) for an unambiguous identity, matched by the Sky-now ISS line; ISS rows show the 🛰 satellite symbol in the status cell instead of the ✈️ aircraft glyph so they can't be mistaken for traffic | done |
 | M27 (v0.10.5) | `bootstrap-pi5.sh` bare-image one-liner (apt deps → clone → install-pi5.sh, args/env forwarded); fixed `install-pi5.sh` writing a stale `service.json` (it pinned old `horizonS:300` / `looseThresholdDeg:5` / `staleGraceMs:0` / `maxEntries:20` and omitted `iss`/`update`) — fresh installs now get the current defaults + explicit ISS config | done |
 | M28 (v0.10.6) | Docs: validated **Raspberry Pi OS Lite (Legacy, 64-bit)** as the known-good image (exact Imager path; current/Bookworm caused dependency trouble) + a copy-paste, no-experiments **ADS-B receiver setup** for dump1090-fa with the AirNav FlightStick (FlightAware apt repo + DVB-T blacklist + verify); `--with-dump1090` aligned to the same reliable steps | done |
+| M29 (v0.10.7) | Install fixes from on-Pi testing: manual path now installs `git` first (absent on Pi OS Lite); FlightAware repo package bumped `1.2 → 1.3` (the 1.2 URL 404s) in the README + `bootstrap-pi5.sh`, with a version-drift note | done |
 
 ## Hardware + software bill of materials
 
@@ -326,6 +327,7 @@ is the host computer it runs on.
 | **Raspberry Pi OS Lite, 64-bit — *Legacy* (Bullseye)** | **Use the Legacy image.** In Raspberry Pi Imager: *Choose OS → Raspberry Pi OS (other) → "Raspberry Pi OS Lite (Legacy, 64-bit)"*. This is the **known-good** image — the current (Bookworm) Lite image caused dependency/version trouble with the ADS-B + Node stack during bring-up. Set hostname, SSH key and Wi-Fi in the Imager's "Edit Settings" before flashing for a zero-touch first boot. |
 | **`dump1090-fa`** (FlightAware) | The ADS-B decoder for the RTL-SDR / AirNav FlightStick — exposes `aircraft.json` on `http://localhost:8080/data/aircraft.json` (polled every 2 s). **Not** in the default repos; install per the copy-paste **[ADS-B receiver setup](#ads-b-receiver-setup-dump1090-fa--airnav-flightstick)** below (or `bootstrap-pi5.sh --with-dump1090`). |
 | **Node.js 22+** | Runtime. Pulled from NodeSource by the installer if absent. Needs `--experimental-sqlite` on Node 22; stable on Node 24+. |
+| **`git`** | Not on a fresh Pi OS Lite image — `sudo apt-get install -y git` first (the `bootstrap-pi5.sh` one-liner does this for you). |
 | **This repo** (`sun-moon-transit-predictor`) | `git clone https://github.com/joergs-git/sun-moon-transit-predictor.git` — contains `bin/stp.js`, the systemd units in `systemd/`, the install + auto-update scripts in `scripts/`, the web UI in `web/`. |
 
 ### Optional external services
@@ -345,10 +347,14 @@ FlightStick into a **USB-2** port (USB-3 ports are RF-noisy at 1090 MHz),
 antenna attached, then:
 
 ```bash
-# 1. FlightAware apt repo + the decoder (pulls in rtl-sdr automatically)
+# 1. FlightAware apt repo + the decoder (pulls in rtl-sdr automatically).
+#    NOTE: the repo-package version (here 1.3) bumps occasionally — if this
+#    404s, check the directory listing at
+#    https://www.flightaware.com/adsb/piaware/files/packages/pool/piaware/f/flightaware-apt-repository/
+#    or use the official installer: flightaware.com/adsb/piaware/install
 sudo apt-get update
 wget -O /tmp/fa-repo.deb \
-  https://www.flightaware.com/adsb/piaware/files/packages/pool/piaware/f/flightaware-apt-repository/flightaware-apt-repository_1.2_all.deb
+  https://www.flightaware.com/adsb/piaware/files/packages/pool/piaware/f/flightaware-apt-repository/flightaware-apt-repository_1.3_all.deb
 sudo dpkg -i /tmp/fa-repo.deb && rm /tmp/fa-repo.deb
 sudo apt-get update
 sudo apt-get install -y dump1090-fa
@@ -403,9 +409,14 @@ FlightAware apt repo). Pass `--with-dump1090` for a best-effort apt
 attempt, otherwise install it per `flightaware.com/adsb/piaware/install`.
 Without an ADS-B feed the predictor has no aircraft to track.
 
-### Already have the repo
+### Manual install (no bootstrap)
+
+Raspberry Pi OS Lite has **no `git`** out of the box — install it first
+(the bootstrap one-liner above does this for you):
 
 ```bash
+sudo apt-get update
+sudo apt-get install -y git
 git clone https://github.com/joergs-git/sun-moon-transit-predictor.git
 cd sun-moon-transit-predictor
 bash scripts/install-pi5.sh
