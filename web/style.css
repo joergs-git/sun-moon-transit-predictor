@@ -613,6 +613,9 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
   border-radius: 4px;
   font-size: 12px;
 }
+/* Offline mini-map under the specs — SVG scales to the pane width. */
+.fov-map { margin-top: 8px; }
+.fov-map svg { display: block; width: 100%; height: auto; }
 .spec-head {
   font-weight: 600;
   color: var(--fg);

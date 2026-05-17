@@ -1,5 +1,6 @@
 import {
-  buildSketchSvg, fromHistoryRow, fromLifecycleEntry, setOptics, SKETCH_GEOMETRY,
+  buildSketchSvg, buildMiniMapSvg, fromHistoryRow, fromLifecycleEntry,
+  setOptics, SKETCH_GEOMETRY,
 } from './sketch.js';
 import { resolveAircraftType, designAgePhrase, klassLabel } from './aircraft-types.js';
 
@@ -20,6 +21,7 @@ const $ = (sel) => document.querySelector(sel);
 let lastLifecycle = [];
 let lastHistory = [];
 let lastVersion = null;   // last server-reported version (for badge restore)
+let lastObserver = null;  // {latitudeDeg,longitudeDeg} — for the mini-map
 let historyPage = 0;   // 0 = today+yesterday; ≥1 = older, HISTORY_PAGE_SIZE/page
 
 function fmtCountdown(ms) {
@@ -434,6 +436,7 @@ async function pollState() {
     if (state.update) renderUpdateStatus(state.update);
     else setBadgeVersion();
     if (state.observer) {
+      lastObserver = state.observer;
       $('#observer').textContent =
         `Observer ${state.observer.name ?? ''} ` +
         `(${state.observer.latitudeDeg.toFixed(4)}°, ${state.observer.longitudeDeg.toFixed(4)}°, ` +
@@ -610,19 +613,62 @@ function describeEntry(entry) {
 // payload.candidate.aircraft (history). We only need the identifying bits;
 // web/aircraft-types.js turns the ICAO type code into nominal dimensions
 // offline (no network, no photos).
+function acGeo(a, isISS) {
+  // Aircraft lat/lon/track for the offline mini-map. Not meaningful for the
+  // ISS (orbital) — the map is suppressed there.
+  if (isISS || !a || !Number.isFinite(a.lat) || !Number.isFinite(a.lon)) return {};
+  return {
+    lat: a.lat, lon: a.lon,
+    trackDeg: Number.isFinite(a.trackDeg) ? a.trackDeg : null,
+  };
+}
 function acMetaFromLifecycle(entry) {
   const a = entry?.candidate?.aircraft;
   if (!a) return null;
-  return { typeCode: a.typeCode ?? null, registration: a.registration ?? null,
-           typeDesc: a.typeDesc ?? null, icao: entry.icao ?? a.icao ?? null };
+  return {
+    typeCode: a.typeCode ?? null, registration: a.registration ?? null,
+    typeDesc: a.typeDesc ?? null, icao: entry.icao ?? a.icao ?? null,
+    rangeM: entry?.candidate?.aircraftAtClosest?.rangeM ?? null,
+    isISS: entry.isISS === true || entry.icao === 'ISS',
+    ...acGeo(a, entry.isISS === true || entry.icao === 'ISS'),
+  };
 }
 function acMetaFromHistory(row) {
   const a = row?.payload?.candidate?.aircraft;
-  return { typeCode: a?.typeCode ?? null, registration: a?.registration ?? null,
-           typeDesc: a?.typeDesc ?? null, icao: row?.icao ?? a?.icao ?? null };
+  const iss = row?.icao === 'ISS';
+  return {
+    typeCode: a?.typeCode ?? null, registration: a?.registration ?? null,
+    typeDesc: a?.typeDesc ?? null, icao: row?.icao ?? a?.icao ?? null,
+    rangeM: row?.payload?.candidate?.aircraftAtClosest?.rangeM ?? row?.range_m ?? null,
+    isISS: iss,
+    ...acGeo(a, iss),
+  };
 }
 
 const fovSpecs = $('#fov-specs');
+const fovMap = $('#fov-map');
+
+// Offline plan-view mini-map under the FOV. Shown when we have the
+// observer + the aircraft's lat/lon (live row, or a recorded History
+// payload). Hidden for the ISS or when geometry is missing.
+function renderFovMap(meta) {
+  if (!fovMap) return;
+  const ok = meta && !meta.isISS && lastObserver
+    && Number.isFinite(meta.lat) && Number.isFinite(meta.lon)
+    && Number.isFinite(lastObserver.latitudeDeg)
+    && Number.isFinite(lastObserver.longitudeDeg);
+  if (!ok) { fovMap.hidden = true; fovMap.innerHTML = ''; return; }
+  fovMap.innerHTML = buildMiniMapSvg({
+    obsLat: lastObserver.latitudeDeg,
+    obsLon: lastObserver.longitudeDeg,
+    acLat: meta.lat,
+    acLon: meta.lon,
+    trackDeg: meta.trackDeg ?? null,
+    rangeM: meta.rangeM ?? null,
+    label: meta.registration ?? meta.icao ?? '',
+  });
+  fovMap.hidden = !fovMap.innerHTML;
+}
 
 function specRow(label, value) {
   return `<div class="spec-row"><span class="spec-k">${label}</span>`
@@ -682,16 +728,20 @@ function refreshFovPane() {
   if (pin) {
     renderFovSketch(pin.input, { pinned: true, label: pin.label });
     renderFovSpecs(pin.acMeta);
+    renderFovMap(pin.acMeta);
   } else if (auto) {
     renderFovSketch(fromLifecycleEntry(auto),
       { pinned: false, label: describeEntry(auto) });
-    renderFovSpecs(acMetaFromLifecycle(auto));
+    const m = acMetaFromLifecycle(auto);
+    renderFovSpecs(m);
+    renderFovMap(m);
   } else {
     renderFovEmpty(
       `No close approach right now (sep &lt; ${FOV_NEAR_DEG.toFixed(0)}°). ` +
       'Click any tracking or history row to pin a specific transit here.',
     );
     renderFovSpecs(null);
+    renderFovMap(null);
   }
   highlightPinnedRow();
 }

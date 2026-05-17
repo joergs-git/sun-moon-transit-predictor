@@ -519,6 +519,72 @@ export function buildSketchSvg(d) {
   );
 }
 
+/**
+ * Tiny offline plan-view map: observer at centre, aircraft at its real
+ * lat/lon, the sight line between them, a heading tick and range rings.
+ * Pure SVG from data we already have (dump1090 / recorded payload) — no
+ * tiles, no network, no API key. Returns '' when geometry is missing.
+ *
+ * @param {{ obsLat:number, obsLon:number, acLat:number, acLon:number,
+ *           trackDeg:number|null, rangeM:number|null, label:string }} m
+ */
+export function buildMiniMapSvg(m) {
+  if (!m || ![m.obsLat, m.obsLon, m.acLat, m.acLon].every(Number.isFinite)) return '';
+  const W = 260;
+  const H = 150;
+  const margin = 22;
+  // Local equirectangular metres relative to the observer (north up).
+  const mPerLat = 111320;
+  const mPerLon = 111320 * Math.cos(m.obsLat * DEG);
+  const E = (m.acLon - m.obsLon) * mPerLon;
+  const N = (m.acLat - m.obsLat) * mPerLat;
+  const distM = Number.isFinite(m.rangeM) ? m.rangeM : Math.hypot(E, N);
+  // Fit both points with headroom; floor so an overhead aircraft still maps.
+  const R = Math.max(Math.hypot(E, N) * 1.25, 1500);
+  const scale = (Math.min(W, H) / 2 - margin) / R;
+  const cx = W / 2;
+  const cy = H / 2;
+  const sx = cx + E * scale;
+  const sy = cy - N * scale;
+  const bearing = (Math.atan2(E, N) * RAD + 360) % 360;
+
+  // Range rings at R/2 and R, labelled in km.
+  const ring = (rad) =>
+    `<circle cx="${cx}" cy="${cy}" r="${(rad * scale).toFixed(1)}" fill="none" `
+    + `stroke="${COLOURS.axis}" stroke-width="0.5" stroke-dasharray="2 4"/>`
+    + txt(cx + 2, cy - rad * scale - 2, `${(rad / 1000).toFixed(0)} km`,
+      { fill: COLOURS.label, size: 9 });
+
+  // Heading tick (8 px) from the aircraft in its track direction.
+  let headSvg = '';
+  if (Number.isFinite(m.trackDeg)) {
+    const hx = sx + Math.sin(m.trackDeg * DEG) * 12;
+    const hy = sy - Math.cos(m.trackDeg * DEG) * 12;
+    headSvg = `<line x1="${sx.toFixed(1)}" y1="${sy.toFixed(1)}" `
+      + `x2="${hx.toFixed(1)}" y2="${hy.toFixed(1)}" stroke="${COLOURS.pathStroke}" stroke-width="1.5"/>`;
+  }
+
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">`
+    + `<rect x="0" y="0" width="${W}" height="${H}" fill="${COLOURS.fovFill}" stroke="${COLOURS.fovStroke}" stroke-width="1" rx="3"/>`
+    + ring(R) + ring(R / 2)
+    + txt(cx, 12, 'N ↑', { fill: COLOURS.label, size: 9, anchor: 'middle' })
+    // sight line observer → aircraft
+    + `<line x1="${cx}" y1="${cy}" x2="${sx.toFixed(1)}" y2="${sy.toFixed(1)}" `
+    + `stroke="${COLOURS.pathStroke}" stroke-width="1" stroke-dasharray="4 3" stroke-opacity="0.8"/>`
+    + headSvg
+    // observer marker
+    + `<circle cx="${cx}" cy="${cy}" r="3" fill="${COLOURS.SunRim}"/>`
+    + txt(cx + 6, cy + 11, 'you', { fill: COLOURS.label, size: 9 })
+    // aircraft marker
+    + `<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="3.2" fill="${COLOURS.ac}" stroke="${COLOURS.acStroke}" stroke-width="0.5"/>`
+    + txt(W - 4, H - 6,
+      `${m.label ?? ''} · ${(distM / 1000).toFixed(1)} km · brg ${bearing.toFixed(0)}°`,
+      { fill: COLOURS.label, size: 10, anchor: 'end' })
+    + `</svg>`
+  );
+}
+
 // Live snapshot of the optical setup. Reflects setOptics() calls. Not frozen
 // so tests / debug code can see the current values, but external code should
 // treat it as read-only — use setOptics() to mutate. FOV_*_DEG remain as
