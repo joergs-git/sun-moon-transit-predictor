@@ -78,4 +78,63 @@ describe('HTTP server', () => {
     const res = await fetch(`${baseUrl}/does-not-exist.txt`);
     expect(res.status).toBe(404);
   });
+
+  it('/api/update is 404 when requestUpdate is not wired', async () => {
+    const res = await fetch(`${baseUrl}/api/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true }),
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('HTTP server — /api/update gating', () => {
+  let srv;
+  let url;
+  let calls;
+
+  beforeAll(async () => {
+    calls = 0;
+    srv = createHttpServer({
+      port: 0,
+      host: '127.0.0.1',
+      getState: () => fakeState,
+      store,
+      webRoot: resolve(ROOT, 'web'),
+      requestUpdate: async () => { calls += 1; return { ok: true, pending: false, message: 'queued' }; },
+    });
+    const { port } = await srv.start();
+    url = `http://127.0.0.1:${port}`;
+  });
+
+  afterAll(async () => { if (srv) await srv.stop(); });
+
+  it('rejects an unconfirmed request and does not trigger', async () => {
+    const res = await fetch(`${url}/api/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+    expect(calls).toBe(0);
+  });
+
+  it('triggers exactly once on a confirmed request', async () => {
+    const res = await fetch(`${url}/api/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true }),
+    });
+    expect(res.ok).toBe(true);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(calls).toBe(1);
+  });
+
+  it('ignores a GET (POST-only endpoint)', async () => {
+    const res = await fetch(`${url}/api/update`);
+    expect(res.status).toBe(404);
+    expect(calls).toBe(1);
+  });
 });

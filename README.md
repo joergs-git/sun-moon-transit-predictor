@@ -264,6 +264,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M16 | Editable tracker panel band (default 2°), near-hit row highlight (sep&lt;0.5°), weekday+date in History, learning block moved under Sky now | done |
 | M17 | 15-min look-ahead default + episode-consolidated History (one row per transit with Lead-time column) + planned suppression for live ADS-B callsigns | done |
 | M18 (v0.8.0) | History logged at the panel band independent of the phone filter (true Lead time); lifecycle coasting through brief ADS-B gaps + 10-row panel / 30-min stale eviction; offline airframe spec block (ICAO type → real span/length, no network/photos) beside the FOV; session detection-funnel bar chart; "LIVE-TRACKING-SIGNALS" rename; green near-hit rows in History; column sub-labels | done |
+| M19 (v0.8.1) | History pager (page 1 = today + yesterday, older in 50-row pages); detection-funnel `< 0.2°` bar; "Sun/Moon below observable limit" banner; History "Disc xing" column (approx full-disc crossing time from ω ≈ ground speed / slant range); running-version badge with safe click-to-update (trigger file + systemd `stp-update.path`) | done |
 
 ## Hardware + software bill of materials
 
@@ -439,6 +440,30 @@ journalctl -u stp-update.service -n 50 --no-pager
 
 # turn the auto-updater off without touching the main service
 sudo systemctl disable --now stp-update.timer
+```
+
+### Click-to-update from the web UI (v0.8.1)
+
+The small version badge next to the page title is clickable. Clicking it
+(after a confirm dialog) makes the service **pull `origin/main` and restart**
+— no SSH needed.
+
+Security model — the unauthenticated LAN UI never gets a shell:
+
+* `POST /api/update` only **drops a trigger file** (`data/update.request`);
+  it runs no `git`/`systemctl`. A confirmed JSON body is required, which
+  also blocks naive cross-site drive-by triggering (the request needs a
+  CORS preflight this server does not answer).
+* A privileged **`stp-update.path`** systemd unit watches that file and
+  fires the same `stp-update.service` the nightly timer uses. The updater
+  deletes the trigger on start, so a single click can't loop it.
+* `update.debounceMs` (default 30 s) swallows double-clicks / two clients.
+* Take it out entirely with `"update": { "enabled": false }` in
+  `config/service.json`, or `sudo systemctl disable --now stp-update.path`.
+
+```bash
+# is the click-to-update watcher active?
+systemctl status stp-update.path --no-pager
 ```
 
 ### Manual update
