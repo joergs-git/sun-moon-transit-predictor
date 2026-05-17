@@ -36,6 +36,8 @@ SERVICE_FILE="/etc/systemd/system/stp.service"
 UPDATE_SERVICE_FILE="/etc/systemd/system/stp-update.service"
 UPDATE_TIMER_FILE="/etc/systemd/system/stp-update.timer"
 UPDATE_PATH_FILE="/etc/systemd/system/stp-update.path"
+TLE_SERVICE_FILE="/etc/systemd/system/stp-tle.service"
+TLE_TIMER_FILE="/etc/systemd/system/stp-tle.timer"
 SUDOERS_FILE="/etc/sudoers.d/stp-update"
 TARGET_USER="${SUDO_USER:-$USER}"
 
@@ -218,6 +220,31 @@ if [ "$ENABLE_AUTO_UPDATE" -eq 1 ]; then
   log "Click-to-update watcher enabled (stp-update.path → stp-update.service)."
 else
   log "Skipping auto-update timer (--no-auto-update). Existing timer (if any) is left untouched."
+fi
+
+# ---------------------------------------------------------------------------
+# 5b. ISS TLE refresh (daily timer + one initial fetch). Independent of
+#     --no-auto-update: the ISS feature is on by default and stays inactive
+#     ("no ISS info") until data/iss.tle exists. The running service never
+#     fetches; this timer is the only network touch for it.
+# ---------------------------------------------------------------------------
+log "Installing ISS TLE refresh timer ..."
+TMP_TLE_SVC="$(mktemp)"
+sed -e "s|__USER__|$TARGET_USER|g" \
+    -e "s|__INSTALL_DIR__|$REPO_DIR|g" \
+    "$REPO_DIR/systemd/stp-tle.service" > "$TMP_TLE_SVC"
+sudo_run install -m 0644 "$TMP_TLE_SVC"                   "$TLE_SERVICE_FILE"
+sudo_run install -m 0644 "$REPO_DIR/systemd/stp-tle.timer" "$TLE_TIMER_FILE"
+rm -f "$TMP_TLE_SVC"
+sudo_run systemctl daemon-reload
+sudo_run systemctl enable --now stp-tle.timer
+
+# One initial fetch so ISS info appears right after install. Best-effort —
+# a box with no network at install time just waits for the daily timer.
+if node "$REPO_DIR/scripts/refresh-tle.js" >/dev/null 2>&1; then
+  log "Initial ISS TLE fetched → data/iss.tle (ISS info will appear shortly)."
+else
+  log "Initial ISS TLE fetch skipped/failed (offline?) — the daily timer will retry."
 fi
 
 # ---------------------------------------------------------------------------
