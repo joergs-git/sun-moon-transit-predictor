@@ -18,9 +18,9 @@ T-minus alert once live ADS-B has nailed down the transit time.
                   aircraft.json    │ poll 2 s
                                    ▼
                             [stp service]
-                              tracker   → 60 s linear extrapolation
+                              tracker   → 900 s (15 min) linear extrapolation
                               geometry  → topocentric Az/El (Sun/Moon)
-                              notifier  → two-stage Pushover
+                              notifier  → 3-stage Pushover (radio→candidate→imminent)
                               store     → SQLite history
                               server    → /api/* + web UI on :8081
 ```
@@ -31,7 +31,7 @@ Every poll cycle (default every 2 s) the service answers one question:
 
 > *Which aircraft, currently visible to the local ADS-B receiver, will line
 > up between my observer location and the Sun or Moon disc within the next
-> 60 seconds — while that body sits more than 20° above the horizon?*
+> 900 seconds (15 min) — while that body sits more than 20° above the horizon?*
 
 1. **Sky position.** Topocentric Az/El of the Sun and Moon are computed for
    the configured observer (WGS84, refraction-corrected). Bodies below the
@@ -44,21 +44,29 @@ Every poll cycle (default every 2 s) the service answers one question:
    back-stamped onto the actual fix time, so the projection starts from when
    the position was sampled, not from "now".
 3. **Forward projection.** Position and velocity are linearly extrapolated
-   on the local tangent plane in 1 s steps across the next 60 s.
+   on the local tangent plane in 0.5 s steps across the next 900 s (15 min).
 4. **Separation test.** Great-circle angular separation between the
    predicted aircraft Az/El and the body's Az/El is computed at each step.
    When the *minimum* separation across the trajectory drops below
    `thresholdDeg` (default 0.3°; the Sun's disc is ~0.27° wide), the
    aircraft becomes a **transit candidate** with closest-approach time,
    minimum separation, and transit duration.
-5. **Two-stage notification.** An *early* Pushover fires the first time a
-   candidate is seen. A *precise* Pushover fires when the predicted closest
-   approach lands within ±30 s of `now` and live ADS-B has firmed up the
-   timing. Each pair is deduplicated per `(icao, body)`.
+5. **Three-stage pipeline.** Each match is classified by its projected
+   minimum separation and time-to-closest: **radio** (inside the wide
+   panel band, `looseThresholdDeg`, default 2° — early warning),
+   **candidate** (inside the tight band, `thresholdDeg`, default 0.3°)
+   and **imminent** (closest approach within ±30 s). A Pushover fires once
+   per stage, deduplicated per `(icao, body)`; the phone has its own
+   tighter filter (`pushover.radioThresholdDeg`, default 1°) so it stays
+   quiet on the widest band.
 
 The browser UI and the SQLite history give you the same view after the
-fact: every dispatched notification is logged with callsign, IATA flight,
-origin / destination, minimum separation, ETA, altitude, and ground speed.
+fact. Since v0.8.0 the History is logged at the full panel band
+**independent of the Pushover phone filter** — the early `radio` row is
+recorded even when the phone deliberately stays silent, so the `Lead`
+column (Transit − Recorded) reflects the true advance warning. Each row
+carries callsign, IATA flight, origin / destination, minimum separation,
+ETA, altitude and ground speed.
 
 **Headless on the Pi.** The detection loop runs inside `stp.service` on
 the Pi 24/7 — the polling interval, geometry, transit search, Pushover
@@ -88,19 +96,19 @@ The main heartbeat. Each pass executes the following in order:
 
 **a) Coarse Sun/Moon trajectory** — `tracker.js → sampleBodyTrajectory`. Az/El
 for each tracked body is computed across the next `horizonS` seconds
-(default 300 s = 5 min look-ahead) at `stepS` resolution (default 0.5 s),
-yielding **601 Az/El samples per body** per tick. Geometric (no refraction)
+(default 900 s = 15 min look-ahead) at `stepS` resolution (default 0.5 s),
+yielding **1801 Az/El samples per body** per tick. Geometric (no refraction)
 to match the aircraft side, which is also un-refracted.
 
 **b) Coarse aircraft route vector** — `tracker.js → extrapolate`. Each
 ADS-B contact is linearly extrapolated from `lat/lon/altMmsl` using
 `groundSpeedMs` + `trackDeg`, anchored at `receivedAtMs` (the actual sample
 time of the position, **not** "now" — this back-stamps ADS-B latency).
-WGS84 → ECEF → ENU → Az/El, same 0.5 s grid over 300 s, **601 Az/El points
+WGS84 → ECEF → ENU → Az/El, same 0.5 s grid over 900 s, **1801 Az/El points
 per aircraft**.
 
 **c) Pairwise separation scan**. For every (aircraft × body) pair the
-angular separation is computed at every one of the 601 sample indices and
+angular separation is computed at every one of the 1801 sample indices and
 the minimum is remembered. A candidate is emitted when:
 
 * `min sep ≤ tracker.thresholdDeg` (default 0.3°) → `level = candidate`
@@ -132,8 +140,9 @@ folded into a single `Map<key, LifecycleEntry>`:
 
 1. **Live tracker candidates** (highest signal — actual ADS-B geometry)
 2. **Watchlist** (predictor.js, the *flight-schedule* source — see below)
-3. **Previous tick's map** (so `stale` entries linger and the FIFO 20-cap
-   ages out displaced rows in order of `lastUpdateMs`)
+3. **Previous tick's map** (so `stale` entries linger — coasting through
+   brief ADS-B gaps — and the FIFO 10-cap / 30-min stale grace age out
+   displaced rows in order of `lastUpdateMs`)
 
 Per-row status is derived from `(level, time-to-closest, presence)`:
 
@@ -143,7 +152,8 @@ Per-row status is derived from `(level, time-to-closest, presence)`:
 * `radio` — `level=radio` (in the loose band, outside the tight band)
 * `planned` — comes from the watchlist; no live ADS-B match yet
 * `stale` — was active on a previous tick, no longer in tracker output;
-  held until the 20-row cap displaces it (oldest stale first)
+  coasts on its last status for ~25 s, then held until the 30-min stale
+  grace expires or the 10-row cap displaces it (oldest stale first)
 
 **h) Notifier dispatch** — `notifier.js → tick`. For each candidate, the
 next un-sent stage is evaluated. Stages escalate monotonically
@@ -161,7 +171,10 @@ buzz the phone at 1°. Per-`(icao, body, stage)` dedup; state is forgotten
 |---|---|---|
 | **Watchlist rebuild** (the "flight schedule" source) | **hourly** | `predictor.js → buildWatchlist` reading `transit_history` |
 | **Lifecycle snapshot** → `data/lifecycle.json` | every **30 s** + on `SIGTERM` | `service.js → snapshotLifecycle` |
-| **Nightly auto-update** (`git pull` + restart) | once per night | `stp-update.timer` → `scripts/auto-update.sh` |
+| **ISS transit + visible-pass recompute** | every **10 min** (`iss.recomputeMs`) | `iss.js` (SGP4 over `data/iss.tle`) |
+| **Nightly auto-update** (`git pull` + restart) | once per night (03:30 ±15 min) | `stp-update.timer` → `scripts/auto-update.sh` |
+| **Click-to-update** (version badge) | on demand | `stp-update.path` watches `data/update.request` → `stp-update.service` |
+| **Daily ISS TLE refresh** | once per day (05:40 ±20 min) | `stp-tle.timer` → `scripts/refresh-tle.js` |
 | **OpenSky schedule augmentation** (optional) | at watchlist-rebuild time | `opensky.js` + `scripts/refresh-schedule.js` |
 
 ### 4. The watchlist (flight-schedule source) in detail
@@ -189,7 +202,7 @@ input:
 
 | Artefact | Written when | Used for |
 |---|---|---|
-| `transit_history` (SQLite) | when a stage is first entered inside the panel band (v0.8.0: independent of the Pushover phone filter, so the early radio row is logged and `Lead` reflects the true advance warning) | History panel, watchlist source, episode classification |
+| `transit_history` (SQLite) | when a stage is first entered inside the panel band (v0.8.0: independent of the Pushover phone filter, so the `radio`-stage row is logged and `Lead` reflects the true advance warning) | History panel, watchlist source, episode classification |
 | `lifecycle.json` (JSON) | every 30 s + on `SIGTERM` | Tracking panel survives restarts (entries coast through brief ADS-B gaps, v0.8.0) |
 | `config/observer.json` + `service.json` | on Settings save | Hot-reload + survive restart |
 
@@ -220,11 +233,13 @@ load picks up wherever it left off, including the restored tracking list.
 
 ### 7. Design principles
 
-* **Linear aircraft extrapolation** stays meter-accurate to ~60 s; past
-  ~2 min the assumption breaks (turns, ATC vectoring, wind). `horizonS=300`
-  is a tuning compromise between earlier detection and false-positive rate;
-  the upper clamp at 600 s exists so a typo in `service.json` can't blow
-  up the per-tick CPU budget.
+* **Linear aircraft extrapolation** stays meter-accurate to ~60 s and is
+  reasonable through ~10 min in stable cruise; well past 15 min the
+  assumption breaks (turns, ATC vectoring, wind). `horizonS=900` (15 min)
+  is the default — a compromise between catching a flight as it enters
+  ADS-B range and the false-positive ("faded") rate; the upper clamp at
+  1800 s exists so a typo in `service.json` can't blow up the per-tick
+  CPU budget.
 * **Un-refracted geometry on both sides**. The tracker compares Az/El of
   the aircraft (raw ECEF→ENU) against Az/El of the body (geometric, no
   refraction). Refraction is only applied at the "Sky now" display step so
@@ -256,7 +271,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M8 | Accuracy pass: latency back-stamp, sub-step vertex refinement, geoid offset, refraction-frame alignment | done |
 | M9 | Zero-touch operations: gitignored personal config, `--non-interactive` install, nightly auto-update timer | done |
 | M10 | History-based predictor (24 h "Expected today" panel) + optional OpenSky schedule augmentation | done |
-| M11 | Lifecycle pipeline: planned → radio → candidate → imminent → stale, with `horizonS=300` default, unified UI panel | done |
+| M11 | Lifecycle pipeline: planned → radio → candidate → imminent → stale, unified UI panel (look-ahead later raised to `horizonS=900` in M17) | done |
 | M12 | FOV sketch popup: per-row preview of disc + aircraft + apparent transit line in the 500 mm / ASI174MM frame | done |
 | M13 | In-browser Settings panel (Pushover, observer, optics) + cross-restart tracking-list persistence | done |
 | M14 | Inline FOV preview pane (auto-tracks newest sep&lt;1° candidate, click-to-pin) + live header clock | done |
@@ -615,10 +630,12 @@ small station glyph instead of an aircraft silhouette in the sketch).
   retries — or run the command above once you're online.
 
 * **Tuning** (`config/service.json → iss`): `horizonMs` (how far ahead to
-  scan for the next pass, default 48 h — an ISS solar/lunar transit at a
-  fixed site is weeks apart, so a long horizon is normal), `recomputeMs`
-  (scan cadence, default 10 min), `thresholdDeg` / `looseThresholdDeg`.
-  Set `"enabled": false` to switch it off entirely.
+  scan for the next Sun/Moon transit, default **14 days** — these are weeks
+  apart at a fixed site; raising it costs more CPU per recompute since the
+  scan is O(horizon)), `visibleHorizonMs` (next-visible-pass cap, default
+  **30 days**; cheap — the scan returns at the first pass found),
+  `recomputeMs` (scan cadence, default 10 min), `thresholdDeg` /
+  `looseThresholdDeg`. Set `"enabled": false` to switch it off entirely.
 * An ISS transit is written to History like any transit and feeds the
   **Disc xing** column (its angular rate is huge, so the full-disc crossing
   time is well under a second).
@@ -643,16 +660,22 @@ small station glyph instead of an aircraft silhouette in the sketch).
 | `<repo>/config/observer.example.json` | Schema reference / template for `observer.json`.            | yes |
 | `<repo>/config/service.json`          | Runtime config (ADS-B URL, intervals, Pushover keys, server, DB, routes). **Personal.** | no — gitignored |
 | `<repo>/config/service.example.json`  | Schema reference / template for `service.json`.             | yes |
-| `<repo>/data/history.db`              | SQLite history of all dispatched notifications (created on first run). | no — gitignored |
+| `<repo>/data/history.db`              | SQLite history of all recorded transit-stage events (created on first run). | no — gitignored |
+| `<repo>/data/lifecycle.json`          | Tracking-panel snapshot so a restart doesn't empty the list. | no — gitignored |
+| `<repo>/data/iss.tle`                 | ISS two-line elements for the offline SGP4 (written by `refresh-tle.js`). Feature inactive until present. | no — gitignored |
+| `<repo>/data/update.request`          | Transient click-to-update trigger; consumed by `stp-update.path`. | no — gitignored |
 | `<repo>/web/`                         | Static frontend served at `http://<host>:<port>/`.          | yes |
 | `<repo>/bin/stp.js`                   | Service entry point.                                        | yes |
 | `<repo>/scripts/install-pi5.sh`       | Idempotent Pi installer (interactive or `--non-interactive`). | yes |
 | `<repo>/scripts/auto-update.sh`       | Pull + install-deps + restart-on-change. Backs up local config first. | yes |
+| `<repo>/scripts/refresh-tle.js`       | Opt-in ISS TLE fetcher (Celestrak); run by `stp-tle.timer`. | yes |
 | `<repo>/scripts/test-push.js`         | One-shot Pushover sanity check.                             | yes |
 | `<repo>/systemd/stp.service`          | Template for the main systemd unit.                         | yes |
-| `<repo>/systemd/stp-update.{service,timer}` | Templates for the nightly auto-updater.               | yes |
+| `<repo>/systemd/stp-update.{service,timer,path}` | Auto-update + click-to-update watcher templates.  | yes |
+| `<repo>/systemd/stp-tle.{service,timer}` | Daily ISS TLE refresh templates.                         | yes |
 | `/etc/systemd/system/stp.service`     | Generated unit (paths and user templated by the installer). | n/a (system) |
-| `/etc/systemd/system/stp-update.{service,timer}` | Generated auto-update unit + timer.              | n/a (system) |
+| `/etc/systemd/system/stp-update.{service,timer,path}` | Generated auto-update + click-watcher units.  | n/a (system) |
+| `/etc/systemd/system/stp-tle.{service,timer}` | Generated ISS-TLE refresh unit + timer.              | n/a (system) |
 | `/etc/sudoers.d/stp-update`           | Narrow rule: `<user> NOPASSWD: /bin/systemctl restart stp.service`. | n/a (system) |
 
 The main service runs sandboxed: `ProtectSystem=strict`,
@@ -839,10 +862,10 @@ into Pushover messages:
 | Status | Trigger | Push priority | Typical lead time |
 |---|---|---|---|
 | **planned** 📅 | predictor watchlist (recurring history) says a flight is expected within `lifecycle.plannedWindowMs` (default 1 h) | none (UI only) | minutes to hours |
-| **radio** 📡 | tracker projects `[thresholdDeg, looseThresholdDeg]` separation (default 0.3°–5°) within `horizonS` (default 5 min) | 0 | up to 5 min |
-| **candidate** ✈️ | tracker projects `≤ thresholdDeg` separation (default 0.3°) within `horizonS`, more than `imminentWindowMs` away | 0 | 30 s – 5 min |
+| **radio** 📡 | tracker projects `[thresholdDeg, looseThresholdDeg]` separation (default 0.3°–2°) within `horizonS` (default 15 min) | 0 | up to ~15 min |
+| **candidate** ✈️ | tracker projects `≤ thresholdDeg` separation (default 0.3°) within `horizonS`, more than `imminentWindowMs` away | 0 | 30 s – ~15 min |
 | **imminent** 🎯 | closest approach within ±`imminentWindowMs` (default ±30 s) | 1 | ≤ 30 s |
-| **stale** ❌ | was tracked last tick, gone from the tracker output now — held visible **indefinitely** by default (`lifecycle.staleGraceMs = 0`); leaves only when displaced off the bottom of the panel by newer entries | none (UI only) | — |
+| **stale** ❌ | was tracked last tick, gone from the tracker output now — first **coasts** on its last status for ~25 s (brief ADS-B gap), then held as `stale` until the **30-min** grace (`lifecycle.staleGraceMs = 1800000`) expires or the panel cap displaces it | none (UI only) | — |
 
 Stage rules:
 
@@ -858,13 +881,17 @@ Stage rules:
 - **What goes into SQLite.** Only `radio`, `candidate` and `imminent` are
   persisted to `transit_history`. `planned` is regenerated from the
   watchlist each tick; `stale` is a UI-only display state.
-- **Panel cap.** The tracking list is capped at `lifecycle.maxEntries`
-  (default 20). When the cap is hit, the **oldest stale entries are
-  dropped first** (FIFO by `lastUpdateMs`) — active rows are always kept.
-  With `staleGraceMs=0` (default), stale entries persist as long as the
-  cap allows — on quiet days you'll see drops from hours ago still
-  sitting at the bottom of the panel. Set `staleGraceMs > 0` to also
-  evict by absolute age.
+- **Coasting.** A single missed ADS-B squitter no longer flips a contact
+  to `stale`: it holds its last live status for `lifecycle.coastMs`
+  (default 25 s) before decaying, so a flight doesn't visibly drop and
+  reappear near the horizon.
+- **Panel cap & stale grace.** The tracking list is capped at
+  `lifecycle.maxEntries` (default **10**). A `stale` entry is dropped once
+  it is older than `lifecycle.staleGraceMs` (default **1 800 000 ms =
+  30 min**) or, on a busy minute, when the cap displaces it (oldest stale
+  first, FIFO by `lastUpdateMs`; active rows are always kept). Set
+  `staleGraceMs: 0` to revert to the old cap-only eviction (stale entries
+  persist until pushed off the bottom).
 
 Each notification carries: callsign, IATA flight number (if adsbdb resolves
 it), airline, origin/destination, altitude (ft), ground speed (kt), minimum
@@ -873,16 +900,19 @@ history table.
 
 ### Tuning the live look-ahead
 
-`tracker.horizonS` (default 300 s) is the window the live tracker linearly
-extrapolates each aircraft over. Bigger window = earlier warning, but
-linear extrapolation degrades past ~2 min (turns, ATC vectoring, wind).
-Clamped to `[10, 600]` in code. Typical settings:
+`tracker.horizonS` (default 900 s = 15 min) is the window the live tracker
+linearly extrapolates each aircraft over. Bigger window = earlier warning,
+but linear extrapolation degrades past ~10 min (turns, ATC vectoring,
+wind), so the longer horizon trades more "faded" false-positives for
+catching a flight as it enters ADS-B range. Clamped to `[10, 1800]` in
+code. Typical settings:
 
 | Use case | `horizonS` | What you get |
 |---|---|---|
 | Maximum precision | 60 | First-detection at ~T-60 s; lowest false-positive rate. |
-| **Default** | **300** | First-detection at ~T-5 min; a few false-positives from in-cruise turns. |
-| Wide net | 600 | First-detection at ~T-10 min; many false-positives, but no transit ever sneaks up on you. |
+| Conservative | 300 | First-detection at ~T-5 min; few false-positives. |
+| **Default** | **900** | First-detection at ~T-15 min; catches flights as they enter reception range, at the cost of more "faded" episodes. |
+| Wide net | 1800 | First-detection at ~T-30 min (upper clamp); maximum lead, most noise. |
 
 `tracker.looseThresholdDeg` (default **2°** since v0.7.4; was 5° in
 v0.1–v0.7.3) is the **radio band** width — anything wider is dropped from
@@ -927,7 +957,7 @@ Or edit `config/service.json` directly:
 account. `minStage` controls which stages dispatch at all
 (`radio` = all, `imminent` = only the ±30 s alert). `radioThresholdDeg`
 adds a tighter Pushover-only filter on top: the tracker still surfaces
-matches inside `tracker.looseThresholdDeg` (5° by default) to the
+matches inside `tracker.looseThresholdDeg` (2° by default) to the
 tracking panel, but the phone only buzzes when the projected minimum
 separation is at or below this value (default **1°** — i.e. only
 flights likely to actually graze the body). Restart the service
@@ -1231,30 +1261,38 @@ from the notifier — happy to add that as a config switch if useful.
 │   ├── adsb.js                   fetch + normalise dump1090 aircraft.json
 │   ├── tracker.js                extrapolation + transit detection (sub-step refined)
 │   ├── pushover.js               Pushover REST client
-│   ├── notifier.js               two-stage dispatch + dedup
+│   ├── notifier.js               3-stage dispatch (radio/candidate/imminent) + dedup
 │   ├── adsbdb.js                 callsign → route, in-memory TTL cache
-│   ├── store.js                  SQLite history (node:sqlite)
+│   ├── sgp4.js                   dependency-free SGP4 (ISS), TLE parse, TEME→ECEF
+│   ├── iss.js                    offline ISS transit + visible-pass prediction
+│   ├── store.js                  SQLite history (node:sqlite) + episode stats
 │   ├── server.js                 HTTP server (built-in, no framework)
 │   ├── service.js                orchestrator (the polling loop)
 │   ├── predictor.js              history-based 24 h watchlist (M10)
 │   ├── opensky.js                OpenSky Network REST client (M10, opt-in)
-│   ├── lifecycle.js              candidate state machine: planned→radio→candidate→imminent→stale (M11)
+│   ├── lifecycle.js              candidate state machine: planned→radio→candidate→imminent→stale (+coasting)
 │   ├── config.js                 loadObserver()
 │   └── index.js                  public re-exports
 ├── web/
-│   ├── index.html                live + expected + history UI
+│   ├── index.html                Sky-now + LIVE-TRACKING-SIGNALS + History + FOV UI
 │   ├── app.js                    vanilla-JS poller
+│   ├── sketch.js                 FOV transit sketch (SVG, incl. ISS glyph)
+│   ├── aircraft-types.js         offline ICAO-type → specs table
 │   └── style.css                 dark theme
 ├── scripts/
 │   ├── install-pi5.sh            idempotent installer (interactive or --non-interactive)
 │   ├── auto-update.sh            git pull → npm install → restart, with config backup
 │   ├── refresh-schedule.js       OpenSky daily fetcher (M10, opt-in)
+│   ├── refresh-tle.js            ISS TLE fetcher (Celestrak, opt-in / stp-tle.timer)
 │   └── test-push.js              one-shot Pushover sanity check
 ├── systemd/
 │   ├── stp.service               main service unit template
 │   ├── stp-update.service        auto-update oneshot template
-│   └── stp-update.timer          nightly schedule (03:30 ±15 min)
-└── test/                         11 vitest files, 84 cases
+│   ├── stp-update.timer          nightly schedule (03:30 ±15 min)
+│   ├── stp-update.path           click-to-update trigger watcher
+│   ├── stp-tle.service           ISS TLE refresh oneshot template
+│   └── stp-tle.timer             daily ISS TLE schedule (05:40 ±20 min)
+└── test/                         15 vitest files, 134 cases
 ```
 
 ## License
