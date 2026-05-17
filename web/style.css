@@ -221,12 +221,16 @@ tr.row-iss td:first-child { box-shadow: inset 3px 0 0 #50c8e6; }
    after the v0.9.1 reorder (icon, Transit, Recorded, Lead, Sep, Dist, Xing,
    Speed, Alt, Stage, Outcome, Flight, ICAO, Route). Tracking is unchanged
    (Flight is its 5th column) so keep both. */
+/* History "Flight" cell is column 12; Tracking "Flight" is column 9 after
+   the v0.10.0 reorder (icon, Status, ETA, Time, Sep, Dist, Speed, Alt,
+   Flight, ICAO, Route). The 🛰 ISS tag lives there in both. */
 #history tr.row-iss td:nth-child(12) { color: #8fe3f5; font-weight: 600; }
-#tracking tr.row-iss td:nth-child(5) { color: #8fe3f5; font-weight: 600; }
+#tracking tr.row-iss td:nth-child(9) { color: #8fe3f5; font-weight: 600; }
 
-/* Narrow leading Sun/Moon icon column in History (replaces the Body text
-   column — the glyph carries the same info in far less width). */
-#history th.th-icon, #history td.td-icon {
+/* Narrow leading Sun/Moon icon column (replaces the Body text column in
+   both tables — the glyph carries the same info in far less width). */
+#history th.th-icon, #history td.td-icon,
+#tracking th.th-icon, #tracking td.td-icon {
   text-align: center;
   width: 1%;
   white-space: nowrap;
@@ -577,6 +581,7 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
   transition: width 0.4s ease;
 }
 .fb-total { background: #8b94a3; }
+.fb-live  { background: #6cb6ff; }
 .fb-band  { background: var(--accent); }
 .fb-near  { background: var(--ok); }
 /* Tightest bucket — same magenta as the near-hit row highlight so the
@@ -636,6 +641,20 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
   opacity: 0.8;
   line-height: 1.35;
 }
+
+/* Next-visible-ISS-pass line under the Sky-now table (v0.10.0). Same cyan
+   identity as the ISS rows so the eye groups all things-ISS together. */
+.iss-pass {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #cdeefb;
+  background: rgba(80, 200, 230, 0.10);
+  border: 1px solid rgba(80, 200, 230, 0.30);
+  border-radius: 4px;
+}
+.iss-pass b { color: #8fe3f5; }
 
 /* Small running-version badge next to the page title (v0.8.1). */
 .app-version {

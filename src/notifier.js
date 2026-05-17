@@ -68,12 +68,20 @@ function buildPayload(stage, candidate, route, nowMs, baseUrl) {
   const bodySym = candidate.body === 'Sun' ? 'Sun' : 'Moon';
 
   // Title prefix per stage. 'imminent' gets the alarm prefix; 'candidate'
-  // is the tight-window match; 'radio' is the wide-net early warning.
-  const titlePrefix = stage === 'imminent'
-    ? `[!] ${bodySym} TRANSIT`
-    : stage === 'candidate'
-      ? `${bodySym} candidate`
-      : `${bodySym} approach`;
+  // is the tight-window match; 'radio' is the wide-net early warning. The
+  // ISS gets its own wording — it's a rare, planned event, not traffic.
+  let titlePrefix;
+  if (candidate.isISS) {
+    titlePrefix = stage === 'imminent'
+      ? `[!] 🛰 ISS ${bodySym} TRANSIT`
+      : `🛰 ISS ${bodySym} transit predicted`;
+  } else {
+    titlePrefix = stage === 'imminent'
+      ? `[!] ${bodySym} TRANSIT`
+      : stage === 'candidate'
+        ? `${bodySym} candidate`
+        : `${bodySym} approach`;
+  }
   const title = `${titlePrefix} T-${eta}: ${flight}`;
 
   const rangeM = candidate.aircraftAtClosest?.rangeM;
