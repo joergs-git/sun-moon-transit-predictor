@@ -165,18 +165,19 @@ function renderTracking(state) {
     const ac = e.candidate?.aircraft;
     const route = e.route ?? e.candidate?.route;
     const rangeM = e.candidate?.aircraftAtClosest?.rangeM ?? null;
+    const bodyIcon = e.body === 'Sun' ? '☀' : '🌙';
     tr.innerHTML = `
+      <td class="body-${e.body} td-icon" title="${e.body}">${bodyIcon}</td>
       <td><span class="status status-${e.status}" title="${meta.label}">${meta.icon} ${meta.label}</span></td>
       <td>${eta}</td>
       <td>${fmtTime(e.closestApproachAtMs)}</td>
-      <td class="body-${e.body}">${e.body}</td>
+      <td>${e.closestApproachSepDeg !== null ? fmtSep(e.closestApproachSepDeg) : '—'}</td>
+      <td>${fmtDistance(rangeM)}</td>
+      <td>${iss ? '—' : fmtSpeed(ac?.groundSpeedMs)}</td>
+      <td>${iss ? 'LEO' : fmtAlt(ac?.altMmsl)}</td>
       <td>${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '—')}</td>
       <td>${iss ? 'orbit' : (e.icao ? e.icao.toUpperCase() : '—')}</td>
       <td>${iss ? '—' : fmtRoute(route?.origin?.iata ?? route?.origin?.icao, route?.destination?.iata ?? route?.destination?.icao)}</td>
-      <td>${iss ? 'LEO' : fmtAlt(ac?.altMmsl)}</td>
-      <td>${iss ? '—' : fmtSpeed(ac?.groundSpeedMs)}</td>
-      <td>${fmtDistance(rangeM)}</td>
-      <td>${e.closestApproachSepDeg !== null ? fmtSep(e.closestApproachSepDeg) : '—'}</td>
     `;
     tbody.appendChild(tr);
   }
@@ -332,12 +333,14 @@ function renderDetectFunnel(stats) {
   const box = $('#detect-funnel');
   if (!box || !stats) return;
   const total = stats.totalUnique ?? 0;
-  const pct = (n) => (total > 0 ? Math.max(2, Math.round((n / total) * 100)) : 0);
+  const pct = (n) => (total > 0 ? Math.min(100, Math.max(2, Math.round((n / total) * 100))) : 0);
   $('#fb-total').style.width = total > 0 ? '100%' : '0%';
+  $('#fb-live').style.width  = `${pct(stats.liveCount ?? 0)}%`;
   $('#fb-band').style.width  = `${pct(stats.inBand ?? 0)}%`;
   $('#fb-near').style.width  = `${pct(stats.near ?? 0)}%`;
   $('#fb-vnear').style.width = `${pct(stats.veryNear ?? 0)}%`;
   $('#fv-total').textContent = String(total);
+  $('#fv-live').textContent  = String(stats.liveCount ?? 0);
   $('#fv-band').textContent  = String(stats.inBand ?? 0);
   $('#fv-near').textContent  = String(stats.near ?? 0);
   $('#fv-vnear').textContent = String(stats.veryNear ?? 0);
@@ -347,12 +350,38 @@ function renderDetectFunnel(stats) {
   $('#fl-band').innerHTML = `&lt; ${band}°`;
 }
 
+const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+function azToCompass(deg) {
+  return COMPASS[Math.round(((deg % 360) / 45)) % 8];
+}
+
+// Next naked-eye ISS pass line under the Sky-now table. Driven by
+// state.iss.visiblePass (computed offline from the TLE). Hidden when the
+// feature is inactive or no pass is predicted within the horizon.
+function renderIssPass(iss) {
+  const el = $('#iss-pass');
+  if (!el) return;
+  const p = iss?.visiblePass;
+  if (!iss?.active || !p) { el.hidden = true; el.textContent = ''; return; }
+  const inMs = p.startMs - Date.now();
+  const when = inMs > 0 ? `in ${fmtCountdownLong(inMs)}` : 'now';
+  el.hidden = false;
+  el.innerHTML =
+    `🛰 <b>Next visible ISS pass</b> ${when}: `
+    + `${fmtTime(p.startMs)} (${azToCompass(p.startAzDeg)}) → `
+    + `${fmtTime(p.endMs)} (${azToCompass(p.endAzDeg)}) · `
+    + `max ${p.maxElevationDeg}° · ${p.durationS}s`;
+  el.title = 'Naked-eye pass: ISS above 20°, sky dark (Sun below −6°), '
+    + 'station sunlit. Offline SGP4 prediction; refreshes with the TLE.';
+}
+
 async function pollState() {
   try {
     const res = await fetch('/api/state');
     if (!res.ok) throw new Error(res.status);
     const state = await res.json();
     renderSky(state);
+    renderIssPass(state.iss);
     renderTracking(state);
     renderDetectFunnel(state.detectStats);
     // Push live optics into the FOV sketch module so a Settings edit is

@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadIssTle, predictIssTransits } from '../src/iss.js';
+import { loadIssTle, predictIssTransits, nextIssVisiblePass } from '../src/iss.js';
 import { observerEcef, targetEcefAzEl } from '../src/geometry.js';
 
 // A valid, well-formed ISS (ZARYA) element set. SGP4 correctness itself is
@@ -91,6 +91,30 @@ describe('predictIssTransits', () => {
       expect(c.closestApproachSepDeg).toBeLessThanOrEqual(1.0 + 1e-9);
       expect(Array.isArray(c.transitPath)).toBe(true);
       expect(['radio', 'candidate']).toContain(c.level);
+    }
+  });
+});
+
+describe('nextIssVisiblePass', () => {
+  const tle = (() => {
+    const p = join(tmp, 'issvp.tle');
+    writeFileSync(p, `${NAME}\n${L1}\n${L2}\n`);
+    return loadIssTle(p);
+  })();
+
+  it('returns null or a well-formed pass without throwing', () => {
+    const pass = nextIssVisiblePass(observer, tle.satrec, {
+      fromMs: Date.UTC(2024, 4, 3, 0, 0, 0),
+      horizonMs: 3 * 24 * 3600_000,
+    });
+    if (pass !== null) {
+      expect(pass.endMs).toBeGreaterThanOrEqual(pass.startMs);
+      expect(pass.peakMs).toBeGreaterThanOrEqual(pass.startMs);
+      expect(pass.peakMs).toBeLessThanOrEqual(pass.endMs);
+      expect(pass.maxElevationDeg).toBeGreaterThanOrEqual(20);
+      expect(pass.durationS).toBeGreaterThanOrEqual(0);
+      expect(pass.startAzDeg).toBeGreaterThanOrEqual(0);
+      expect(pass.startAzDeg).toBeLessThan(360);
     }
   });
 });

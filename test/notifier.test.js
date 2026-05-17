@@ -157,6 +157,21 @@ describe('Notifier', () => {
     expect(px.calls.length).toBe(1);
   });
 
+  it('sends an ISS-flavoured Pushover for an ISS transit candidate', async () => {
+    const px = new FakePushover();
+    const n = new Notifier({ pushover: px });
+    const iss = makeCandidate({
+      icao: 'ISS', callsign: 'ISS (ZARYA)', body: 'Sun',
+      sepDeg: 0.05, closestInMs: 6 * 3600_000, level: 'candidate',
+    });
+    iss.isISS = true;
+    const events = await n.tick([iss], 1_000_000_000_000);
+    expect(events.length).toBe(1);
+    expect(px.calls.length).toBe(1);
+    expect(px.calls[0].title).toMatch(/ISS .*transit/i);
+    expect(px.calls[0].title).toMatch(/Sun/);
+  });
+
   it('treats Sun and Moon candidates for the same aircraft as separate streams', async () => {
     const px = new FakePushover();
     const n = new Notifier({ pushover: px });
