@@ -184,6 +184,68 @@ export class HistoryStore {
   }
 
   /**
+   * Retrospective range statistics over aircraft that ACTUALLY passed the
+   * disc close (the `imminent` stage = time-confirmed ±30 s of closest
+   * approach, consistent with the v0.14.1 sharpening — one row per real
+   * transit). Answers "how far away were the planes that came < X°".
+   *
+   * @param {{ sepBelowDeg?: number, windowMs?: number, nowMs?: number,
+   *           buckets?: number }} [opts]
+   * @returns {{
+   *   sepBelowDeg:number, n:number, onDisc:number,
+   *   minM:number|null, maxM:number|null, medianM:number|null,
+   *   meanM:number|null, p90M:number|null,
+   *   perBody:{Sun:number,Moon:number},
+   *   histogram:Array<{fromM:number,toM:number,count:number}>,
+   * }}
+   */
+  rangeStats({ sepBelowDeg = 0.5, windowMs = 3650 * 24 * 3600_000,
+               nowMs = Date.now(), buckets = 10 } = {}) {
+    const since = nowMs - windowMs;
+    const rows = this.db.prepare(
+      `SELECT range_m AS r, body, closest_sep_deg AS sep
+       FROM transit_history
+       WHERE stage = 'imminent' AND range_m IS NOT NULL
+         AND closest_sep_deg IS NOT NULL AND closest_sep_deg < ?
+         AND recorded_at_ms >= ?
+       ORDER BY range_m`,
+    ).all(sepBelowDeg, since);
+
+    const empty = {
+      sepBelowDeg, n: 0, onDisc: 0,
+      minM: null, maxM: null, medianM: null, meanM: null, p90M: null,
+      perBody: { Sun: 0, Moon: 0 }, histogram: [],
+    };
+    if (rows.length === 0) return empty;
+
+    const vals = rows.map(x => x.r);                  // already ASC
+    const n = vals.length;
+    const minM = vals[0];
+    const maxM = vals[n - 1];
+    const sum = vals.reduce((a, b) => a + b, 0);
+    const meanM = sum / n;
+    const at = (q) => vals[Math.min(n - 1, Math.floor(q * n))];
+    const medianM = n % 2 ? vals[(n - 1) / 2] : (vals[n / 2 - 1] + vals[n / 2]) / 2;
+    const p90M = at(0.9);
+    const perBody = { Sun: 0, Moon: 0 };
+    let onDisc = 0;
+    for (const x of rows) {
+      if (x.body === 'Sun' || x.body === 'Moon') perBody[x.body] += 1;
+      if (x.sep < 0.27) onDisc += 1;                  // ~Sun/Moon disc radius
+    }
+    const histogram = [];
+    const span = maxM - minM || 1;
+    const bw = span / buckets;
+    for (let i = 0; i < buckets; i++) {
+      const lo = minM + i * bw;
+      const hi = i === buckets - 1 ? maxM : minM + (i + 1) * bw;
+      const count = vals.filter(v => v >= lo && (i === buckets - 1 ? v <= hi : v < hi)).length;
+      histogram.push({ fromM: lo, toM: hi, count });
+    }
+    return { sepBelowDeg, n, onDisc, minM, maxM, medianM, meanM, p90M, perBody, histogram };
+  }
+
+  /**
    * Persist a single schedule observation (e.g. from an OpenSky pull).
    * Idempotent on (source, flight, timestamp_ms).
    * @returns {boolean} true if a new row was inserted, false if it already existed

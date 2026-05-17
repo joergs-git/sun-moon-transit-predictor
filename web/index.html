@@ -234,6 +234,25 @@
     </div>
   </section>
 
+  <section id="rangestats-section">
+    <h2>Range stats</h2>
+    <p class="hint">
+      Of the aircraft that <b>actually</b> passed within
+      <span id="rs-sep">0.5°</span> of the Sun/Moon (imminent-confirmed —
+      not just predicted), how far away were they at closest approach?
+      Retrospective over <b>all</b> stored history.
+    </p>
+    <div class="rangestats-grid">
+      <div class="rs-fig"><span class="rs-num" id="rs-n">—</span><span class="rs-lbl">confirmed passes</span></div>
+      <div class="rs-fig"><span class="rs-num" id="rs-median">—</span><span class="rs-lbl">median distance</span></div>
+      <div class="rs-fig"><span class="rs-num" id="rs-max">—</span><span class="rs-lbl">farthest</span></div>
+      <div class="rs-fig"><span class="rs-num" id="rs-min">—</span><span class="rs-lbl">closest</span></div>
+      <div class="rs-fig"><span class="rs-num" id="rs-p90">—</span><span class="rs-lbl">90th pct</span></div>
+      <div class="rs-fig"><span class="rs-num" id="rs-ondisc">—</span><span class="rs-lbl">on-disc (&lt;0.27°)</span></div>
+    </div>
+    <div class="acstats-bars" id="rs-hist"></div>
+  </section>
+
   <footer>
     <span id="observer"></span>
   </footer>

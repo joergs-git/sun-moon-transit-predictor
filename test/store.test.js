@@ -294,3 +294,71 @@ describe('HistoryStore — aircraft sightings (persistent tally)', () => {
     } finally { store.close(); }
   });
 });
+
+describe('HistoryStore — rangeStats (retrospective close-pass distances)', () => {
+  it('aggregates only imminent rows that actually passed < sepBelowDeg', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      const nowMs = 2_000_000_000_000;
+      // The five rows that should count: imminent, range known, sep < 0.5,
+      // inside the window. Sep 0.4 is the only one outside the ~disc radius.
+      const sample = [
+        [4000,  'Sun',  0.2],
+        [8000,  'Moon', 0.2],
+        [12000, 'Sun',  0.2],
+        [16000, 'Moon', 0.2],
+        [20000, 'Sun',  0.4],
+      ];
+      for (const [r, body, sep] of sample) {
+        store.recordEvent('imminent', {
+          ...makeCandidate({ body, sepDeg: sep }),
+          aircraftAtClosest: { azimuthDeg: 180, elevationDeg: 60, rangeM: r },
+        }, null, nowMs - 1000);
+      }
+
+      // Excluded: not imminent / sep ≥ 0.5 / range unknown / out of window.
+      store.recordEvent('candidate', {
+        ...makeCandidate({ body: 'Sun', sepDeg: 0.1 }),
+        aircraftAtClosest: { azimuthDeg: 0, elevationDeg: 0, rangeM: 5000 },
+      }, null, nowMs - 1000);
+      store.recordEvent('imminent', {
+        ...makeCandidate({ body: 'Sun', sepDeg: 0.6 }),
+        aircraftAtClosest: { azimuthDeg: 0, elevationDeg: 0, rangeM: 9000 },
+      }, null, nowMs - 1000);
+      store.recordEvent('imminent', {
+        ...makeCandidate({ body: 'Sun', sepDeg: 0.2 }),
+        aircraftAtClosest: { azimuthDeg: 0, elevationDeg: 0, rangeM: null },
+      }, null, nowMs - 1000);
+      store.recordEvent('imminent', {
+        ...makeCandidate({ body: 'Moon', sepDeg: 0.2 }),
+        aircraftAtClosest: { azimuthDeg: 0, elevationDeg: 0, rangeM: 7000 },
+      }, null, nowMs - 2 * 24 * 3600_000); // older than the 1-day window
+
+      const s = store.rangeStats({
+        sepBelowDeg: 0.5, windowMs: 24 * 3600_000, nowMs, buckets: 10,
+      });
+      expect(s.n).toBe(5);
+      expect(s.minM).toBe(4000);
+      expect(s.maxM).toBe(20000);
+      expect(s.medianM).toBe(12000);
+      expect(s.meanM).toBe(12000);
+      expect(s.p90M).toBe(20000);
+      expect(s.onDisc).toBe(4);                       // the 0.4° one is off-disc
+      expect(s.perBody).toEqual({ Sun: 3, Moon: 2 });
+      expect(s.histogram.length).toBe(10);
+      expect(s.histogram.reduce((a, b) => a + b.count, 0)).toBe(5);
+    } finally { store.close(); }
+  });
+
+  it('returns a zeroed shape when nothing qualifies', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      const s = store.rangeStats({ nowMs: 2_000_000_000_000 });
+      expect(s.n).toBe(0);
+      expect(s.minM).toBeNull();
+      expect(s.medianM).toBeNull();
+      expect(s.histogram).toEqual([]);
+      expect(s.perBody).toEqual({ Sun: 0, Moon: 0 });
+    } finally { store.close(); }
+  });
+});
