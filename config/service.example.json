@@ -52,7 +52,8 @@
   "iss": {
     "enabled": true,
     "tlePath": "./data/iss.tle",
-    "horizonMs": 172800000,
+    "horizonMs": 1209600000,
+    "visibleHorizonMs": 2592000000,
     "recomputeMs": 600000,
     "thresholdDeg": 0.3,
     "looseThresholdDeg": 1.0
