@@ -1,6 +1,6 @@
 {
   "name": "sun-moon-transit-predictor",
-  "version": "0.10.7",
+  "version": "0.10.8",
   "description": "Predicts and detects aircraft transits across the sun and moon disc from a fixed observer location.",
   "type": "module",
   "private": true,

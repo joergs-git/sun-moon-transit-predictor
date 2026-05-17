@@ -290,6 +290,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M27 (v0.10.5) | `bootstrap-pi5.sh` bare-image one-liner (apt deps → clone → install-pi5.sh, args/env forwarded); fixed `install-pi5.sh` writing a stale `service.json` (it pinned old `horizonS:300` / `looseThresholdDeg:5` / `staleGraceMs:0` / `maxEntries:20` and omitted `iss`/`update`) — fresh installs now get the current defaults + explicit ISS config | done |
 | M28 (v0.10.6) | Docs: validated **Raspberry Pi OS Lite (Legacy, 64-bit)** as the known-good image (exact Imager path; current/Bookworm caused dependency trouble) + a copy-paste, no-experiments **ADS-B receiver setup** for dump1090-fa with the AirNav FlightStick (FlightAware apt repo + DVB-T blacklist + verify); `--with-dump1090` aligned to the same reliable steps | done |
 | M29 (v0.10.7) | Install fixes from on-Pi testing: manual path now installs `git` first (absent on Pi OS Lite); FlightAware repo package bumped `1.2 → 1.3` (the 1.2 URL 404s) in the README + `bootstrap-pi5.sh`, with a version-drift note | done |
+| M30 (v0.10.8) | Docs: `rbfeeder`/AirNav-RadarBox sharing-key sidenote + MLAT explainer in the ADS-B section (independent of the predictor; same WGS84 location) | done |
 
 ## Hardware + software bill of materials
 
@@ -381,6 +382,18 @@ filter makes AGC work well out of the box. Only if range is poor, tune
 `sudo systemctl restart dump1090-fa` (no other experiments needed). The
 app's `adsb.url` default (`http://localhost:8080/data/aircraft.json`)
 already matches this — nothing to configure on the app side.
+
+> **Sidenote — sharing to AirNav RadarBox (`rbfeeder`).** Optional and
+> fully independent of this predictor. `rbfeeder` + your AirNav sharing
+> key runs alongside `dump1090-fa` (reads the same decoder) and uploads to
+> airnavradar.com; this app only ever needs the local `aircraft.json` on
+> :8080, so the two don't interfere. **MLAT active** = the feeder's
+> *multilateration* client is up: for Mode-S aircraft that do **not**
+> broadcast their own GPS position, several internet-connected stations
+> jointly compute the position from the signal's time-difference-of-arrival.
+> It needs a **precise station location** — use the **same WGS84 decimal
+> degrees** you put in `config/observer.json` so the feed and the
+> predictor agree.
 
 ## Quick install on the Pi 5
 
