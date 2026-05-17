@@ -204,9 +204,9 @@ function fmtCountdownLong(ms) {
 }
 
 const OUTCOME_LABELS = {
-  graduated: { icon: '✅', label: 'graduated', title: 'Radio alert paid off — flight tightened to candidate or imminent.' },
-  faded:     { icon: '➖', label: 'faded',     title: 'Radio alert never tightened — false positive of the early stage.' },
-  surprise:  { icon: '⚡', label: 'surprise',  title: 'Tight transit fired without a prior radio warning.' },
+  confirmed: { icon: '✅', label: 'confirmed', title: 'Reached the imminent ±30 s window — the close approach actually happened. The sep is from that real closest approach.' },
+  predicted: { icon: '⚠️', label: 'predicted', title: 'A tight pass was PREDICTED but never reached the imminent confirmation — the flight diverged / left the band before the ETA (this is the "stale in Live tracking" case). The sep shown is the prediction, struck through, not what actually happened.' },
+  faded:     { icon: '➖', label: 'faded',     title: 'Only the early radio stage fired — never tightened to a candidate.' },
 };
 
 // Lead time = how much advance warning the pipeline gave (transit − first
@@ -256,13 +256,15 @@ function historyTr(e, absIdx) {
     <td class="stage-${e.stage}">${fmtDateTime(e.closest_at_ms)}</td>
     <td>${fmtDateTime(e.recorded_at_ms)}</td>
     <td title="Lead time = ${leadMs} ms">${fmtLead(leadMs)}</td>
-    <td>${fmtSep(e.closest_sep_deg)}</td>
+    <td><span class="${e.sepConfirmed ? 'sep-confirmed' : 'sep-unconfirmed'}" title="${e.sepConfirmed
+      ? 'Sep at the real closest approach (imminent stage).'
+      : 'PREDICTED sep only — no imminent confirmation; the flight diverged before the ETA, so this never actually happened.'}">${fmtSep(e.closest_sep_deg)}</span></td>
+    <td class="stage-${e.stage}">${e.stage}</td>
+    <td>${outcomeCell}</td>
     <td>${fmtDistance(e.range_m)}</td>
     <td title="${dtTooltip(dt)}">${fmtDiscTransit(dt)}</td>
     <td>${iss ? '—' : fmtSpeed(e.ground_speed_ms)}</td>
     <td>${iss ? 'LEO' : fmtAlt(e.altitude_m)}</td>
-    <td class="stage-${e.stage}">${e.stage}</td>
-    <td>${outcomeCell}</td>
     <td class="flight-cell" data-hex="${e.icao ?? ''}">${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '')}</td>
     <td>${iss ? 'orbit' : e.icao.toUpperCase()}</td>
     <td>${iss ? '—' : fmtRoute(e.origin, e.destination)}</td>
@@ -475,12 +477,15 @@ async function pollHistory() {
 // rarely. The window matches the predictor's daysBack default of 14.
 function fmtPct(n) { return n == null ? '—' : `${n.toFixed(0)}%`; }
 
-// Persistent aircraft-sightings stats: TOP-10 horizontal bars per kind
-// (airframe hex / ADS-B callsign), scaled to the busiest entry.
-function renderAcstatsBars(elId, rows) {
+// Persistent aircraft-sightings stats: TOP-20 horizontal bars per kind.
+// ICAO labels are hover-enabled (.flight-cell + data-hex) so the AirNav
+// popover resolves the hex to a real aircraft + photo; callsign labels
+// carry an explanatory tooltip (no hex → can't resolve to AirNav).
+const ACSTATS_TOP = 20;
+function renderAcstatsBars(elId, rows, kind) {
   const box = $(elId);
   if (!box) return;
-  const top = (rows ?? []).slice(0, 10);
+  const top = (rows ?? []).slice(0, ACSTATS_TOP);
   if (top.length === 0) {
     box.innerHTML = '<div class="acstats-empty">No traffic recorded yet.</div>';
     return;
@@ -488,10 +493,18 @@ function renderAcstatsBars(elId, rows) {
   const max = top[0].visits || 1;
   box.innerHTML = top.map((r) => {
     const pct = Math.max(3, Math.round((r.visits / max) * 100));
-    const title = `${r.visits} visit${r.visits === 1 ? '' : 's'} · first ${fmtDateTime(r.firstSeenMs)} · last ${fmtDateTime(r.lastSeenMs)}`;
-    const label = (r.key || '?').toUpperCase();
-    return `<div class="acstats-row" title="${title}">`
-      + `<span class="acstats-label">${label}</span>`
+    const seen = `${r.visits} visit${r.visits === 1 ? '' : 's'} · first ${fmtDateTime(r.firstSeenMs)} · last ${fmtDateTime(r.lastSeenMs)}`;
+    const key = r.key || '?';
+    let labelEl;
+    if (kind === 'icao' && /^[0-9a-f]{6}$/.test(key.toLowerCase())) {
+      // Reuses the existing flight-number hover handler → AirNav popover.
+      labelEl = `<span class="acstats-label flight-cell" data-hex="${key.toLowerCase()}" `
+        + `title="ICAO 24-bit hex — hover for the airframe (AirNav)">${key.toUpperCase()}</span>`;
+    } else {
+      labelEl = `<span class="acstats-label" title="ADS-B callsign (airline = first 3 letters, ICAO code). ${seen}">${key.toUpperCase()}</span>`;
+    }
+    return `<div class="acstats-row" title="${seen}">`
+      + labelEl
       + `<span class="acstats-track"><span class="acstats-bar" style="width:${pct}%"></span></span>`
       + `<span class="acstats-val">${r.visits}</span></div>`;
   }).join('');
@@ -499,11 +512,11 @@ function renderAcstatsBars(elId, rows) {
 
 async function pollAcstats() {
   try {
-    const res = await fetch('/api/acstats?limit=10');
+    const res = await fetch(`/api/acstats?limit=${ACSTATS_TOP}`);
     if (!res.ok) return;
     const d = await res.json();
-    renderAcstatsBars('#acstats-icao', d.icao);
-    renderAcstatsBars('#acstats-flight', d.flight);
+    renderAcstatsBars('#acstats-icao', d.icao, 'icao');
+    renderAcstatsBars('#acstats-flight', d.flight, 'flight');
     const t = d.totals ?? {};
     const fmtT = (x) => `${x?.distinctKeys ?? 0} unique · ${x?.totalVisits ?? 0} visits`;
     const a = $('#acstats-icao-tot');
