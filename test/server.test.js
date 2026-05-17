@@ -138,3 +138,54 @@ describe('HTTP server — /api/update gating', () => {
     expect(calls).toBe(1);
   });
 });
+
+describe('HTTP server — /api/acinfo (AirNav proxy)', () => {
+  let srv;
+  let url;
+  let seen;
+
+  beforeAll(async () => {
+    seen = [];
+    srv = createHttpServer({
+      port: 0,
+      host: '127.0.0.1',
+      getState: () => fakeState,
+      store,
+      webRoot: resolve(ROOT, 'web'),
+      requestAcInfo: async (hex) => {
+        seen.push(hex);
+        return hex === 'abc123' ? { hex, aircraft: { registration: 'D-TEST' }, live: null } : null;
+      },
+    });
+    const { port } = await srv.start();
+    url = `http://127.0.0.1:${port}`;
+  });
+
+  afterAll(async () => { if (srv) await srv.stop(); });
+
+  it('400s an invalid hex and never calls the proxy', async () => {
+    const res = await fetch(`${url}/api/acinfo?hex=ISS`);
+    expect(res.status).toBe(400);
+    expect(seen.length).toBe(0);
+  });
+
+  it('200s with the curated info for a known hex', async () => {
+    const res = await fetch(`${url}/api/acinfo?hex=ABC123`);
+    expect(res.ok).toBe(true);
+    const body = await res.json();
+    expect(body.aircraft.registration).toBe('D-TEST');
+    expect(seen).toContain('abc123');
+  });
+
+  it('404s when the proxy returns null (unknown / disabled)', async () => {
+    const res = await fetch(`${url}/api/acinfo?hex=ffffff`);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('HTTP server — /api/acinfo disabled', () => {
+  it('404s when requestAcInfo is not wired', async () => {
+    const res = await fetch(`${baseUrl}/api/acinfo?hex=abc123`);
+    expect(res.status).toBe(404);
+  });
+});

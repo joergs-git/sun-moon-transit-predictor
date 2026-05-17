@@ -292,6 +292,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M29 (v0.10.7) | Install fixes from on-Pi testing: manual path now installs `git` first (absent on Pi OS Lite); FlightAware repo package bumped `1.2 → 1.3` (the 1.2 URL 404s) in the README + `bootstrap-pi5.sh`, with a version-drift note | done |
 | M30 (v0.10.8) | Docs: `rbfeeder`/AirNav-RadarBox sharing-key sidenote + MLAT explainer in the ADS-B section (independent of the predictor; same WGS84 location) | done |
 | M31 (v0.10.9) | ISS transits only push/log within `iss.notifyWithinMs` (default 72 h) — far-future SGP4 is noise that flips with each daily TLE, so this kills phantom-transit Pushover spam + "surprise" stat pollution; Sky-now still previews the soonest, flagged "tentative". README "Good to know" facts: ISS prediction reliability + observer coordinate/elevation pitfalls | done |
+| M35 (v0.13.0) | **AirNav On-Demand API v2 integration** (optional, opt-in token in Settings — masked, server-side only). New `src/airnav.js` client + `GET /api/acinfo` proxy (token never reaches the browser; aggressive per-hex session cache since calls are billed). On a row **click** the FOV box shows airframe (reg/type/operator/MSN/first-flight) + live route + a photo; **hovering a flight number** pops an ad-hoc photo+route card (450 ms dwell, shares the cache). Header gains an "AirNav ↗" stations link | done |
 | M34 (v0.12.0) | Offline plan-view **mini-map** under the FOV (observer + aircraft real lat/lon + sight line + heading + range rings + bearing/distance) — pure SVG from our own ADS-B / recorded payload, no tiles/API/key; shown for the pinned/auto FOV entry, hidden for the ISS or when lat/lon is missing | done |
 | M33 (v0.11.1) | FOV sketch **auto zoom-out**: when the closest approach falls outside the optical FOV (e.g. a pinned wide-sep row), the whole sketch — FOV box, disc, path — is shrunk to scale so the aircraft still fits, with a "⤢ zoomed out · aircraft X′ from disc" note, giving a true sense of how far off-frame it was | done |
 | M32 (v0.11.0) | **Settings save bug fixed** — the look-ahead input's `step=30/min=10` made every round value (incl. the 900 default) a native `stepMismatch`, so browser form-validation silently blocked *all* saves (only 10 s was accepted). Form now `novalidate` (server validates with clear messages) + sane steps. Per-field subtitle hints under every Settings field (esp. Tracker). Pushover message reworded to lead with "&lt;Sun/Moon&gt; crosser — sep X° in Y, at &lt;target time&gt;" + flight | done |
@@ -341,6 +342,7 @@ is the host computer it runs on.
 |---|---|
 | **adsbdb.com** (no account needed) | IATA flight numbers, origin / destination airports, airline names attached to every candidate. Used live for the tracking panel and Pushover payload, cached for 1 h per callsign. Skip with `routes.enabled=false`. |
 | **OpenSky Network** account (free) | Optional schedule augmentation: backfills the predictor's watchlist with flights you may not have seen yourself yet. Configured via `scripts/refresh-schedule.js`. Off by default. |
+| **AirNav On-Demand API v2** (paid, token) | Optional rich airframe + live route + **photo** for an aircraft. Paste the bearer token from `airnavradar.com/api/dashboard` into **⚙ Settings → AirNav Radar API** (stored masked in `service.json`, **server-side only** — the browser uses our `/api/acinfo` proxy). **Each upstream call is billed in credits**, so it is fetched **only** on an explicit row click (FOV box) or a flight-number hover, and cached per airframe for the session (static data 6 h, live 60 s). Off until a token is set. |
 
 ## ADS-B receiver setup (dump1090-fa + AirNav FlightStick)
 
@@ -1413,6 +1415,7 @@ from the notifier — happy to add that as a config switch if useful.
 │   ├── pushover.js               Pushover REST client
 │   ├── notifier.js               3-stage dispatch (radio/candidate/imminent) + dedup
 │   ├── adsbdb.js                 callsign → route, in-memory TTL cache
+│   ├── airnav.js                 AirNav On-Demand API v2 client (server-side, cached)
 │   ├── sgp4.js                   dependency-free SGP4 (ISS), TLE parse, TEME→ECEF
 │   ├── iss.js                    offline ISS transit + visible-pass prediction
 │   ├── store.js                  SQLite history (node:sqlite) + episode stats
@@ -1443,7 +1446,7 @@ from the notifier — happy to add that as a config switch if useful.
 │   ├── stp-update.path           click-to-update trigger watcher
 │   ├── stp-tle.service           ISS TLE refresh oneshot template
 │   └── stp-tle.timer             daily ISS TLE schedule (05:40 ±20 min)
-└── test/                         15 vitest files, 134 cases
+└── test/                         16 vitest files, 144 cases
 ```
 
 ## License

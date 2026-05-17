@@ -15,6 +15,7 @@ const PKG_VERSION = (() => {
 
 import { fetchAircraft } from './adsb.js';
 import { RouteLookup } from './adsbdb.js';
+import { AirnavClient } from './airnav.js';
 import { bodyAzEl, isObservable } from './geometry.js';
 import { lifecycleArray, updateLifecycle } from './lifecycle.js';
 import { Notifier } from './notifier.js';
@@ -135,6 +136,19 @@ export const DEFAULT_CONFIG = {
     looseThresholdDeg: 1.0,     // surface approaches up to here
   },
   routes: { enabled: true, ttlMs: 3600_000, negativeTtlMs: 300_000 },
+  // AirNav On-Demand API v2 (optional; off until a token is set). The
+  // token lives ONLY here / in service.json (masked in /api/config) — the
+  // browser calls our /api/acinfo proxy, never AirNav directly. Every
+  // call is billed in credits, so the client caches hard and the UI only
+  // fetches on an explicit row click / flight-number hover.
+  airnav: {
+    enabled: false,
+    token: '',
+    baseUrl: 'https://api.airnavradar.com/v2',
+    ttlMs: 6 * 3600_000,        // static airframe data — stable, cache 6 h
+    liveTtlMs: 60_000,          // live flight (route/pos) — cache 60 s
+    negativeTtlMs: 300_000,     // failures — 5 min
+  },
   predictor: {
     enabled: true,
     daysBack: 14,             // history window for the watchlist
@@ -177,6 +191,7 @@ function mergeConfig(user) {
     store:     { ...DEFAULT_CONFIG.store,     ...(user.store     ?? {}) },
     routes:    { ...DEFAULT_CONFIG.routes,    ...(user.routes    ?? {}) },
     iss:       { ...DEFAULT_CONFIG.iss,       ...(user.iss       ?? {}) },
+    airnav:    { ...DEFAULT_CONFIG.airnav,    ...(user.airnav    ?? {}) },
     update:    { ...DEFAULT_CONFIG.update,    ...(user.update    ?? {}) },
     predictor: { ...DEFAULT_CONFIG.predictor, ...(user.predictor ?? {}) },
     opensky:   { ...DEFAULT_CONFIG.opensky,   ...(user.opensky   ?? {}) },
@@ -215,6 +230,22 @@ export async function runService({
   const routeLookup = config.routes.enabled
     ? new RouteLookup({ fetchImpl, ttlMs: config.routes.ttlMs, negativeTtlMs: config.routes.negativeTtlMs })
     : { lookup: async () => null };
+
+  // AirNav client — rebuilt on a token/baseUrl change via applyConfigUpdate.
+  // Held in a mutable holder so the /api/acinfo proxy always uses the
+  // current token without restarting the service.
+  function buildAirnav() {
+    if (!config.airnav?.enabled || !config.airnav?.token) return null;
+    return new AirnavClient({
+      token: config.airnav.token,
+      baseUrl: config.airnav.baseUrl,
+      fetchImpl,
+      ttlMs: config.airnav.ttlMs,
+      liveTtlMs: config.airnav.liveTtlMs,
+      negativeTtlMs: config.airnav.negativeTtlMs,
+    });
+  }
+  let airnav = buildAirnav();
 
   const notifier = new Notifier({
     pushover,
@@ -378,6 +409,12 @@ export async function runService({
         hasToken: Boolean(config.pushover.token),
         hasUser:  Boolean(config.pushover.user),
       },
+      airnav: {
+        enabled: config.airnav.enabled,
+        baseUrl: config.airnav.baseUrl,
+        tokenMasked: mask(config.airnav.token),
+        hasToken: Boolean(config.airnav.token),
+      },
       optics: { ...config.optics },
       externalLinks: { ...config.externalLinks },
       tracker: { ...config.tracker },
@@ -527,6 +564,24 @@ export async function runService({
       applied.externalLinks = { ...config.externalLinks };
     }
 
+    if (patch.airnav && typeof patch.airnav === 'object') {
+      const a = patch.airnav;
+      // Never accept the masked placeholder back as the real token.
+      if (typeof a.token === 'string' && a.token && !a.token.startsWith('••••')) {
+        config.airnav.token = a.token.trim();
+      }
+      if (typeof a.enabled === 'boolean') config.airnav.enabled = a.enabled;
+      if (typeof a.baseUrl === 'string' && a.baseUrl.trim()) {
+        config.airnav.baseUrl = a.baseUrl.trim();
+      }
+      airnav = buildAirnav();   // hot-swap the client with the new token
+      applied.airnav = {
+        enabled: config.airnav.enabled,
+        baseUrl: config.airnav.baseUrl,
+        hasToken: Boolean(config.airnav.token),
+      };
+    }
+
     // Persist the service-level changes (pushover, optics, externalLinks)
     // back to service.json. observer.json is written separately above.
     if (configPaths.service) {
@@ -543,6 +598,7 @@ export async function runService({
           pushover:      { ...(existing.pushover      ?? {}), ...config.pushover },
           optics:        { ...(existing.optics        ?? {}), ...config.optics },
           externalLinks: { ...(existing.externalLinks ?? {}), ...config.externalLinks },
+          airnav:        { ...(existing.airnav        ?? {}), ...config.airnav },
         };
         await fsp.writeFile(configPaths.service, JSON.stringify(merged, null, 2), 'utf8');
       } catch (e) {
@@ -601,6 +657,9 @@ export async function runService({
     getConfig: () => publicConfig(),
     updateConfig: applyConfigUpdate,
     requestUpdate,
+    // AirNav proxy: null when disabled/no token → /api/acinfo 404s and the
+    // UI degrades. The token never leaves the server.
+    requestAcInfo: (hex) => (airnav ? airnav.lookup(hex) : null),
   });
   if (httpServer) await httpServer.start();
 

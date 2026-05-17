@@ -182,7 +182,7 @@ function renderTracking(state) {
       <td>${fmtDistance(rangeM)}</td>
       <td>${iss ? '—' : fmtSpeed(ac?.groundSpeedMs)}</td>
       <td>${iss ? 'LEO' : fmtAlt(ac?.altMmsl)}</td>
-      <td>${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '—')}</td>
+      <td class="flight-cell" data-hex="${e.icao ?? ''}">${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '—')}</td>
       <td>${iss ? 'orbit' : (e.icao ? e.icao.toUpperCase() : '—')}</td>
       <td>${iss ? '—' : fmtRoute(route?.origin?.iata ?? route?.origin?.icao, route?.destination?.iata ?? route?.destination?.icao)}</td>
     `;
@@ -263,7 +263,7 @@ function historyTr(e, absIdx) {
     <td>${iss ? 'LEO' : fmtAlt(e.altitude_m)}</td>
     <td class="stage-${e.stage}">${e.stage}</td>
     <td>${outcomeCell}</td>
-    <td>${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '')}</td>
+    <td class="flight-cell" data-hex="${e.icao ?? ''}">${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '')}</td>
     <td>${iss ? 'orbit' : e.icao.toUpperCase()}</td>
     <td>${iss ? '—' : fmtRoute(e.origin, e.destination)}</td>
   `;
@@ -670,6 +670,90 @@ function renderFovMap(meta) {
   fovMap.hidden = !fovMap.innerHTML;
 }
 
+// ---- AirNav on-demand info (lazy, click + hover, shared session cache) ----
+// Each upstream call is billed, so we cache per hex for the whole session;
+// click (FOV box) and hover (popover) share this cache, and a failed/empty
+// result is dropped after 60 s so a later try (e.g. token just added) works.
+const acInfoCache = new Map(); // hex → Promise<info|null>
+function fetchAcInfo(hex) {
+  const k = String(hex || '').toLowerCase();
+  if (!/^[0-9a-f]{6}$/.test(k)) return Promise.resolve(null);
+  if (acInfoCache.has(k)) return acInfoCache.get(k);
+  const p = fetch(`/api/acinfo?hex=${k}`)
+    .then(r => (r.ok ? r.json() : null))
+    .catch(() => null);
+  acInfoCache.set(k, p);
+  p.then((v) => { if (!v) setTimeout(() => acInfoCache.delete(k), 60_000); });
+  return p;
+}
+
+const fovAcinfo = $('#fov-acinfo');
+
+function airportStr(x) {
+  if (!x) return null;
+  const code = x.iata || x.icao || x.name || '?';
+  return x.city ? `${code} (${x.city})` : code;
+}
+function acinfoRows(info) {
+  const a = info.aircraft;
+  const f = info.live;
+  const rows = [];
+  if (a) {
+    if (a.registration) rows.push(specRow('Reg', a.registration));
+    const model = [a.typeDescription, a.typeIcao ? `(${a.typeIcao})` : '']
+      .filter(Boolean).join(' ');
+    if (model) rows.push(specRow('Type', model));
+    if (a.classDescription) rows.push(specRow('Class', a.classDescription));
+    if (a.operator) rows.push(specRow('Operator', a.operator));
+    if (a.serialNumber) rows.push(specRow('MSN', a.serialNumber));
+    if (a.firstFlight) rows.push(specRow('First flight', a.firstFlight));
+    if (a.decommissioned) rows.push(specRow('Note', 'decommissioned'));
+  }
+  if (f) {
+    if (f.flight || f.callsign) rows.push(specRow('Flight', f.flight || f.callsign));
+    if (f.airline) rows.push(specRow('Airline', f.airline));
+    const route = [airportStr(f.origin), airportStr(f.destination)].filter(Boolean).join(' → ');
+    if (route) rows.push(specRow('Route', route));
+    if (f.scheduledDeparture) rows.push(specRow('Sched dep', f.scheduledDeparture));
+    if (f.estimatedArrival) rows.push(specRow('Est arr', f.estimatedArrival));
+    if (f.status) rows.push(specRow('Status', f.status));
+  }
+  return rows.join('');
+}
+function acPhotoImg(info) {
+  const url = info?.aircraft?.photo;
+  return url
+    ? `<img class="ac-photo" src="${url}" alt="aircraft" loading="lazy" referrerpolicy="no-referrer">`
+    : '';
+}
+function acinfoHtml(info) {
+  return '<div class="spec-head">AirNav<span class="spec-klass">on-demand</span></div>'
+    + acPhotoImg(info) + acinfoRows(info)
+    + '<div class="spec-foot">AirNav On-Demand API · billed per call · cached this session.</div>';
+}
+async function renderFovAcinfo(meta) {
+  if (!fovAcinfo) return;
+  const hex = String(meta?.icao ?? '').toLowerCase();
+  if (!meta || meta.isISS || !/^[0-9a-f]{6}$/.test(hex)) {
+    fovAcinfo.hidden = true; fovAcinfo.innerHTML = ''; fovAcinfo.dataset.hex = '';
+    return;
+  }
+  // refreshFovPane runs every 2 s — if this aircraft is already shown, do
+  // nothing (no flicker, no re-render; the fetch is cached anyway).
+  if (fovAcinfo.dataset.hex === hex) return;
+  fovAcinfo.dataset.hex = hex;
+  fovAcinfo.hidden = false;
+  fovAcinfo.innerHTML = '<div class="spec-head">AirNav<span class="spec-klass">loading…</span></div>';
+  const info = await fetchAcInfo(hex);
+  // A newer pin may have replaced this one while we awaited — bail if so.
+  if (!pin || String(pin.acMeta?.icao ?? '').toLowerCase() !== hex) return;
+  if (!info) {
+    fovAcinfo.hidden = true; fovAcinfo.innerHTML = ''; fovAcinfo.dataset.hex = '';
+    return;
+  }
+  fovAcinfo.innerHTML = acinfoHtml(info);
+}
+
 function specRow(label, value) {
   return `<div class="spec-row"><span class="spec-k">${label}</span>`
        + `<span class="spec-v">${value}</span></div>`;
@@ -729,12 +813,14 @@ function refreshFovPane() {
     renderFovSketch(pin.input, { pinned: true, label: pin.label });
     renderFovSpecs(pin.acMeta);
     renderFovMap(pin.acMeta);
+    renderFovAcinfo(pin.acMeta);   // AirNav: only on an explicit click/pin
   } else if (auto) {
     renderFovSketch(fromLifecycleEntry(auto),
       { pinned: false, label: describeEntry(auto) });
     const m = acMetaFromLifecycle(auto);
     renderFovSpecs(m);
     renderFovMap(m);
+    renderFovAcinfo(null);         // never auto-fetch (billed per call)
   } else {
     renderFovEmpty(
       `No close approach right now (sep &lt; ${FOV_NEAR_DEG.toFixed(0)}°). ` +
@@ -742,6 +828,7 @@ function refreshFovPane() {
     );
     renderFovSpecs(null);
     renderFovMap(null);
+    renderFovAcinfo(null);
   }
   highlightPinnedRow();
 }
@@ -790,9 +877,62 @@ document.body.addEventListener('click', (ev) => {
     }
   }
 });
+// ---- Flight-number hover → ad-hoc AirNav photo + route popover ----------
+// Dwell ~450 ms on a flight cell, then fetch (shared/cached with the FOV
+// box). ISS / unknown hex never triggers it. Cancels on mouse-out / scroll.
+const acPop = $('#ac-popover');
+let acHoverTimer = null;
+function hideAcPop() {
+  if (acHoverTimer) { clearTimeout(acHoverTimer); acHoverTimer = null; }
+  if (acPop) { acPop.hidden = true; acPop.innerHTML = ''; }
+}
+function placeAcPop(x, y) {
+  acPop.hidden = false;
+  const r = acPop.getBoundingClientRect();
+  const pad = 12;
+  let left = x + 16;
+  let top = y + 16;
+  if (left + r.width + pad > window.innerWidth) left = x - r.width - 16;
+  if (top + r.height + pad > window.innerHeight) top = y - r.height - 16;
+  acPop.style.left = `${Math.max(pad, left)}px`;
+  acPop.style.top = `${Math.max(pad, top)}px`;
+}
+function acPopHtml(info) {
+  const f = info.live;
+  const a = info.aircraft;
+  const title = (f && (f.flight || f.callsign)) || (a && a.registration) || 'aircraft';
+  const sub = [a && (a.typeDescription || a.typeIcao), f && f.airline].filter(Boolean).join(' · ');
+  const route = f ? [airportStr(f.origin), airportStr(f.destination)].filter(Boolean).join(' → ') : '';
+  return (a && a.photo
+    ? `<img class="ac-photo" src="${a.photo}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '')
+    + `<div class="acpop-title">${title}</div>`
+    + (sub ? `<div class="acpop-sub">${sub}</div>` : '')
+    + (route ? `<div class="acpop-sub">${route}${f && f.status ? ` · ${f.status}` : ''}</div>` : '');
+}
+document.body.addEventListener('mouseover', (ev) => {
+  const cell = ev.target.closest && ev.target.closest('.flight-cell');
+  if (!cell || !acPop) return;
+  const hex = (cell.dataset.hex || '').toLowerCase();
+  if (!/^[0-9a-f]{6}$/.test(hex)) return;     // ISS / unknown → no popover
+  const x = ev.clientX;
+  const y = ev.clientY;
+  if (acHoverTimer) clearTimeout(acHoverTimer);
+  acHoverTimer = setTimeout(async () => {
+    const info = await fetchAcInfo(hex);
+    if (!info || !cell.matches(':hover')) return;
+    acPop.innerHTML = acPopHtml(info);
+    placeAcPop(x, y);
+  }, 450);
+});
+document.body.addEventListener('mouseout', (ev) => {
+  if (ev.target.closest && ev.target.closest('.flight-cell')) hideAcPop();
+});
+window.addEventListener('scroll', hideAcPop, true);
+
 // Esc unpins, restoring auto mode — discoverable shortcut without a UI
 // button cluttering the sky-row pane.
 document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') hideAcPop();
   if (ev.key === 'Escape' && pin) { pin = null; refreshFovPane(); }
 });
 
@@ -828,6 +968,7 @@ function fillSettingsForm(cfg) {
     // tell something is configured without exposing the secret.
     if (el.name === 'pushover.token') v = cfg.pushover?.tokenMasked ?? '';
     if (el.name === 'pushover.user')  v = cfg.pushover?.userMasked  ?? '';
+    if (el.name === 'airnav.token')   v = cfg.airnav?.tokenMasked   ?? '';
     if (el.type === 'checkbox') el.checked = Boolean(v);
     else if (v == null) el.value = '';
     else el.value = v;
@@ -870,7 +1011,8 @@ settingsForm.addEventListener('submit', async (ev) => {
       value = el.value;
       // Don't ship the masked placeholder back as the new secret. The server
       // also guards against this but stripping it here makes the intent clear.
-      if ((el.name === 'pushover.token' || el.name === 'pushover.user')
+      if ((el.name === 'pushover.token' || el.name === 'pushover.user'
+           || el.name === 'airnav.token')
           && typeof value === 'string' && value.startsWith('••••')) continue;
     }
     setNested(patch, el.name, value);

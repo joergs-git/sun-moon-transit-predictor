@@ -82,12 +82,13 @@ async function readJsonBody(req, maxBytes = 64 * 1024) {
  *   getConfig?: () => object,
  *   updateConfig?: (patch: object) => Promise<{ ok: boolean, applied: object, warnings?: string[] }>,
  *   requestUpdate?: () => Promise<{ ok: boolean, pending?: boolean, message?: string }>,
+ *   requestAcInfo?: (hex: string) => Promise<object|null>,
  * }} opts
  */
 export function createHttpServer(opts) {
   const {
     port, host = '0.0.0.0', getState, store, webRoot,
-    getConfig, updateConfig, requestUpdate,
+    getConfig, updateConfig, requestUpdate, requestAcInfo,
   } = opts;
 
   const server = createServer(async (req, res) => {
@@ -133,6 +134,25 @@ export function createHttpServer(opts) {
           return jsonResponse(res, 200, result);
         } catch (e) {
           return jsonResponse(res, 500, { error: String(e?.message ?? e) });
+        }
+      }
+      if (url.pathname === '/api/acinfo') {
+        // Server-side AirNav proxy. The token stays here; the browser only
+        // ever talks to this endpoint. Lazy: the UI calls it on a row
+        // click / flight-number hover (each upstream call is billed).
+        if (!requestAcInfo) return jsonResponse(res, 404, { error: 'acinfo api disabled' });
+        const hex = (url.searchParams.get('hex') ?? '').trim().toLowerCase();
+        if (!/^[0-9a-f]{6}$/.test(hex)) {
+          return jsonResponse(res, 400, { error: 'hex must be a 6-digit ICAO 24-bit code' });
+        }
+        try {
+          const info = await requestAcInfo(hex);
+          if (!info) {
+            return jsonResponse(res, 404, { error: 'no aircraft info (AirNav disabled or unknown airframe)' });
+          }
+          return jsonResponse(res, 200, info);
+        } catch (e) {
+          return jsonResponse(res, 502, { error: String(e?.message ?? e) });
         }
       }
       if (url.pathname === '/api/history') {

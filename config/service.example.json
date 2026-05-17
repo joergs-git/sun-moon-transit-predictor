@@ -59,6 +59,14 @@
     "thresholdDeg": 0.3,
     "looseThresholdDeg": 1.0
   },
+  "airnav": {
+    "enabled": false,
+    "token": "",
+    "baseUrl": "https://api.airnavradar.com/v2",
+    "ttlMs": 21600000,
+    "liveTtlMs": 60000,
+    "negativeTtlMs": 300000
+  },
   "update": {
     "enabled": true,
     "triggerPath": "./data/update.request",
