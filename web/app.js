@@ -389,6 +389,10 @@ function renderIssPass(iss) {
   const tLine = t
     ? `☀🌙 <b>Next ISS ${t.body} transit</b> ${fmtWhenAbs(t.atMs)} · `
       + `sep ${fmtSep(t.sepDeg)}`
+      + (t.tentative
+        ? ` <span class="iss-tentative">— tentative (&gt; ${iss.notifyWithinDays ?? 3} d out:`
+          + ` refines with each daily TLE; no alert until closer)</span>`
+        : '')
     : `☀🌙 <b>Next ISS Sun/Moon transit</b>: none in the next `
       + `${iss.horizonDays ?? '—'} days (raise <code>iss.horizonMs</code> to look further).`;
 

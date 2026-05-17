@@ -160,7 +160,7 @@ if [ ! -f "$SERVICE_FILE_LOCAL" ] || [ "$OVERWRITE_CONFIG" -eq 1 ]; then
   "routes":    { "enabled": true, "ttlMs": 3600000, "negativeTtlMs": 300000 },
   "predictor": { "enabled": true, "daysBack": 14, "minRepeats": 2, "bucketMinutes": 60, "rebuildIntervalMs": 3600000, "lookAheadMs": 86400000 },
   "lifecycle": { "plannedWindowMs": 3600000, "imminentWindowMs": 30000, "staleGraceMs": 1800000, "maxEntries": 10, "coastMs": 25000 },
-  "iss":       { "enabled": true, "tlePath": "$REPO_DIR/data/iss.tle", "horizonMs": 1209600000, "visibleHorizonMs": 2592000000, "recomputeMs": 600000, "thresholdDeg": 0.3, "looseThresholdDeg": 1.0 },
+  "iss":       { "enabled": true, "tlePath": "$REPO_DIR/data/iss.tle", "horizonMs": 1209600000, "visibleHorizonMs": 2592000000, "notifyWithinMs": 259200000, "recomputeMs": 600000, "thresholdDeg": 0.3, "looseThresholdDeg": 1.0 },
   "update":    { "enabled": true, "triggerPath": "$REPO_DIR/data/update.request", "debounceMs": 30000 },
   "opensky":   { "enabled": $OPENSKY_ENABLED, "airports": $OPENSKY_AIRPORTS_JSON, "lookbackDays": 7 }
 }
