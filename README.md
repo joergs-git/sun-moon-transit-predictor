@@ -270,6 +270,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M22 (v0.10.0) | ISS Pushover (heads-up the moment a Sun/Moon transit is predicted) + History rows via the shared notifier path; "next visible ISS pass" line in Sky-now (el > 20°, after dusk, station sunlit — offline cylindrical-shadow test); Alert-learning aggregates exclude ISS (kept in the History table); Tracking table reordered like History (leading Sun/Moon icon, Flight/ICAO/Route to the right); detection funnel gains a live "Live planes" bar and "detected" → "Total detected" | done |
 | M23 (v0.10.1) | Click-to-update no longer fails silently: server self-diagnostic (`state.update`: pending → consumed → stuck), honest UI status line, `ok:false` surfaced; `auto-update.sh` warns when `stp-update.path` is missing; troubleshooting docs (the missing-watcher root cause on Pis upgraded from < v0.8.1) | done |
 | M24 (v0.10.2) | Fixed badge stuck on "updating…" forever (a consumed-but-no-restart / no-op update never cleared, survived refresh): server auto-clears `consumed`→idle after 20 s and `stuck`→idle after 10 min (cleaning the stale trigger); frontend state machine always restores the version badge. Sky-now now shows the next visible ISS pass **and** the next Sun/Moon transit even weeks out (with date), via a 30-day visible-pass horizon (early-return, cheap) and a 14-day transit horizon | done |
+| M25 (v0.10.3) | "No ISS info" out of the box fixed: `install-pi5.sh` now does an initial TLE fetch and installs a daily `stp-tle.timer` + `stp-tle.service` (the running service still never fetches — offline by default) so `data/iss.tle` exists and stays fresh automatically | done |
 
 ## Hardware + software bill of materials
 
@@ -597,15 +598,21 @@ small station glyph instead of an aircraft silhouette in the sketch).
   propagator (`src/sgp4.js`, validated against the official Spacetrack
   #3 / Vallado *88888* verification vectors) applied to a local TLE file —
   the running service never touches the network for this.
-* **Get / refresh the TLE** (opt-in; the feature stays inactive until the
-  file exists). An ISS TLE older than ~3 days noticeably degrades transit
-  timing, so refresh it daily:
+* **The TLE.** The feature stays inactive ("no ISS info" in Sky-now) until
+  `data/iss.tle` exists. Since v0.10.3 `scripts/install-pi5.sh` does an
+  initial fetch **and** installs a daily **`stp-tle.timer`** (05:40 ± 20 min,
+  Persistent) — so on a normal Pi install ISS info just appears and stays
+  fresh. Re-run `install-pi5.sh` once if you upgraded from < v0.10.3.
 
   ```bash
+  # see / force a refresh:
+  systemctl list-timers | grep stp-tle
   node scripts/refresh-tle.js          # → data/iss.tle (Celestrak, CATNR 25544)
-  # cron example (06:15 daily):
-  # 15 6 * * *  cd /home/<user>/sun-moon-transit-predictor && node scripts/refresh-tle.js
+  systemctl start stp-tle.service      # same, via the timer's unit
   ```
+  An ISS TLE older than ~3 days noticeably degrades transit timing; the
+  daily timer keeps it current. No network at install time? The timer
+  retries — or run the command above once you're online.
 
 * **Tuning** (`config/service.json → iss`): `horizonMs` (how far ahead to
   scan for the next pass, default 48 h — an ISS solar/lunar transit at a
