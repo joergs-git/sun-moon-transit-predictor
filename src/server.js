@@ -155,6 +155,16 @@ export function createHttpServer(opts) {
           return jsonResponse(res, 502, { error: String(e?.message ?? e) });
         }
       }
+      if (url.pathname === '/api/acstats') {
+        // Persistent "how often did it come by" tally over all detected
+        // traffic. limit governs both the top lists and the TOP-10 chart.
+        const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? '20')));
+        return jsonResponse(res, 200, {
+          icao: store.topSightings({ kind: 'icao', limit }),
+          flight: store.topSightings({ kind: 'flight', limit }),
+          totals: store.sightingTotals(),
+        });
+      }
       if (url.pathname === '/api/history') {
         const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') ?? '100')));
         // Episode-consolidated history view (v0.7.8+): one row per real

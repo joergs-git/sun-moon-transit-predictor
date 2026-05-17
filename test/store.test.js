@@ -218,3 +218,55 @@ describe('HistoryStore', () => {
     }
   });
 });
+
+describe('HistoryStore — aircraft sightings (persistent tally)', () => {
+  const GAP = 30 * 60 * 1000;
+
+  it('counts a visit on first sight and again only after the gap', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      const t0 = 1_000_000_000_000;
+      expect(store.recordSighting('icao', '3c6444', t0, GAP)).toBe(true);          // new
+      expect(store.recordSighting('icao', '3c6444', t0 + 5 * 60_000, GAP)).toBe(false); // within gap
+      expect(store.recordSighting('icao', '3c6444', t0 + 40 * 60_000, GAP)).toBe(true); // > gap → +1
+      const [row] = store.topSightings({ kind: 'icao' });
+      expect(row.key).toBe('3c6444');
+      expect(row.visits).toBe(2);
+      expect(row.firstSeenMs).toBe(t0);
+      expect(row.lastSeenMs).toBe(t0 + 40 * 60_000);
+    } finally { store.close(); }
+  });
+
+  it('touchSighting advances last_seen without a visit bump', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      const t0 = 2_000_000_000_000;
+      store.recordSighting('flight', 'DLH4AB', t0, GAP);
+      store.touchSighting('flight', 'DLH4AB', t0 + 90_000);
+      const [row] = store.topSightings({ kind: 'flight' });
+      expect(row.visits).toBe(1);
+      expect(row.lastSeenMs).toBe(t0 + 90_000);
+    } finally { store.close(); }
+  });
+
+  it('ranks by visits desc and separates kinds; totals aggregate', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      let t = 3_000_000_000_000;
+      const visit = (kind, key, n) => {
+        for (let i = 0; i < n; i++) { store.recordSighting(kind, key, t, GAP); t += GAP + 1000; }
+      };
+      visit('icao', 'aaa111', 3);
+      visit('icao', 'bbb222', 5);
+      visit('flight', 'BAW7', 2);
+      const ic = store.topSightings({ kind: 'icao', limit: 10 });
+      expect(ic.map(r => r.key)).toEqual(['bbb222', 'aaa111']);
+      expect(ic[0].visits).toBe(5);
+      expect(store.topSightings({ kind: 'flight' }).length).toBe(1);
+      const tot = store.sightingTotals();
+      expect(tot.icao.distinctKeys).toBe(2);
+      expect(tot.icao.totalVisits).toBe(8);
+      expect(tot.flight.totalVisits).toBe(2);
+    } finally { store.close(); }
+  });
+});

@@ -62,6 +62,22 @@ CREATE TABLE IF NOT EXISTS schedule_observations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_schedule_ts ON schedule_observations(timestamp_ms DESC);
+
+-- Persistent "how often did this come by" tally over ALL detected ADS-B
+-- traffic (not just transits). One row per airframe (kind='icao', key=hex)
+-- and per ADS-B callsign (kind='flight'). A "visit" is a fresh sighting
+-- after a ≥ gap absence (default 30 min) — loiter / continuous tracking
+-- stays one visit. Survives restarts (that's the whole point).
+CREATE TABLE IF NOT EXISTS aircraft_sightings (
+  kind          TEXT NOT NULL,
+  key           TEXT NOT NULL,
+  visits        INTEGER NOT NULL DEFAULT 1,
+  first_seen_ms INTEGER NOT NULL,
+  last_seen_ms  INTEGER NOT NULL,
+  PRIMARY KEY (kind, key)
+);
+CREATE INDEX IF NOT EXISTS idx_sightings_top
+  ON aircraft_sightings(kind, visits DESC, last_seen_ms DESC);
 `;
 
 export class HistoryStore {
@@ -97,6 +113,74 @@ export class HistoryStore {
         (source, fetched_at_ms, flight, body, timestamp_ms, airport, kind)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
+
+    this._sightSel = this.db.prepare(
+      'SELECT visits, first_seen_ms, last_seen_ms FROM aircraft_sightings WHERE kind = ? AND key = ?',
+    );
+    this._sightIns = this.db.prepare(
+      'INSERT INTO aircraft_sightings (kind, key, visits, first_seen_ms, last_seen_ms) VALUES (?, ?, 1, ?, ?)',
+    );
+    this._sightUpd = this.db.prepare(
+      'UPDATE aircraft_sightings SET visits = ?, last_seen_ms = ? WHERE kind = ? AND key = ?',
+    );
+    this._sightTouch = this.db.prepare(
+      'UPDATE aircraft_sightings SET last_seen_ms = ? WHERE kind = ? AND key = ?',
+    );
+  }
+
+  /**
+   * Record a sighting of `key` (kind 'icao' | 'flight'). A new row, or a
+   * sighting ≥ `gapMs` after the stored last_seen, counts as a fresh visit
+   * (+1); otherwise it just advances last_seen. Returns true if it was a
+   * new visit. Persistent — the whole point is surviving restarts.
+   *
+   * @param {'icao'|'flight'} kind
+   * @param {string} key
+   * @param {number} nowMs
+   * @param {number} gapMs
+   * @returns {boolean}
+   */
+  recordSighting(kind, key, nowMs, gapMs) {
+    if (!key) return false;
+    const row = this._sightSel.get(kind, key);
+    if (!row) {
+      this._sightIns.run(kind, key, nowMs, nowMs);
+      return true;
+    }
+    const isNewVisit = (nowMs - row.last_seen_ms) > gapMs;
+    this._sightUpd.run(row.visits + (isNewVisit ? 1 : 0), nowMs, kind, key);
+    return isNewVisit;
+  }
+
+  /** Advance last_seen only (continuous presence) — no visit increment. */
+  touchSighting(kind, key, nowMs) {
+    if (!key) return;
+    this._sightTouch.run(nowMs, kind, key);
+  }
+
+  /**
+   * Top sightings of one kind, by visit count (desc), then recency.
+   * @param {{ kind?: 'icao'|'flight', limit?: number }} [opts]
+   * @returns {Array<{key:string,visits:number,firstSeenMs:number,lastSeenMs:number}>}
+   */
+  topSightings({ kind = 'icao', limit = 50 } = {}) {
+    const n = Math.min(500, Math.max(1, limit | 0));
+    return this.db.prepare(
+      `SELECT key, visits, first_seen_ms AS firstSeenMs, last_seen_ms AS lastSeenMs
+       FROM aircraft_sightings WHERE kind = ?
+       ORDER BY visits DESC, last_seen_ms DESC LIMIT ?`,
+    ).all(kind, n);
+  }
+
+  /** Totals for the stats header: distinct keys + summed visits per kind. */
+  sightingTotals() {
+    const r = this.db.prepare(
+      `SELECT kind, COUNT(*) AS distinctKeys, COALESCE(SUM(visits),0) AS totalVisits
+       FROM aircraft_sightings GROUP BY kind`,
+    ).all();
+    const out = { icao: { distinctKeys: 0, totalVisits: 0 }, flight: { distinctKeys: 0, totalVisits: 0 } };
+    for (const x of r) out[x.kind] = { distinctKeys: x.distinctKeys, totalVisits: x.totalVisits };
+    return out;
   }
 
   /**

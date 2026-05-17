@@ -212,6 +212,27 @@
     </div>
   </section>
 
+  <section id="acstats-section">
+    <h2>Aircraft stats</h2>
+    <p class="hint">
+      Persistent tally over <b>all</b> detected ADS-B traffic (survives
+      restarts). A <i>visit</i> = a fresh sighting after a ≥ 30-min gap, so
+      loiter / continuous tracking counts once. Top 10 by visits.
+    </p>
+    <div class="acstats-grid">
+      <div class="acstats-col">
+        <div class="acstats-head">By airframe (ICAO hex)
+          <span class="acstats-sub" id="acstats-icao-tot">—</span></div>
+        <div class="acstats-bars" id="acstats-icao"></div>
+      </div>
+      <div class="acstats-col">
+        <div class="acstats-head">By flight (ADS-B callsign)
+          <span class="acstats-sub" id="acstats-flight-tot">—</span></div>
+        <div class="acstats-bars" id="acstats-flight"></div>
+      </div>
+    </div>
+  </section>
+
   <footer>
     <span id="observer"></span>
   </footer>

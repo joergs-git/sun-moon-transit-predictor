@@ -475,6 +475,44 @@ async function pollHistory() {
 // rarely. The window matches the predictor's daysBack default of 14.
 function fmtPct(n) { return n == null ? '—' : `${n.toFixed(0)}%`; }
 
+// Persistent aircraft-sightings stats: TOP-10 horizontal bars per kind
+// (airframe hex / ADS-B callsign), scaled to the busiest entry.
+function renderAcstatsBars(elId, rows) {
+  const box = $(elId);
+  if (!box) return;
+  const top = (rows ?? []).slice(0, 10);
+  if (top.length === 0) {
+    box.innerHTML = '<div class="acstats-empty">No traffic recorded yet.</div>';
+    return;
+  }
+  const max = top[0].visits || 1;
+  box.innerHTML = top.map((r) => {
+    const pct = Math.max(3, Math.round((r.visits / max) * 100));
+    const title = `${r.visits} visit${r.visits === 1 ? '' : 's'} · first ${fmtDateTime(r.firstSeenMs)} · last ${fmtDateTime(r.lastSeenMs)}`;
+    const label = (r.key || '?').toUpperCase();
+    return `<div class="acstats-row" title="${title}">`
+      + `<span class="acstats-label">${label}</span>`
+      + `<span class="acstats-track"><span class="acstats-bar" style="width:${pct}%"></span></span>`
+      + `<span class="acstats-val">${r.visits}</span></div>`;
+  }).join('');
+}
+
+async function pollAcstats() {
+  try {
+    const res = await fetch('/api/acstats?limit=10');
+    if (!res.ok) return;
+    const d = await res.json();
+    renderAcstatsBars('#acstats-icao', d.icao);
+    renderAcstatsBars('#acstats-flight', d.flight);
+    const t = d.totals ?? {};
+    const fmtT = (x) => `${x?.distinctKeys ?? 0} unique · ${x?.totalVisits ?? 0} visits`;
+    const a = $('#acstats-icao-tot');
+    const b = $('#acstats-flight-tot');
+    if (a) a.textContent = fmtT(t.icao);
+    if (b) b.textContent = fmtT(t.flight);
+  } catch { /* ignore */ }
+}
+
 async function pollLearning() {
   try {
     const res = await fetch('/api/learning?windowDays=14');
@@ -1192,6 +1230,8 @@ setInterval(tickClock, 1000);
 pollState();
 pollHistory();
 pollLearning();
+pollAcstats();
 setInterval(pollState, STATE_INTERVAL_MS);
 setInterval(pollHistory, HISTORY_INTERVAL_MS);
 setInterval(pollLearning, LEARNING_INTERVAL_MS);
+setInterval(pollAcstats, LEARNING_INTERVAL_MS);

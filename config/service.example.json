@@ -36,6 +36,11 @@
     "ttlMs": 3600000,
     "negativeTtlMs": 300000
   },
+  "sightings": {
+    "enabled": true,
+    "gapMs": 1800000,
+    "flushMs": 300000
+  },
   "predictor": {
     "enabled": true,
     "daysBack": 14,

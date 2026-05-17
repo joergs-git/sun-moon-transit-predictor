@@ -779,3 +779,63 @@ tr.empty td.no-bodies {
   letter-spacing: 0.02em;
   line-height: 1.5;
 }
+
+/* Aircraft-stats section: two columns of TOP-10 horizontal bars. */
+.acstats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+.acstats-head {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 4px;
+}
+.acstats-sub {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  opacity: 0.75;
+  float: right;
+  font-size: 11px;
+}
+.acstats-row {
+  display: grid;
+  grid-template-columns: 92px 1fr 34px;
+  align-items: center;
+  gap: 8px;
+  margin: 3px 0;
+}
+.acstats-label {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acstats-track {
+  height: 12px;
+  background: rgba(139, 148, 158, 0.12);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.acstats-bar {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+.acstats-val {
+  text-align: right;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+.acstats-empty { color: var(--muted); font-size: 12px; padding: 8px 0; }
