@@ -125,6 +125,10 @@
            ADS-B `t` (ICAO type) field via web/aircraft-types.js — no network,
            no photos. Hidden until a type is resolvable. -->
       <div id="fov-specs" class="fov-specs" hidden></div>
+      <!-- Offline plan-view mini-map (observer + aircraft + sight line),
+           pure SVG from our own ADS-B data — no tiles/API. Hidden for ISS
+           or when no lat/lon is available. -->
+      <div id="fov-map" class="fov-map" hidden></div>
     </section>
   </div>
 
