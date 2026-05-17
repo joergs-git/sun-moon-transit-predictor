@@ -217,7 +217,21 @@ tr.row-stale td  { color: var(--muted); }
    overrides it (an actual ISS disc graze is the headline event). */
 tr.row-iss td { background: rgba(80, 200, 230, 0.10); }
 tr.row-iss td:first-child { box-shadow: inset 3px 0 0 #50c8e6; }
-tr.row-iss td:nth-child(5) { color: #8fe3f5; font-weight: 600; }
+/* History "Flight" cell carries the 🛰 ISS tag — it now sits at column 12
+   after the v0.9.1 reorder (icon, Transit, Recorded, Lead, Sep, Dist, Xing,
+   Speed, Alt, Stage, Outcome, Flight, ICAO, Route). Tracking is unchanged
+   (Flight is its 5th column) so keep both. */
+#history tr.row-iss td:nth-child(12) { color: #8fe3f5; font-weight: 600; }
+#tracking tr.row-iss td:nth-child(5) { color: #8fe3f5; font-weight: 600; }
+
+/* Narrow leading Sun/Moon icon column in History (replaces the Body text
+   column — the glyph carries the same info in far less width). */
+#history th.th-icon, #history td.td-icon {
+  text-align: center;
+  width: 1%;
+  white-space: nowrap;
+  font-size: 13px;
+}
 
 ul.legend {
   list-style: none;

@@ -242,21 +242,22 @@ function historyTr(e, absIdx) {
     ? e.leadTimeMs
     : (e.closest_at_ms - e.recorded_at_ms);
   const dt = discTransit(e);
+  const bodyIcon = e.body === 'Sun' ? '☀' : '🌙';
   tr.innerHTML = `
+    <td class="body-${e.body} td-icon" title="${e.body}">${bodyIcon}</td>
     <td class="stage-${e.stage}">${fmtDateTime(e.closest_at_ms)}</td>
     <td>${fmtDateTime(e.recorded_at_ms)}</td>
     <td title="Lead time = ${leadMs} ms">${fmtLead(leadMs)}</td>
+    <td>${fmtSep(e.closest_sep_deg)}</td>
+    <td>${fmtDistance(e.range_m)}</td>
+    <td title="${dtTooltip(dt)}">${fmtDiscTransit(dt)}</td>
+    <td>${iss ? '—' : fmtSpeed(e.ground_speed_ms)}</td>
+    <td>${iss ? 'LEO' : fmtAlt(e.altitude_m)}</td>
     <td class="stage-${e.stage}">${e.stage}</td>
     <td>${outcomeCell}</td>
-    <td class="body-${e.body}">${e.body}</td>
     <td>${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '')}</td>
     <td>${iss ? 'orbit' : e.icao.toUpperCase()}</td>
     <td>${iss ? '—' : fmtRoute(e.origin, e.destination)}</td>
-    <td>${iss ? 'LEO' : fmtAlt(e.altitude_m)}</td>
-    <td>${iss ? '—' : fmtSpeed(e.ground_speed_ms)}</td>
-    <td>${fmtDistance(e.range_m)}</td>
-    <td>${fmtSep(e.closest_sep_deg)}</td>
-    <td title="${dtTooltip(dt)}">${fmtDiscTransit(dt)}</td>
   `;
   return tr;
 }
