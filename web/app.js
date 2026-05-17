@@ -356,24 +356,42 @@ function azToCompass(deg) {
   return COMPASS[Math.round(((deg % 360) / 45)) % 8];
 }
 
-// Next naked-eye ISS pass line under the Sky-now table. Driven by
-// state.iss.visiblePass (computed offline from the TLE). Hidden when the
-// feature is inactive or no pass is predicted within the horizon.
+// "When", with an absolute date for anything past today/tomorrow so a pass
+// or transit weeks out is unambiguous ("in 24d · Wed 18 Jun 21:43").
+function fmtWhenAbs(ms) {
+  const inMs = ms - Date.now();
+  if (inMs <= 0) return 'now';
+  return `in ${fmtCountdownLong(inMs)} · ${fmtDateTime(ms)}`;
+}
+
+// Two ISS lines under the Sky-now table: the next naked-eye visible pass
+// and the next Sun/Moon disc transit — both shown even if weeks away.
+// The whole block hides only when the ISS feature is inactive (no TLE).
 function renderIssPass(iss) {
   const el = $('#iss-pass');
   if (!el) return;
-  const p = iss?.visiblePass;
-  if (!iss?.active || !p) { el.hidden = true; el.textContent = ''; return; }
-  const inMs = p.startMs - Date.now();
-  const when = inMs > 0 ? `in ${fmtCountdownLong(inMs)}` : 'now';
+  if (!iss?.active) { el.hidden = true; el.innerHTML = ''; return; }
   el.hidden = false;
-  el.innerHTML =
-    `🛰 <b>Next visible ISS pass</b> ${when}: `
-    + `${fmtTime(p.startMs)} (${azToCompass(p.startAzDeg)}) → `
-    + `${fmtTime(p.endMs)} (${azToCompass(p.endAzDeg)}) · `
-    + `max ${p.maxElevationDeg}° · ${p.durationS}s`;
-  el.title = 'Naked-eye pass: ISS above 20°, sky dark (Sun below −6°), '
-    + 'station sunlit. Offline SGP4 prediction; refreshes with the TLE.';
+
+  const p = iss.visiblePass;
+  const visLine = p
+    ? `🛰 <b>Next visible ISS pass</b> ${fmtWhenAbs(p.startMs)}: `
+      + `${fmtTime(p.startMs)} (${azToCompass(p.startAzDeg)}) → `
+      + `${fmtTime(p.endMs)} (${azToCompass(p.endAzDeg)}) · `
+      + `max ${p.maxElevationDeg}° · ${p.durationS}s`
+    : '🛰 <b>Next visible ISS pass</b>: none predicted in the scan window.';
+
+  const t = iss.nextTransit;
+  const tLine = t
+    ? `☀🌙 <b>Next ISS ${t.body} transit</b> ${fmtWhenAbs(t.atMs)} · `
+      + `sep ${fmtSep(t.sepDeg)}`
+    : `☀🌙 <b>Next ISS Sun/Moon transit</b>: none in the next `
+      + `${iss.horizonDays ?? '—'} days (raise <code>iss.horizonMs</code> to look further).`;
+
+  el.innerHTML = `<div>${visLine}</div><div class="iss-pass-2">${tLine}</div>`;
+  el.title = 'Visible pass = ISS above 20°, sky dark (Sun below −6°), '
+    + 'station sunlit. Transit = ISS crossing the Sun/Moon disc for this '
+    + 'site. Both are offline SGP4 predictions; refresh with the TLE.';
 }
 
 async function pollState() {
@@ -401,14 +419,12 @@ async function pollState() {
     const age = Math.round((Date.now() - state.lastUpdateMs) / 1000);
     status.textContent = `live · ${age}s ago · ${state.aircraftCount ?? 0} aircraft`;
     status.className = age > 10 ? 'status stale' : 'status live';
-    if (state.version) {
-      lastVersion = state.version;
-      const v = $('#app-version');
-      // Don't stomp the "updating…" badge while a request is in flight —
-      // renderUpdateStatus owns the badge text during that window.
-      if (v && !updateInFlight) v.textContent = `v${state.version}`;
-    }
-    renderUpdateStatus(state.update);
+    if (state.version) lastVersion = state.version;
+    // renderUpdateStatus authoritatively owns the badge for every state
+    // (incl. restoring the version on idle/stuck). Old servers without the
+    // diagnostic: just show the version.
+    if (state.update) renderUpdateStatus(state.update);
+    else setBadgeVersion();
     if (state.observer) {
       $('#observer').textContent =
         `Observer ${state.observer.name ?? ''} ` +
@@ -842,6 +858,7 @@ function setUpdateMsg(text, kind) {
 }
 
 let updateInFlight = false;
+let clientErrorUntil = 0;   // keep a failed-click error visible briefly
 async function triggerUpdate() {
   if (updateInFlight) return;
   const badge = $('#app-version');
@@ -877,6 +894,9 @@ async function triggerUpdate() {
     badge.textContent = `v${lastVersion ?? '—'}`;
     setUpdateMsg(`Update could not be started: ${e.message ?? e}`, 'err');
     updateInFlight = false;
+    // Keep this client-side error visible for a bit; otherwise the next
+    // poll's 'idle' would wipe it within 2 s.
+    clientErrorUntil = Date.now() + 10_000;
   }
 }
 
@@ -885,33 +905,46 @@ async function triggerUpdate() {
 //   consumed — updater picked it up; the service will restart now
 //   stuck    — nothing consumed the trigger → the stp-update.path unit is
 //              not installed/enabled (Linux/Pi only). Tell the user the fix.
-let updateStuckShown = false;
+//   idle     — nothing in progress (also the post-no-op / post-timeout
+//              state); badge MUST return to the version here.
+//
+// Authoritative: the server's state.update drives the badge so a browser
+// refresh always shows a sane state (the old bug: badge stuck on
+// "updating…" forever, even after refresh, because nothing cleared it).
+function setBadgeVersion() {
+  const badge = $('#app-version');
+  badge.classList.remove('updating');
+  badge.textContent = `v${lastVersion ?? '—'}`;
+}
 function renderUpdateStatus(upd) {
   if (!upd) return;
   const badge = $('#app-version');
   if (upd.status === 'pending') {
-    setUpdateMsg(`Update requested ${Math.round(upd.ageMs / 1000)}s ago — waiting for the background updater…`, '');
-  } else if (upd.status === 'consumed') {
+    updateInFlight = true;
     badge.classList.add('updating');
     badge.textContent = 'updating…';
-    setUpdateMsg('Updater picked it up — the service is pulling & restarting…', 'ok');
+    setUpdateMsg(`Update requested ${Math.round(upd.ageMs / 1000)}s ago — waiting for the background updater…`, '');
+  } else if (upd.status === 'consumed') {
+    updateInFlight = true;
+    badge.classList.add('updating');
+    badge.textContent = 'updating…';
+    setUpdateMsg('Updater picked up the request — pulling & restarting if there are changes…', 'ok');
   } else if (upd.status === 'stuck') {
-    if (!updateStuckShown) {
-      badge.classList.remove('updating');
-      badge.textContent = `v${lastVersion ?? '—'}`;
-      updateInFlight = false;
-      updateStuckShown = true;
-    }
+    updateInFlight = false;            // not going to happen → release the UI
+    setBadgeVersion();
     setUpdateMsg(
-      'No background updater consumed the request. The systemd '
+      'No background updater consumed the request within 12 s. The systemd '
       + '"stp-update.path" unit is not installed/enabled on this host '
-      + '(Linux/Pi only). One-time fix on the Pi: re-run '
-      + 'scripts/install-pi5.sh, then click again.',
+      + '(it is Linux/Pi only). One-time fix on the Pi: '
+      + 'cd ~/sun-moon-transit-predictor && bash scripts/install-pi5.sh',
       'err',
     );
   } else {
-    // idle: clear only if we weren't mid-request.
-    if (!updateInFlight) { setUpdateMsg(''); updateStuckShown = false; }
+    // idle — nothing pending (fresh, post-restart, no-op, or timed-out).
+    updateInFlight = false;
+    setBadgeVersion();
+    // Don't wipe a just-shown client-side error (failed POST / rejected).
+    if (Date.now() >= clientErrorUntil) setUpdateMsg('');
   }
 }
 $('#app-version').addEventListener('click', triggerUpdate);
