@@ -222,65 +222,85 @@
         masked once saved; leave the masked value untouched to keep it.
       </p>
 
-      <form id="settings-form">
+      <!-- novalidate: the JS submit handler + server validate every field
+           with specific messages. Native HTML constraint validation was
+           blocking the WHOLE form on one over-restrictive step (the
+           look-ahead step=30/min=10 bug) — leave correctness to the server. -->
+      <form id="settings-form" novalidate>
         <div class="settings-fields">
         <fieldset>
           <legend>Observer</legend>
-          <label>Name <input name="observer.name" type="text" placeholder="Rheine"></label>
-          <label title="Geographic latitude in decimal degrees. North positive.">Latitude °<input name="observer.latitudeDeg" type="number" step="0.0001" required></label>
-          <label title="Geographic longitude in decimal degrees. East positive.">Longitude °<input name="observer.longitudeDeg" type="number" step="0.0001" required></label>
-          <label title="Elevation above mean sea level in metres.">Elevation (m)<input name="observer.elevationM" type="number" step="0.1" required></label>
-          <label title="Site temperature in °C — used for refraction correction. Defaults to 10 °C.">Temperature (°C)<input name="observer.temperatureC" type="number" step="0.1"></label>
-          <label title="Atmospheric pressure in mbar — used for refraction correction. Defaults to 1010.">Pressure (mbar)<input name="observer.pressureMbar" type="number" step="0.1"></label>
+          <label>Name <input name="observer.name" type="text" placeholder="Rheine">
+            <small class="field-hint">Display label only — shown in the header and logs.</small></label>
+          <label>Latitude °<input name="observer.latitudeDeg" type="number" step="any" required>
+            <small class="field-hint">Decimal degrees, WGS84, N positive — e.g. <code>52.2870</code>. NOT 52°17′ DMS or the packed aviation form 52.1714.</small></label>
+          <label>Longitude °<input name="observer.longitudeDeg" type="number" step="any" required>
+            <small class="field-hint">Decimal degrees, WGS84, E positive — e.g. <code>7.4223</code>. Use the same value as your rbfeeder/AirNav station.</small></label>
+          <label>Elevation (m)<input name="observer.elevationM" type="number" step="any" required>
+            <small class="field-hint">Your site's height above sea level (≈MSL is fine). NOT height above ground, never 0 — Rheine ≈ 45.</small></label>
+          <label>Temperature (°C)<input name="observer.temperatureC" type="number" step="0.1">
+            <small class="field-hint">Optional, refraction model only. Blank = 10 °C.</small></label>
+          <label>Pressure (mbar)<input name="observer.pressureMbar" type="number" step="0.1">
+            <small class="field-hint">Optional, refraction model only. Blank = 1010.</small></label>
         </fieldset>
 
         <fieldset>
           <legend>Pushover</legend>
-          <label class="checkbox-row" title="Master switch. When off, no Pushover messages are sent regardless of stage.">
+          <label class="checkbox-row">
             <input name="pushover.enabled" type="checkbox"> Enabled
-          </label>
-          <label title="Pushover application token. Get this at pushover.net once you create an application.">App Token <input name="pushover.token" type="text" autocomplete="off" spellcheck="false"></label>
-          <label title="Pushover user key — identifies your account.">User Key <input name="pushover.user" type="text" autocomplete="off" spellcheck="false"></label>
-          <label title="Optional Pushover device identifier. Leave blank to deliver to all devices.">Device <input name="pushover.device" type="text" autocomplete="off"></label>
-          <label title="Lowest stage that triggers a Pushover. radio = earliest, imminent = only the ±30 s final alert.">
+            <small class="field-hint">Master switch for all phone alerts. Off = nothing is ever sent.</small></label>
+          <label>App Token <input name="pushover.token" type="text" autocomplete="off" spellcheck="false">
+            <small class="field-hint">From pushover.net → your application. Masked (••••) after save; leave the mask to keep it.</small></label>
+          <label>User Key <input name="pushover.user" type="text" autocomplete="off" spellcheck="false">
+            <small class="field-hint">Your pushover.net user (or group) key. Masked after save.</small></label>
+          <label>Device <input name="pushover.device" type="text" autocomplete="off">
+            <small class="field-hint">Optional — restrict to one device name. Blank = all your devices.</small></label>
+          <label>
             Minimum stage
             <select name="pushover.minStage">
               <option value="radio">radio (all stages)</option>
               <option value="candidate">candidate</option>
               <option value="imminent">imminent (only ±30 s)</option>
             </select>
-          </label>
-          <label title="Pushover-only filter on the radio stage. Tracker still shows all matches up to ~5° in the tracking panel, but the phone only buzzes when the projected separation is at most this much. 1° = only flights likely to actually graze the body.">
-            Radio band °<input name="pushover.radioThresholdDeg" type="number" step="0.05" min="0.05">
-          </label>
+            <small class="field-hint">Earliest stage allowed to buzz the phone. radio = every stage; imminent = only the final ±30 s alert.</small></label>
+          <label>
+            Radio band °<input name="pushover.radioThresholdDeg" type="number" step="any" min="0.05">
+            <small class="field-hint">Phone-only filter: buzz at the radio stage only if projected separation ≤ this (default 1°). The panel still shows the full Panel band.</small></label>
         </fieldset>
 
         <fieldset>
           <legend>Telescope &amp; sensor (FOV sketch)</legend>
-          <label title="Effective focal length of the telescope in millimetres.">Focal length (mm)<input name="optics.telescopeFocalMm" type="number" step="0.1" min="1" required></label>
-          <label title="Sensor name / model, shown in the FOV sketch footer.">Sensor model<input name="optics.sensorName" type="text" placeholder="ZWO ASI174MM"></label>
-          <label title="Sensor active area width in millimetres.">Sensor W (mm)<input name="optics.sensorWmm" type="number" step="0.01" min="0.01" required></label>
-          <label title="Sensor active area height in millimetres.">Sensor H (mm)<input name="optics.sensorHmm" type="number" step="0.01" min="0.01" required></label>
-          <label title="Sensor resolution in pixels (horizontal). Currently informational; not used in the geometric FOV.">Sensor W (px)<input name="optics.sensorPxW" type="number" step="1" min="1"></label>
-          <label title="Sensor resolution in pixels (vertical).">Sensor H (px)<input name="optics.sensorPxH" type="number" step="1" min="1"></label>
+          <label>Focal length (mm)<input name="optics.telescopeFocalMm" type="number" step="any" min="1" required>
+            <small class="field-hint">Telescope effective focal length — sets the FOV-sketch scale (your reducer/Barlow included).</small></label>
+          <label>Sensor model<input name="optics.sensorName" type="text" placeholder="ZWO ASI174MM">
+            <small class="field-hint">Free text — shown in the sketch footer only.</small></label>
+          <label>Sensor W (mm)<input name="optics.sensorWmm" type="number" step="any" min="0.01" required>
+            <small class="field-hint">Sensor active-area width (mm) — sets the FOV box width.</small></label>
+          <label>Sensor H (mm)<input name="optics.sensorHmm" type="number" step="any" min="0.01" required>
+            <small class="field-hint">Sensor active-area height (mm) — sets the FOV box height.</small></label>
+          <label>Sensor W (px)<input name="optics.sensorPxW" type="number" step="1" min="1">
+            <small class="field-hint">Horizontal resolution — informational only, not used in the geometric FOV.</small></label>
+          <label>Sensor H (px)<input name="optics.sensorPxH" type="number" step="1" min="1">
+            <small class="field-hint">Vertical resolution — informational only.</small></label>
         </fieldset>
 
         <fieldset>
           <legend>Tracker</legend>
-          <label title="How far ahead the tracker projects each aircraft. Default 900 s = 15 min, which catches most of the ADS-B visibility window before a transit. Larger = earlier warnings but more 'faded' false positives, since linear extrapolation noise grows past ~10 min. Clamp 10–1800 s.">
-            Look-ahead (s)<input name="tracker.horizonS" type="number" step="30" min="10" max="1800">
-          </label>
-          <label title="Drop tracker matches further than this from the panel entirely. The Pushover Radio band (above) is a separate, tighter filter applied only to phone notifications. Default 2°.">
-            Panel band °<input name="tracker.looseThresholdDeg" type="number" step="0.1" min="0.1">
-          </label>
-          <label title="Tight transit band — below this, a match is classified as 'candidate' (and counts as an on-disc / near-disc pass for the Sun's 0.27° radius). Default 0.3°.">
-            Tight band °<input name="tracker.thresholdDeg" type="number" step="0.05" min="0.05">
-          </label>
+          <label>
+            Look-ahead (s)<input name="tracker.horizonS" type="number" step="1" min="10" max="1800">
+            <small class="field-hint">How far ahead each aircraft is projected. <b>900 = 15 min</b> (default): catches flights as they enter ADS-B range. Higher = earlier warning but more "faded" false alarms (linear projection degrades past ~10 min). Range 10–1800 s.</small></label>
+          <label>
+            Panel band °<input name="tracker.looseThresholdDeg" type="number" step="any" min="0.1">
+            <small class="field-hint">Max projected separation for a flight to appear in LIVE-TRACKING-SIGNALS at all (= the <i>radio</i> band). <b>Default 2°</b>; wider = more rows / noise.</small></label>
+          <label>
+            Tight band °<input name="tracker.thresholdDeg" type="number" step="any" min="0.05">
+            <small class="field-hint">≤ this counts as a real transit ("candidate"). Sun/Moon disc radius ≈ 0.27°, so <b>0.3°</b> (default) ≈ a graze. Must be ≤ Panel band.</small></label>
         </fieldset>
 
         <fieldset>
           <legend>External links</legend>
-          <label title="Override URL for the dump1090 link in the header. Leave blank to use http://<this-host>:8080/.">dump1090 URL<input name="externalLinks.dump1090Url" type="text" placeholder="http://pi.local:8080/"></label>
+          <label>dump1090 URL<input name="externalLinks.dump1090Url" type="text" placeholder="http://pi.local:8080/">
+            <small class="field-hint">Override the header's dump1090 link. Blank = http://&lt;this-host&gt;:8080/.</small></label>
         </fieldset>
         </div><!-- /.settings-fields -->
 

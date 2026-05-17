@@ -463,6 +463,18 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
   color: var(--muted);
 }
 .settings-card label.checkbox-row { grid-template-columns: auto 1fr; color: var(--fg); }
+/* Subtitle hint under every field — spans both grid columns so it sits on
+   its own full-width line below the caption + input. */
+.settings-card label .field-hint {
+  grid-column: 1 / -1;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--muted);
+  opacity: 0.85;
+  margin: 1px 0 3px;
+}
+.settings-card label .field-hint code { color: var(--accent); }
+.settings-card label .field-hint b { color: var(--fg); font-weight: 600; }
 .settings-card input[type="text"],
 .settings-card input[type="number"],
 .settings-card select {
