@@ -727,8 +727,15 @@ function acPhotoImg(info) {
     : '';
 }
 function acinfoHtml(info) {
+  // Photo and data sit side by side (each ~half width) so the box stays
+  // short and the FOV sketch remains the dominant element. Falls back to
+  // stacked on a very narrow pane (CSS flex-wrap).
+  const photo = acPhotoImg(info);
   return '<div class="spec-head">AirNav<span class="spec-klass">on-demand</span></div>'
-    + acPhotoImg(info) + acinfoRows(info)
+    + '<div class="acinfo-cols">'
+    + (photo ? `<div class="acinfo-photo">${photo}</div>` : '')
+    + `<div class="acinfo-data">${acinfoRows(info)}</div>`
+    + '</div>'
     + '<div class="spec-foot">AirNav On-Demand API · billed per call · cached this session.</div>';
 }
 async function renderFovAcinfo(meta) {
