@@ -630,7 +630,10 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 4px;
-  font-size: 12px;
+  /* 11 px matches the SVG LABEL_SIZE in sketch.js so the whole right-hand
+     column — FOV sketch, plan-view map and this AirNav box — reads at one
+     consistent size. */
+  font-size: 11px;
   display: flex;
   gap: 10px;
   align-items: stretch;
@@ -673,7 +676,7 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
   border: 1px solid var(--accent);
   border-radius: 5px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
-  font-size: 12px;
+  font-size: 11px;                 /* same as .fov-aux / SVG LABEL_SIZE */
   pointer-events: none;
 }
 .acpop-title { font-weight: 600; color: var(--fg); }
@@ -688,7 +691,7 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
   gap: 8px;
 }
 .spec-klass {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 400;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -709,7 +712,7 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
 }
 .spec-foot {
   margin-top: 5px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   opacity: 0.8;
   line-height: 1.35;
