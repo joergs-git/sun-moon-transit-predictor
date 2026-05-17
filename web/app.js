@@ -19,6 +19,7 @@ const $ = (sel) => document.querySelector(sel);
 // JSON-stringifying the entry onto a data-* attribute on every render tick.
 let lastLifecycle = [];
 let lastHistory = [];
+let lastVersion = null;   // last server-reported version (for badge restore)
 let historyPage = 0;   // 0 = today+yesterday; ≥1 = older, HISTORY_PAGE_SIZE/page
 
 function fmtCountdown(ms) {
@@ -401,9 +402,13 @@ async function pollState() {
     status.textContent = `live · ${age}s ago · ${state.aircraftCount ?? 0} aircraft`;
     status.className = age > 10 ? 'status stale' : 'status live';
     if (state.version) {
+      lastVersion = state.version;
       const v = $('#app-version');
-      if (v) v.textContent = `v${state.version}`;
+      // Don't stomp the "updating…" badge while a request is in flight —
+      // renderUpdateStatus owns the badge text during that window.
+      if (v && !updateInFlight) v.textContent = `v${state.version}`;
     }
+    renderUpdateStatus(state.update);
     if (state.observer) {
       $('#observer').textContent =
         `Observer ${state.observer.name ?? ''} ` +
@@ -827,20 +832,31 @@ $('#hp-older').addEventListener('click', () => gotoHistoryPage(+1));
 // drops a trigger file; a privileged systemd .path unit runs the actual
 // git pull + restart. The page will briefly disconnect when the service
 // restarts — that is expected and the status line already reflects it.
+function setUpdateMsg(text, kind) {
+  const el = $('#update-msg');
+  if (!el) return;
+  if (!text) { el.hidden = true; el.textContent = ''; el.className = 'update-msg'; return; }
+  el.hidden = false;
+  el.textContent = text;
+  el.className = `update-msg${kind ? ` ${kind}` : ''}`;
+}
+
 let updateInFlight = false;
 async function triggerUpdate() {
   if (updateInFlight) return;
   const badge = $('#app-version');
   const ok = window.confirm(
     'Pull the latest version from origin/main and restart the service?\n\n'
-    + 'The page will reconnect automatically once the service is back. '
-    + 'Local config (observer / service.json) is preserved.',
+    + 'The page reconnects automatically once the service is back. Local '
+    + 'config (observer / service.json) is preserved. NOTE: the actual '
+    + 'pull+restart is performed by the background updater on the Pi '
+    + '(systemd stp-update.path) — this only requests it.',
   );
   if (!ok) return;
   updateInFlight = true;
   badge.classList.add('updating');
-  const prev = badge.textContent;
   badge.textContent = 'updating…';
+  setUpdateMsg('Requesting update…', '');
   try {
     const res = await fetch('/api/update', {
       method: 'POST',
@@ -848,19 +864,54 @@ async function triggerUpdate() {
       body: JSON.stringify({ confirm: true }),
     });
     const body = await res.json().catch(() => ({}));
+    // The endpoint returns HTTP 200 even for a logical failure (ok:false) —
+    // surface that instead of pretending it worked (the old silent bug).
     if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-    // Keep the "updating…" badge; pollState's disconnect handling takes
-    // over when the service restarts, then the version refreshes on its own.
-    if (body.pending) {
-      badge.textContent = prev;
-      badge.classList.remove('updating');
-    }
+    if (body.ok === false) throw new Error(body.message ?? 'update request rejected');
+    // Trigger written. From here pollState() reads state.update and tells
+    // the truth: pending → consumed (restart imminent) → or "stuck" if no
+    // background updater is consuming it (then the badge is reset there).
+    setUpdateMsg(body.message ?? 'Update requested — waiting for the updater…', '');
   } catch (e) {
-    badge.textContent = prev;
     badge.classList.remove('updating');
-    window.alert(`Update could not be started: ${e.message ?? e}`);
-  } finally {
+    badge.textContent = `v${lastVersion ?? '—'}`;
+    setUpdateMsg(`Update could not be started: ${e.message ?? e}`, 'err');
     updateInFlight = false;
+  }
+}
+
+// Reflect the server-side click-to-update diagnostic. Honest states:
+//   pending  — trigger written, giving the systemd watcher a moment
+//   consumed — updater picked it up; the service will restart now
+//   stuck    — nothing consumed the trigger → the stp-update.path unit is
+//              not installed/enabled (Linux/Pi only). Tell the user the fix.
+let updateStuckShown = false;
+function renderUpdateStatus(upd) {
+  if (!upd) return;
+  const badge = $('#app-version');
+  if (upd.status === 'pending') {
+    setUpdateMsg(`Update requested ${Math.round(upd.ageMs / 1000)}s ago — waiting for the background updater…`, '');
+  } else if (upd.status === 'consumed') {
+    badge.classList.add('updating');
+    badge.textContent = 'updating…';
+    setUpdateMsg('Updater picked it up — the service is pulling & restarting…', 'ok');
+  } else if (upd.status === 'stuck') {
+    if (!updateStuckShown) {
+      badge.classList.remove('updating');
+      badge.textContent = `v${lastVersion ?? '—'}`;
+      updateInFlight = false;
+      updateStuckShown = true;
+    }
+    setUpdateMsg(
+      'No background updater consumed the request. The systemd '
+      + '"stp-update.path" unit is not installed/enabled on this host '
+      + '(Linux/Pi only). One-time fix on the Pi: re-run '
+      + 'scripts/install-pi5.sh, then click again.',
+      'err',
+    );
+  } else {
+    // idle: clear only if we weren't mid-request.
+    if (!updateInFlight) { setUpdateMsg(''); updateStuckShown = false; }
   }
 }
 $('#app-version').addEventListener('click', triggerUpdate);

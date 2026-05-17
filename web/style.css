@@ -656,6 +656,19 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
 }
 .iss-pass b { color: #8fe3f5; }
 
+/* Click-to-update status line (v0.10.1). Sits under the title; honest
+   feedback so a requested-but-not-consumed update is never silent. */
+.update-msg {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+  font-family: ui-monospace, Menlo, monospace;
+  max-width: 60ch;
+}
+.update-msg.ok  { color: var(--ok); }
+.update-msg.err { color: var(--warn); }
+
 /* Small running-version badge next to the page title (v0.8.1). */
 .app-version {
   font-size: 11px;
