@@ -19,6 +19,8 @@
         <a href="https://app.astrobin.com/u/joergsflow#gallery" target="_blank" rel="noopener noreferrer">AstroBin</a>
         <span class="sep">·</span>
         <a id="dump1090-link" href="#" target="_blank" rel="noopener noreferrer" title="Open the local dump1090 status page on port 8080 in a new tab.">dump1090 ↗</a>
+        <span class="sep">·</span>
+        <a href="https://www.airnavradar.com/stations/country/germany" target="_blank" rel="noopener noreferrer" title="AirNav Radar — ADS-B receiving stations in Germany (opens in a new tab).">AirNav ↗</a>
       </div>
     </div>
     <div class="header-right">
@@ -129,6 +131,10 @@
            pure SVG from our own ADS-B data — no tiles/API. Hidden for ISS
            or when no lat/lon is available. -->
       <div id="fov-map" class="fov-map" hidden></div>
+      <!-- AirNav On-Demand details (photo + airframe + live route) for the
+           pinned aircraft. Fetched via our /api/acinfo proxy on click only
+           (each upstream call is billed). Hidden until data arrives. -->
+      <div id="fov-acinfo" class="fov-acinfo" hidden></div>
     </section>
   </div>
 
@@ -302,6 +308,17 @@
         </fieldset>
 
         <fieldset>
+          <legend>AirNav Radar API</legend>
+          <label class="checkbox-row">
+            <input name="airnav.enabled" type="checkbox"> Enabled
+            <small class="field-hint">On-demand airframe + live-route + photo in the FOV box (click a row) and on flight-number hover. Off = nothing is called.</small></label>
+          <label>API token<input name="airnav.token" type="text" autocomplete="off" spellcheck="false">
+            <small class="field-hint">Bearer token from airnavradar.com/api/dashboard. Masked (••••) after save; leave the mask to keep it. Stays server-side — never sent to the browser.</small></label>
+          <label>Base URL<input name="airnav.baseUrl" type="text" autocomplete="off" placeholder="https://api.airnavradar.com/v2">
+            <small class="field-hint">On-Demand API v2 base. Change only if AirNav moves the host.</small></label>
+        </fieldset>
+
+        <fieldset>
           <legend>External links</legend>
           <label>dump1090 URL<input name="externalLinks.dump1090Url" type="text" placeholder="http://pi.local:8080/">
             <small class="field-hint">Override the header's dump1090 link. Blank = http://&lt;this-host&gt;:8080/.</small></label>
@@ -316,6 +333,10 @@
       </form>
     </div>
   </div>
+
+  <!-- Hover popover: ad-hoc AirNav photo + route when the mouse dwells on
+       a flight number. Positioned next to the cursor by app.js. -->
+  <div id="ac-popover" class="ac-popover" hidden></div>
 
   <script src="app.js" type="module"></script>
 </body>
