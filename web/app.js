@@ -154,7 +154,8 @@ function renderTracking(state) {
   for (const [i, e] of rows.entries()) {
     const tr = document.createElement('tr');
     const nearHit = isNearHit(e.closestApproachSepDeg);
-    tr.className = `row-${e.status} sketchable${nearHit ? ' near-hit' : ''}`;
+    const iss = e.isISS === true || e.icao === 'ISS';
+    tr.className = `row-${e.status} sketchable${nearHit ? ' near-hit' : ''}${iss ? ' row-iss' : ''}`;
     tr.dataset.source = 'live';
     tr.dataset.index = String(i);
     const meta = STATUS_LABELS[e.status] ?? { icon: '', label: e.status };
@@ -169,11 +170,11 @@ function renderTracking(state) {
       <td>${eta}</td>
       <td>${fmtTime(e.closestApproachAtMs)}</td>
       <td class="body-${e.body}">${e.body}</td>
-      <td>${e.flight ?? e.callsign ?? '—'}</td>
-      <td>${e.icao ? e.icao.toUpperCase() : '—'}</td>
-      <td>${fmtRoute(route?.origin?.iata ?? route?.origin?.icao, route?.destination?.iata ?? route?.destination?.icao)}</td>
-      <td>${fmtAlt(ac?.altMmsl)}</td>
-      <td>${fmtSpeed(ac?.groundSpeedMs)}</td>
+      <td>${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '—')}</td>
+      <td>${iss ? 'orbit' : (e.icao ? e.icao.toUpperCase() : '—')}</td>
+      <td>${iss ? '—' : fmtRoute(route?.origin?.iata ?? route?.origin?.icao, route?.destination?.iata ?? route?.destination?.icao)}</td>
+      <td>${iss ? 'LEO' : fmtAlt(ac?.altMmsl)}</td>
+      <td>${iss ? '—' : fmtSpeed(ac?.groundSpeedMs)}</td>
       <td>${fmtDistance(rangeM)}</td>
       <td>${e.closestApproachSepDeg !== null ? fmtSep(e.closestApproachSepDeg) : '—'}</td>
     `;
@@ -227,7 +228,8 @@ function recentCutoffMs() {
 function historyTr(e, absIdx) {
   const tr = document.createElement('tr');
   const nearHit = isNearHit(e.closest_sep_deg);
-  tr.className = `sketchable${nearHit ? ' near-hit' : ''}`;
+  const iss = e.icao === 'ISS';
+  tr.className = `sketchable${nearHit ? ' near-hit' : ''}${iss ? ' row-iss' : ''}`;
   tr.dataset.source = 'history';
   tr.dataset.index = String(absIdx);
   const oc = e.outcome ? OUTCOME_LABELS[e.outcome] : null;
@@ -247,11 +249,11 @@ function historyTr(e, absIdx) {
     <td class="stage-${e.stage}">${e.stage}</td>
     <td>${outcomeCell}</td>
     <td class="body-${e.body}">${e.body}</td>
-    <td>${e.flight ?? e.callsign ?? ''}</td>
-    <td>${e.icao.toUpperCase()}</td>
-    <td>${fmtRoute(e.origin, e.destination)}</td>
-    <td>${fmtAlt(e.altitude_m)}</td>
-    <td>${fmtSpeed(e.ground_speed_ms)}</td>
+    <td>${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '')}</td>
+    <td>${iss ? 'orbit' : e.icao.toUpperCase()}</td>
+    <td>${iss ? '—' : fmtRoute(e.origin, e.destination)}</td>
+    <td>${iss ? 'LEO' : fmtAlt(e.altitude_m)}</td>
+    <td>${iss ? '—' : fmtSpeed(e.ground_speed_ms)}</td>
     <td>${fmtDistance(e.range_m)}</td>
     <td>${fmtSep(e.closest_sep_deg)}</td>
     <td title="${dtTooltip(dt)}">${fmtDiscTransit(dt)}</td>

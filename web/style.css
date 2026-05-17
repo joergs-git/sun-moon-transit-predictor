@@ -211,6 +211,14 @@ tr.row-imminent  { background: rgba(240, 160, 32, 0.08); }
 tr.row-candidate { background: rgba(95, 208, 127, 0.04); }
 tr.row-stale td  { color: var(--muted); }
 
+/* ISS rows (SGP4, not ADS-B) — a distinct cyan identity + left marker so a
+   space-station pass never reads as just another aircraft. The tint wins
+   over the status tint above via source order; near-hit magenta still
+   overrides it (an actual ISS disc graze is the headline event). */
+tr.row-iss td { background: rgba(80, 200, 230, 0.10); }
+tr.row-iss td:first-child { box-shadow: inset 3px 0 0 #50c8e6; }
+tr.row-iss td:nth-child(5) { color: #8fe3f5; font-weight: 600; }
+
 ul.legend {
   list-style: none;
   padding: 0;

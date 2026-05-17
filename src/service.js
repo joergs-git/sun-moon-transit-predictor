@@ -27,6 +27,7 @@ import { PushoverClient } from './pushover.js';
 import { createHttpServer } from './server.js';
 import { HistoryStore } from './store.js';
 import { findTransits } from './tracker.js';
+import { loadIssTle, predictIssTransits } from './iss.js';
 
 export const DEFAULT_CONFIG = {
   adsb: {
@@ -106,6 +107,18 @@ export const DEFAULT_CONFIG = {
     triggerPath: './data/update.request',
     debounceMs: 30_000,
   },
+  // ISS transits (offline SGP4 from a TLE file). Inactive until a TLE is
+  // present at tlePath — fetch it opt-in with scripts/refresh-tle.js. The
+  // forward scan is rare-event work, so it runs on recomputeMs cadence and
+  // when the TLE file changes, never on the 2 s tick.
+  iss: {
+    enabled: true,
+    tlePath: './data/iss.tle',
+    horizonMs: 48 * 3600_000,   // look this far ahead for the next transit
+    recomputeMs: 600_000,       // re-scan every 10 min
+    thresholdDeg: 0.3,          // tight → candidate
+    looseThresholdDeg: 1.0,     // surface approaches up to here
+  },
   routes: { enabled: true, ttlMs: 3600_000, negativeTtlMs: 300_000 },
   predictor: {
     enabled: true,
@@ -148,6 +161,7 @@ function mergeConfig(user) {
     server:    { ...DEFAULT_CONFIG.server,    ...(user.server    ?? {}) },
     store:     { ...DEFAULT_CONFIG.store,     ...(user.store     ?? {}) },
     routes:    { ...DEFAULT_CONFIG.routes,    ...(user.routes    ?? {}) },
+    iss:       { ...DEFAULT_CONFIG.iss,       ...(user.iss       ?? {}) },
     update:    { ...DEFAULT_CONFIG.update,    ...(user.update    ?? {}) },
     predictor: { ...DEFAULT_CONFIG.predictor, ...(user.predictor ?? {}) },
     opensky:   { ...DEFAULT_CONFIG.opensky,   ...(user.opensky   ?? {}) },
@@ -209,6 +223,14 @@ export async function runService({
   const nearIcaos = new Set();
   const veryNearIcaos = new Set();
   const state_sinceMs = Date.now();
+
+  // ISS prediction cache. Recomputed on a slow cadence (config.iss.recomputeMs)
+  // and whenever the TLE file changes on disk. issRecordedKeys de-dupes the
+  // one History row we write per ISS transit when its closest approach passes.
+  let issTle = config.iss?.enabled ? loadIssTle(config.iss.tlePath) : null;
+  let issEvents = [];
+  let lastIssComputeMs = 0;
+  const issRecordedKeys = new Set();
 
   const state = {
     observer,
@@ -631,6 +653,63 @@ export async function runService({
     }
     state.expected = upcomingExpected(watchlist, nowMs, config.predictor.lookAheadMs);
 
+    // ISS transits — recomputed on a slow cadence (rare-event work) and fed
+    // into the lifecycle as ordinary candidates so the list / FOV / Disc-xing
+    // all reuse. The notifier is intentionally NOT given these (no surprise
+    // phone buzz days ahead); a real transit is logged to History below when
+    // its closest approach passes, so it still shows up there too.
+    if (config.iss?.enabled
+        && (issTle == null || nowMs - lastIssComputeMs >= config.iss.recomputeMs)) {
+      const fresh = loadIssTle(config.iss.tlePath);
+      if (fresh) issTle = fresh;
+      if (issTle) {
+        try {
+          issEvents = predictIssTransits(observer, issTle.satrec, {
+            fromMs: nowMs,
+            horizonMs: config.iss.horizonMs,
+            bodies: config.tracker.bodies,
+            thresholdDeg: config.iss.thresholdDeg,
+            looseThresholdDeg: config.iss.looseThresholdDeg,
+            name: issTle.name,
+          });
+        } catch (e) {
+          logger.warn?.('ISS prediction failed:', e?.message ?? e);
+          issEvents = [];
+        }
+      }
+      lastIssComputeMs = nowMs;
+    }
+    // TLE age in days (epoch is a Julian date; JD 2440587.5 = Unix epoch).
+    const issTleAgeDays = issTle
+      ? (nowMs / 86400000 + 2440587.5 - issTle.satrec.jdsatepoch)
+      : null;
+    state.iss = {
+      active: Boolean(issTle),
+      name: issTle?.name ?? null,
+      tleAgeDays: issTleAgeDays != null ? Math.round(issTleAgeDays * 10) / 10 : null,
+      upcoming: issEvents.length,
+      nextAtMs: issEvents.find(e => e.closestApproachAtMs >= nowMs)?.closestApproachAtMs ?? null,
+    };
+
+    // Surface ISS events that are upcoming (or just passed, so the row can
+    // still flash 'imminent' for a moment). Record the one History row per
+    // transit as its closest approach goes by.
+    const issForLifecycle = [];
+    for (const ev of issEvents) {
+      if (ev.closestApproachAtMs >= nowMs - config.lifecycle.imminentWindowMs) {
+        issForLifecycle.push(ev);
+      }
+      const key = `${ev.body}|${Math.round(ev.closestApproachAtMs / 1000)}`;
+      if (ev.closestApproachAtMs <= nowMs && !issRecordedKeys.has(key)) {
+        issRecordedKeys.add(key);
+        const stage = ev.closestApproachSepDeg <= config.iss.thresholdDeg
+          ? 'imminent'
+          : (ev.closestApproachSepDeg <= config.iss.looseThresholdDeg ? 'candidate' : 'radio');
+        try { store.recordEvent(stage, ev, null, nowMs); }
+        catch (e) { logger.error?.('ISS history record failed:', e); }
+      }
+    }
+
     // Unified lifecycle state — merges live tracker + watchlist + previous
     // tick's contacts. The notifier still drives Pushover; the lifecycle
     // adds visibility for 'planned' and 'stale' states which never push but
@@ -638,7 +717,7 @@ export async function runService({
     lifecycleMap = updateLifecycle({
       prev: lifecycleMap,
       nowMs,
-      trackerCandidates: enriched,
+      trackerCandidates: issForLifecycle.length ? enriched.concat(issForLifecycle) : enriched,
       expected: state.expected,
       liveAircraft: aircraft,
       imminentWindowMs: config.lifecycle.imminentWindowMs,
