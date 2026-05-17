@@ -114,7 +114,15 @@ export const DEFAULT_CONFIG = {
   iss: {
     enabled: true,
     tlePath: './data/iss.tle',
-    horizonMs: 48 * 3600_000,   // look this far ahead for the next transit
+    // How far ahead to scan for a Sun/Moon transit. ISS disc transits at a
+    // fixed site are weeks apart, so the default is generous; raising it
+    // finds transits further out at the cost of more CPU on each
+    // (10-min-cadence) recompute — the scan is O(horizon).
+    horizonMs: 14 * 24 * 3600_000,   // 14 days
+    // Visible-pass scan horizon. Cheap regardless of size: nextIssVisiblePass
+    // returns at the FIRST pass it finds, so a 30-day cap just means "tell me
+    // the next one even if it's weeks out" without scanning 30 days.
+    visibleHorizonMs: 30 * 24 * 3600_000,
     recomputeMs: 600_000,       // re-scan every 10 min
     thresholdDeg: 0.3,          // tight → candidate
     looseThresholdDeg: 1.0,     // surface approaches up to here
@@ -634,13 +642,28 @@ export async function runService({
     if (config.update?.enabled && lastUpdateRequestMs > 0) {
       const ageMs = nowMs - lastUpdateRequestMs;
       const stillThere = existsSync(config.update.triggerPath);
-      const status = !stillThere ? 'consumed'
-        : ageMs < 12_000 ? 'pending'
-          : 'stuck';
-      state.update = {
-        requestedAtMs: lastUpdateRequestMs, ageMs, status,
-        triggerPath: config.update.triggerPath,
-      };
+      let status;
+      if (!stillThere) {
+        // Trigger consumed. A real update restarts us (this process dies,
+        // state resets). If we're still alive 20 s later it was a no-op
+        // ("already up to date") — return to idle so the badge doesn't
+        // hang on "updating…" forever (the v0.10.0 bug).
+        status = ageMs > 20_000 ? 'idle' : 'consumed';
+      } else if (ageMs < 12_000) {
+        status = 'pending';
+      } else if (ageMs > 600_000) {
+        // Stuck for 10 min → nothing is ever going to consume it. Clean up
+        // the stale trigger so a future (fixed) watcher / click starts
+        // fresh, and stop reporting the error indefinitely.
+        status = 'idle';
+        fsp.rm(config.update.triggerPath, { force: true }).catch(() => {});
+      } else {
+        status = 'stuck';
+      }
+      if (status === 'idle') lastUpdateRequestMs = 0;
+      state.update = lastUpdateRequestMs
+        ? { requestedAtMs: lastUpdateRequestMs, ageMs, status, triggerPath: config.update.triggerPath }
+        : { requestedAtMs: 0, ageMs: 0, status: 'idle' };
     } else {
       state.update = { requestedAtMs: 0, ageMs: 0, status: 'idle' };
     }
@@ -707,7 +730,10 @@ export async function runService({
         try {
           issVisiblePass = nextIssVisiblePass(observer, issTle.satrec, {
             fromMs: nowMs,
-            horizonMs: config.iss.horizonMs,
+            // Visible passes recur ~daily; the long cap only matters at high
+            // latitude / midsummer when twilight kills them for weeks. The
+            // scan returns at the first hit, so this is essentially free.
+            horizonMs: config.iss.visibleHorizonMs ?? config.iss.horizonMs,
           });
         } catch (e) {
           logger.warn?.('ISS visible-pass calc failed:', e?.message ?? e);
@@ -723,12 +749,24 @@ export async function runService({
     const issTleAgeDays = issTle
       ? (nowMs / 86400000 + 2440587.5 - issTle.satrec.jdsatepoch)
       : null;
+    const nextTransit = issEvents.find(e => e.closestApproachAtMs >= nowMs) ?? null;
     state.iss = {
       active: Boolean(issTle),
       name: issTle?.name ?? null,
       tleAgeDays: issTleAgeDays != null ? Math.round(issTleAgeDays * 10) / 10 : null,
       upcoming: issEvents.length,
-      nextAtMs: issEvents.find(e => e.closestApproachAtMs >= nowMs)?.closestApproachAtMs ?? null,
+      nextAtMs: nextTransit?.closestApproachAtMs ?? null,
+      // Full next-transit summary so Sky-now can show body + separation even
+      // when it is weeks out; horizonDays lets the UI say "none in N days".
+      nextTransit: nextTransit
+        ? {
+          atMs: nextTransit.closestApproachAtMs,
+          body: nextTransit.body,
+          sepDeg: nextTransit.closestApproachSepDeg,
+          level: nextTransit.level,
+        }
+        : null,
+      horizonDays: Math.round((config.iss.horizonMs / 86400000) * 10) / 10,
       visiblePass: issVisiblePass,
     };
 

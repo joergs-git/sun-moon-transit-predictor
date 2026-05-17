@@ -152,6 +152,33 @@ no success message) so it looked dead either way.
 - [x] auto-update.sh: journal WARNING when stp-update.path inactive + fix.
 - [x] README troubleshooting + M23; version 0.10.1. Tests: 134 pass.
 
+Status: merged to main (v0.10.1, f4cf8bc).
+
+---
+
+# v0.10.2 — fix stuck "updating…" + Sky-now next visible pass & transit (branch bugfix/update-badge-stuck-iss-skynow)
+
+(a) ROOT CAUSE of "endlessly updating, even after refresh": the v0.10.1
+'consumed' state had NO timeout. If the updater consumed the trigger but
+no restart happened (already up to date / no-op), or on a stale running
+server, state.update stayed 'consumed' → badge "updating…" forever, and a
+refresh re-read the same hung server state. Fix:
+- service.js: 'consumed' auto-clears to idle after 20 s (no restart ⇒
+  no-op); 'stuck' auto-clears to idle after 10 min and removes the stale
+  trigger file; lastUpdateRequestMs reset on idle.
+- app.js: renderUpdateStatus is now an authoritative state machine that
+  ALWAYS restores the version badge on idle/stuck and only holds
+  "updating…" for pending/consumed; client-error message kept ~10 s.
+- NOTE: the running service must be updated ONCE manually to get this
+  (chicken-and-egg — the broken button can't deliver its own fix).
+
+(b) Sky-now shows TWO ISS lines, both even if weeks away (with date):
+next visible pass (visibleHorizonMs default 30 d, early-return → cheap)
+and next Sun/Moon transit (horizonMs default 48 h → 14 d; state.iss
+.nextTransit {body,sep,at}, horizonDays for the "none in N days" copy).
+
+- [x] Version 0.10.2; README M24; config example. Tests: 134 pass.
+
 Status: complete.
 
 # DONE — click-to-update (folded into v0.8.1)
