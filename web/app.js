@@ -540,6 +540,42 @@ async function pollAcstats() {
   } catch { /* ignore */ }
 }
 
+// Retrospective range stats: how far were the aircraft that actually
+// passed < sepDeg. Distances in km; histogram reuses the acstats bars.
+function kmOf(m) { return m == null ? '—' : `${(m / 1000).toFixed(1)} km`; }
+async function pollRangestats() {
+  try {
+    const res = await fetch('/api/rangestats?sepDeg=0.5');
+    if (!res.ok) return;
+    const d = await res.json();
+    const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+    set('#rs-sep', `${(d.sepBelowDeg ?? 0.5)}°`);
+    set('#rs-n', String(d.n ?? 0));
+    set('#rs-median', kmOf(d.medianM));
+    set('#rs-max', kmOf(d.maxM));
+    set('#rs-min', kmOf(d.minM));
+    set('#rs-p90', kmOf(d.p90M));
+    set('#rs-ondisc', String(d.onDisc ?? 0));
+    const box = $('#rs-hist');
+    if (box) {
+      const h = d.histogram ?? [];
+      if (!h.length || !d.n) {
+        box.innerHTML = '<div class="acstats-empty">No imminent-confirmed &lt; 0.5° passes recorded yet.</div>';
+      } else {
+        const max = Math.max(...h.map(b => b.count), 1);
+        box.innerHTML = h.map((b) => {
+          const pct = b.count ? Math.max(3, Math.round((b.count / max) * 100)) : 0;
+          const label = `${(b.fromM / 1000).toFixed(0)}–${(b.toM / 1000).toFixed(0)} km`;
+          return `<div class="acstats-row" title="${b.count} pass(es) at ${label}">`
+            + `<span class="acstats-label">${label}</span>`
+            + `<span class="acstats-track"><span class="acstats-bar" style="width:${pct}%"></span></span>`
+            + `<span class="acstats-val">${b.count}</span></div>`;
+        }).join('');
+      }
+    }
+  } catch { /* ignore */ }
+}
+
 async function pollLearning() {
   try {
     const res = await fetch('/api/learning?windowDays=14');
@@ -690,22 +726,30 @@ function acGeo(a, isISS) {
 function acMetaFromLifecycle(entry) {
   const a = entry?.candidate?.aircraft;
   if (!a) return null;
+  const route = entry.route ?? entry.candidate?.route ?? null;
   return {
     typeCode: a.typeCode ?? null, registration: a.registration ?? null,
     typeDesc: a.typeDesc ?? null, icao: entry.icao ?? a.icao ?? null,
     rangeM: entry?.candidate?.aircraftAtClosest?.rangeM ?? null,
     isISS: entry.isISS === true || entry.icao === 'ISS',
+    flight: entry.flight ?? entry.callsign ?? route?.flight ?? null,
+    origin: route?.origin?.iata ?? route?.origin?.icao ?? null,
+    destination: route?.destination?.iata ?? route?.destination?.icao ?? null,
     ...acGeo(a, entry.isISS === true || entry.icao === 'ISS'),
   };
 }
 function acMetaFromHistory(row) {
   const a = row?.payload?.candidate?.aircraft;
   const iss = row?.icao === 'ISS';
+  const route = row?.payload?.candidate?.route ?? null;
   return {
     typeCode: a?.typeCode ?? null, registration: a?.registration ?? null,
     typeDesc: a?.typeDesc ?? null, icao: row?.icao ?? a?.icao ?? null,
     rangeM: row?.payload?.candidate?.aircraftAtClosest?.rangeM ?? row?.range_m ?? null,
     isISS: iss,
+    flight: row?.flight ?? row?.callsign ?? route?.flight ?? null,
+    origin: row?.origin ?? route?.origin?.iata ?? route?.origin?.icao ?? null,
+    destination: row?.destination ?? route?.destination?.iata ?? route?.destination?.icao ?? null,
     ...acGeo(a, iss),
   };
 }
@@ -731,6 +775,9 @@ function renderFovMap(meta) {
     trackDeg: meta.trackDeg ?? null,
     rangeM: meta.rangeM ?? null,
     label: meta.registration ?? meta.icao ?? '',
+    flight: meta.flight ?? null,
+    origin: meta.origin ?? null,
+    destination: meta.destination ?? null,
   });
   syncFovAux();
 }
@@ -1297,7 +1344,9 @@ pollState();
 pollHistory();
 pollLearning();
 pollAcstats();
+pollRangestats();
 setInterval(pollState, STATE_INTERVAL_MS);
 setInterval(pollHistory, HISTORY_INTERVAL_MS);
 setInterval(pollLearning, LEARNING_INTERVAL_MS);
 setInterval(pollAcstats, LEARNING_INTERVAL_MS);
+setInterval(pollRangestats, LEARNING_INTERVAL_MS);

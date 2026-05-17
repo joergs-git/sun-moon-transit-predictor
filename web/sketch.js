@@ -286,6 +286,24 @@ function fmtTime(ms) {
   if (!ms) return '—';
   return new Date(ms).toLocaleTimeString();
 }
+
+// Bottom-left plan-view caption: "<FLIGHT> ORIG→DEST" when the route is known.
+// flight/origin/destination originate from a free external lookup (adsbdb /
+// AirNav), so they are clamped to a strict airport/callsign charset before
+// being placed into the SVG markup — txt() does not escape, and this is the
+// only externally-sourced string the sketch renders.
+function routeCaption(m, H) {
+  const clean = (s, max) => (typeof s === 'string'
+    ? s.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, max)
+    : '');
+  const flight = clean(m.flight, 8);
+  const orig = clean(m.origin, 4);
+  const dest = clean(m.destination, 4);
+  const leg = orig && dest ? `${orig}→${dest}` : '';
+  const text = [flight, leg].filter(Boolean).join(' · ');
+  if (!text) return '';
+  return txt(6, H - 6, text, { fill: COLOURS.label, size: 10, anchor: 'start' });
+}
 function fmtAlt(m) {
   if (m == null) return '—';
   return `${Math.round(m / 100) * 100} m`;
@@ -583,6 +601,9 @@ export function buildMiniMapSvg(m) {
     + txt(cx + 6, cy + 11, 'you', { fill: COLOURS.label, size: 9 })
     // aircraft marker
     + `<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="3.2" fill="${COLOURS.ac}" stroke="${COLOURS.acStroke}" stroke-width="0.5"/>`
+    // Bottom-left: target route (origin→destination) and flight number, when
+    // known. Free adsbdb / AirNav supplies these; absent for ISS / unrouted.
+    + routeCaption(m, H)
     + txt(W - 4, H - 6,
       `${m.label ?? ''} · ${(distM / 1000).toFixed(1)} km · brg ${bearing.toFixed(0)}°`,
       { fill: COLOURS.label, size: 10, anchor: 'end' })

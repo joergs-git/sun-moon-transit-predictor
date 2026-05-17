@@ -181,6 +181,14 @@ export function createHttpServer(opts) {
           totals: store.sightingTotals(),
         });
       }
+      if (url.pathname === '/api/rangestats') {
+        // Retrospective: of the aircraft that ACTUALLY passed < sepDeg
+        // (imminent-confirmed), how far away were they?
+        const sepDeg = Math.min(5, Math.max(0.05, Number(url.searchParams.get('sepDeg') ?? '0.5')));
+        const windowDays = Math.min(3650, Math.max(1, Number(url.searchParams.get('windowDays') ?? '3650')));
+        return jsonResponse(res, 200,
+          store.rangeStats({ sepBelowDeg: sepDeg, windowMs: windowDays * 24 * 3600_000 }));
+      }
       if (url.pathname === '/api/history') {
         const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') ?? '100')));
         // Episode-consolidated history view (v0.7.8+): one row per real

@@ -845,3 +845,33 @@ tr.empty td.no-bodies {
   color: var(--fg);
 }
 .acstats-empty { color: var(--muted); font-size: 12px; padding: 8px 0; }
+
+/* Range-stats key figures (reuses .acstats-bars for the histogram). */
+.rangestats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.rs-fig {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rs-num {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.rs-lbl {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
