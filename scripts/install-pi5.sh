@@ -153,13 +153,15 @@ if [ ! -f "$SERVICE_FILE_LOCAL" ] || [ "$OVERWRITE_CONFIG" -eq 1 ]; then
   cat > "$SERVICE_FILE_LOCAL" <<EOF
 {
   "adsb":      { "url": "$ADSB_URL", "pollIntervalMs": 2000 },
-  "tracker":   { "horizonS": 300, "stepS": 0.5, "thresholdDeg": 0.3, "looseThresholdDeg": 5.0, "bodies": ["Sun", "Moon"] },
-  "pushover":  { "token": "$PUSH_TOKEN", "user": "$PUSH_USER", "device": "", "enabled": $PUSH_ENABLED, "minStage": "radio" },
+  "tracker":   { "horizonS": 900, "stepS": 0.5, "thresholdDeg": 0.3, "looseThresholdDeg": 2.0, "bodies": ["Sun", "Moon"] },
+  "pushover":  { "token": "$PUSH_TOKEN", "user": "$PUSH_USER", "device": "", "enabled": $PUSH_ENABLED, "minStage": "radio", "radioThresholdDeg": 1.0 },
   "server":    { "port": $PORT, "host": "0.0.0.0", "publicUrl": "$PUB_URL" },
   "store":     { "path": "$REPO_DIR/data/history.db" },
   "routes":    { "enabled": true, "ttlMs": 3600000, "negativeTtlMs": 300000 },
   "predictor": { "enabled": true, "daysBack": 14, "minRepeats": 2, "bucketMinutes": 60, "rebuildIntervalMs": 3600000, "lookAheadMs": 86400000 },
-  "lifecycle": { "plannedWindowMs": 3600000, "imminentWindowMs": 30000, "staleGraceMs": 0, "maxEntries": 20 },
+  "lifecycle": { "plannedWindowMs": 3600000, "imminentWindowMs": 30000, "staleGraceMs": 1800000, "maxEntries": 10, "coastMs": 25000 },
+  "iss":       { "enabled": true, "tlePath": "$REPO_DIR/data/iss.tle", "horizonMs": 1209600000, "visibleHorizonMs": 2592000000, "recomputeMs": 600000, "thresholdDeg": 0.3, "looseThresholdDeg": 1.0 },
+  "update":    { "enabled": true, "triggerPath": "$REPO_DIR/data/update.request", "debounceMs": 30000 },
   "opensky":   { "enabled": $OPENSKY_ENABLED, "airports": $OPENSKY_AIRPORTS_JSON, "lookbackDays": 7 }
 }
 EOF

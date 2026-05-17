@@ -287,6 +287,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M24 (v0.10.2) | Fixed badge stuck on "updating…" forever (a consumed-but-no-restart / no-op update never cleared, survived refresh): server auto-clears `consumed`→idle after 20 s and `stuck`→idle after 10 min (cleaning the stale trigger); frontend state machine always restores the version badge. Sky-now now shows the next visible ISS pass **and** the next Sun/Moon transit even weeks out (with date), via a 30-day visible-pass horizon (early-return, cheap) and a 14-day transit horizon | done |
 | M25 (v0.10.3) | "No ISS info" out of the box fixed: `install-pi5.sh` now does an initial TLE fetch and installs a daily `stp-tle.timer` + `stp-tle.service` (the running service still never fetches — offline by default) so `data/iss.tle` exists and stays fresh automatically | done |
 | M26 (v0.10.4) | ISS rows in Live-Tracking + History recoloured **blue** (was cyan) for an unambiguous identity, matched by the Sky-now ISS line; ISS rows show the 🛰 satellite symbol in the status cell instead of the ✈️ aircraft glyph so they can't be mistaken for traffic | done |
+| M27 (v0.10.5) | `bootstrap-pi5.sh` bare-image one-liner (apt deps → clone → install-pi5.sh, args/env forwarded); fixed `install-pi5.sh` writing a stale `service.json` (it pinned old `horizonS:300` / `looseThresholdDeg:5` / `staleGraceMs:0` / `maxEntries:20` and omitted `iss`/`update`) — fresh installs now get the current defaults + explicit ISS config | done |
 
 ## Hardware + software bill of materials
 
@@ -337,7 +338,29 @@ is the host computer it runs on.
 
 Recommended OS image: **Raspberry Pi OS Lite (64-bit)** via the Pi Imager
 (set hostname, SSH key, and Wi-Fi in the Imager's "Edit Settings" before
-flashing). Then on the Pi:
+flashing).
+
+### From a blank image (one-liner bootstrap)
+
+On a fresh OS with nothing installed yet, `scripts/bootstrap-pi5.sh`
+installs the apt prerequisites (`git`, `curl`, `ca-certificates`), clones
+the repo, and hands off to `install-pi5.sh` (forwarding all flags + `STP_*`
+env vars). Review it first — piping a remote script to a shell runs code
+as you:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/joergs-git/sun-moon-transit-predictor/main/scripts/bootstrap-pi5.sh | bash
+# zero-touch:
+curl -fsSL .../scripts/bootstrap-pi5.sh | STP_LAT=52.28 STP_LON=7.44 STP_ELEV=50 bash -s -- --non-interactive
+```
+
+It does **not** set up `dump1090-fa` + the RTL-SDR — that is the ADS-B
+**data source** (hardware: SDR dongle, antenna; software from the
+FlightAware apt repo). Pass `--with-dump1090` for a best-effort apt
+attempt, otherwise install it per `flightaware.com/adsb/piaware/install`.
+Without an ADS-B feed the predictor has no aircraft to track.
+
+### Already have the repo
 
 ```bash
 git clone https://github.com/joergs-git/sun-moon-transit-predictor.git
@@ -345,17 +368,21 @@ cd sun-moon-transit-predictor
 bash scripts/install-pi5.sh
 ```
 
-The script:
+`install-pi5.sh` (idempotent — safe to re-run after every `git pull`):
 
 1. installs Node.js 22 from NodeSource if it isn't already present,
 2. runs `npm install --omit=dev`,
-3. prompts for observer coordinates and Pushover credentials and writes
-   `config/observer.json` + `config/service.json` (both **gitignored** so
-   `git pull` and the auto-updater can never overwrite them),
-4. installs and starts a `stp.service` systemd unit (with light
-   sandboxing — `ProtectSystem=strict`, `ReadWritePaths=…/data`),
-5. installs `stp-update.timer` for nightly auto-update (opt out with
-   `--no-auto-update`).
+3. prompts for observer coordinates + Pushover credentials and writes
+   `config/observer.json` + `config/service.json` with the **current
+   defaults** (both **gitignored** so `git pull` / the auto-updater can
+   never overwrite them),
+4. installs and starts the `stp.service` systemd unit (light sandboxing —
+   `ProtectSystem=strict`, `ReadWritePaths=…/data`),
+5. unless `--no-auto-update`: installs `stp-update.timer` (nightly) +
+   `stp-update.path` (version-badge click-to-update) + the narrow sudoers
+   rule,
+6. **always** installs `stp-tle.timer` (daily ISS TLE refresh) and does one
+   initial TLE fetch, so the ISS feature is active out of the box.
 
 After it finishes, browse to `http://<pi-ip>:8081/`. Logs:
 `journalctl -u stp.service -f`.
@@ -1281,6 +1308,7 @@ from the notifier — happy to add that as a config switch if useful.
 │   ├── aircraft-types.js         offline ICAO-type → specs table
 │   └── style.css                 dark theme
 ├── scripts/
+│   ├── bootstrap-pi5.sh          bare-image one-liner: apt deps + clone + install-pi5.sh
 │   ├── install-pi5.sh            idempotent installer (interactive or --non-interactive)
 │   ├── auto-update.sh            git pull → npm install → restart, with config backup
 │   ├── refresh-schedule.js       OpenSky daily fetcher (M10, opt-in)
