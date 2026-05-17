@@ -557,6 +557,9 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
 .fb-total { background: #8b94a3; }
 .fb-band  { background: var(--accent); }
 .fb-near  { background: var(--ok); }
+/* Tightest bucket — same magenta as the near-hit row highlight so the
+   "this actually crossed the disc" signal reads consistently. */
+.fb-vnear { background: #ff5d8f; }
 .funnel-val {
   flex: 0 0 36px;
   text-align: right;
@@ -610,4 +613,45 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
   color: var(--muted);
   opacity: 0.8;
   line-height: 1.35;
+}
+
+/* Small running-version badge next to the page title (v0.8.1). */
+.app-version {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  vertical-align: super;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  border-bottom: 1px dotted var(--line);
+}
+.app-version:hover { color: var(--accent); border-bottom-color: var(--accent); }
+.app-version.updating { color: var(--accent); cursor: progress; }
+
+/* History pager (v0.8.1) — sits directly under the History table. */
+.history-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+.pager-btn { font-size: 12px; padding: 4px 10px; }
+.pager-btn:disabled { opacity: 0.4; cursor: default; }
+.pager-info {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 150px;
+  text-align: center;
+}
+
+/* A — prominent banner in the tracking panel when nothing can ever match
+   because both bodies sit below the observability floor. */
+tr.empty td.no-bodies {
+  color: var(--accent);
+  font-weight: 600;
+  background: rgba(240, 160, 32, 0.08);
+  letter-spacing: 0.02em;
+  line-height: 1.5;
 }

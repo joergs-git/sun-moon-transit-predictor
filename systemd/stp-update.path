@@ -1,0 +1,16 @@
+[Unit]
+Description=Watch for a web-UI update request and run stp-update.service
+Documentation=https://github.com/joergs-git/sun-moon-transit-predictor
+
+[Path]
+# The stp.service web endpoint (POST /api/update, from the version badge)
+# drops this file — it never runs git/systemctl itself. systemd watches the
+# path here and fires the privileged stp-update.service, so the
+# unauthenticated LAN HTTP layer gains no shell/sudo of its own.
+# stp-update.service's auto-update.sh deletes the file on start, which clears
+# this PathExists= condition so it does not re-fire in a loop.
+PathExists=__INSTALL_DIR__/data/update.request
+Unit=stp-update.service
+
+[Install]
+WantedBy=multi-user.target
