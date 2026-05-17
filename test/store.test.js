@@ -131,16 +131,40 @@ describe('HistoryStore', () => {
       const r = rows[0];
       // Earliest recorded_at_ms (radio stage) wins for the time column.
       expect(r.recorded_at_ms).toBe(a.closestApproachAtMs - 90_000);
-      // Tightest sep wins for the geometry snapshot (imminent stage).
+      // Imminent row drives the headline geometry (real closest approach).
       expect(r.closest_sep_deg).toBeCloseTo(0.18, 5);
       // Highest stage reached.
       expect(r.stage).toBe('imminent');
       // All three stages remembered.
       expect(r.stages.sort()).toEqual(['candidate', 'imminent', 'radio']);
-      // Outcome classifies the episode as graduated.
-      expect(r.outcome).toBe('graduated');
+      // v0.14.1: imminent fired → 'confirmed' and the sep actually happened.
+      expect(r.outcome).toBe('confirmed');
+      expect(r.sepConfirmed).toBe(true);
       // Lead time is the full radio→imminent span.
       expect(r.leadTimeMs).toBe(90_000);
+    } finally {
+      store.close();
+    }
+  });
+
+  it('marks a candidate that never reached imminent as predicted/unconfirmed', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      const nowMs = 1_700_500_000_000;
+      const a = makeCandidate({ icao: 'bbb222', body: 'Moon', sepDeg: 0.2, closestInMs: 0 });
+      a.closestApproachAtMs = nowMs - 2 * 3600_000;
+      // radio then a tight candidate prediction — but the flight diverged,
+      // imminent NEVER fired (the "stale in Live, graduated in History" bug).
+      store.recordEvent('radio',     { ...a, closestApproachSepDeg: 1.4 },
+                        null, a.closestApproachAtMs - 600_000);
+      store.recordEvent('candidate', { ...a, closestApproachSepDeg: 0.2 },
+                        null, a.closestApproachAtMs - 400_000);
+
+      const [r] = store.consolidatedHistory({ limit: 10, windowMs: 24 * 3600_000, nowMs });
+      expect(r.outcome).toBe('predicted');     // not 'confirmed'/'graduated'
+      expect(r.sepConfirmed).toBe(false);      // → UI strikes the sep through
+      expect(r.closest_sep_deg).toBeCloseTo(0.2, 5); // tightest *predicted*
+      expect(r.stage).toBe('candidate');       // never reached imminent
     } finally {
       store.close();
     }

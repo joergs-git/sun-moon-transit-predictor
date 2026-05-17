@@ -188,13 +188,13 @@
           <th title="Predicted closest-approach time — the camera-ready moment for this transit.">Transit<span class="th-sub">crossing clock</span></th>
           <th title="Wall-clock time of the FIRST stage that fired for this transit. The recorded-vs-transit gap shows how much advance warning the pipeline gave.">Recorded<span class="th-sub">first detection</span></th>
           <th title="Lead time = Transit - Recorded. How early the pipeline saw the transit coming. Big lead = good early detection.">Lead<span class="th-sub">Transit − Recorded</span></th>
-          <th title="Tightest angular separation observed across all stages of this transit (typically from the imminent stage's refined geometry).">Sep<span class="th-sub">tightest</span></th>
+          <th title="Angular separation. Confirmed (from the imminent ±30 s stage) = what actually happened. Predicted (struck through) = a candidate prediction that never reached imminent — the flight diverged before the ETA.">Sep<span class="th-sub">confirmed / predicted</span></th>
+          <th title="Highest stage reached for this transit: radio (early-warning, panel band ≤2°), candidate (tight band, ≤0.3°), or imminent (±30 s = time-confirmed).">Stage<span class="th-sub">highest reached</span></th>
+          <th title="✅ confirmed = reached the imminent ±30 s window (really happened). ⚠️ predicted = candidate predicted but never confirmed (flight left/diverged before the ETA — same case that goes 'stale' in Live tracking). ➖ faded = only radio fired, never tightened.">Outcome<span class="th-sub">episode result</span></th>
           <th title="Line-of-sight distance from the observer to the aircraft at closest approach.">Dist<span class="th-sub">at closest</span></th>
           <th title="Approximate time for the object to sweep the FULL Sun/Moon disc, from ω ≈ ground speed / slant range. Hover a row for the sensor speed (mm/s) at the configured focal length.">Disc xing<span class="th-sub">full-disc time</span></th>
           <th title="Ground speed in km/h.">Speed<span class="th-sub">ground</span></th>
           <th title="Aircraft altitude above mean sea level, rounded to the nearest 100 m.">Alt<span class="th-sub">MSL</span></th>
-          <th title="Highest stage reached for this transit: radio (early-warning, panel band ≤2°), candidate (tight band, ≤0.3°), or imminent (±30 s).">Stage<span class="th-sub">highest reached</span></th>
-          <th title="Episode outcome (computed across all stages of the same transit): graduated = early radio alert paid off; faded = radio fired but no tighter stage followed; surprise = candidate/imminent fired without prior radio.">Outcome<span class="th-sub">episode result</span></th>
           <th title="IATA flight number, or the ADS-B callsign if no route lookup was available at the time.">Flight<span class="th-sub">IATA / callsign</span></th>
           <th title="ADS-B 24-bit ICAO hex code identifying the airframe.">ICAO<span class="th-sub">airframe hex</span></th>
           <th title="Origin → Destination IATA codes from the adsbdb.com route lookup.">Route<span class="th-sub">from → to</span></th>
@@ -217,7 +217,8 @@
     <p class="hint">
       Persistent tally over <b>all</b> detected ADS-B traffic (survives
       restarts). A <i>visit</i> = a fresh sighting after a ≥ 30-min gap, so
-      loiter / continuous tracking counts once. Top 10 by visits.
+      loiter / continuous tracking counts once. Top 20 by visits — hover an
+      ICAO hex for the airframe (AirNav).
     </p>
     <div class="acstats-grid">
       <div class="acstats-col">

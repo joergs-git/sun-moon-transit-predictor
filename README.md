@@ -292,6 +292,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M29 (v0.10.7) | Install fixes from on-Pi testing: manual path now installs `git` first (absent on Pi OS Lite); FlightAware repo package bumped `1.2 → 1.3` (the 1.2 URL 404s) in the README + `bootstrap-pi5.sh`, with a version-drift note | done |
 | M30 (v0.10.8) | Docs: `rbfeeder`/AirNav-RadarBox sharing-key sidenote + MLAT explainer in the ADS-B section (independent of the predictor; same WGS84 location) | done |
 | M31 (v0.10.9) | ISS transits only push/log within `iss.notifyWithinMs` (default 72 h) — far-future SGP4 is noise that flips with each daily TLE, so this kills phantom-transit Pushover spam + "surprise" stat pollution; Sky-now still previews the soonest, flagged "tentative". README "Good to know" facts: ISS prediction reliability + observer coordinate/elevation pitfalls | done |
+| M40 (v0.14.1) | **History outcome sharpened** (display only — learning aggregates untouched): `confirmed` = reached the imminent ±30 s window (really happened); `predicted` = a tight candidate that never confirmed (flight diverged before the ETA — the "stale in Live yet graduated in History" case); `faded` = radio only. Headline sep now comes from the imminent row when present; a predicted-only sep is **struck through** + `sepConfirmed` flag. Stage + Outcome columns moved between Sep and Dist. Aircraft-stats → **TOP-20**; ICAO labels hover → AirNav popover | done |
 | M39 (v0.14.0) | **Persistent aircraft-sightings stats** over *all* detected ADS-B traffic (new `aircraft_sightings` SQLite table; survives restarts). A "visit" = a fresh sighting after a ≥ 30-min gap (`sightings.gapMs`); per-tick DB writes throttled via a session map (visit hits SQLite immediately, continuous presence flushes `last_seen` every `flushMs`). `GET /api/acstats`; new "Aircraft stats" section with TOP-10 horizontal bars by airframe (ICAO hex) and by ADS-B callsign + unique/visit totals | done |
 | M38 (v0.13.3) | Mini-map heading vector doubled in length + recoloured amber so it reads distinctly from the blue observer→aircraft sight line | done |
 | M37 (v0.13.2) | Mini-map + AirNav merged into **one compact box** — LEFT = plan-view radii map (now titled "PLAN VIEW · rings = km from you" so its purpose is clear), RIGHT = photo over aircraft data; equal-height columns (right ends flush with the map), empty halves collapse. Roughly half the prior footprint so the FOV transit sketch stays the dominant element | done |
@@ -1450,7 +1451,7 @@ from the notifier — happy to add that as a config switch if useful.
 │   ├── stp-update.path           click-to-update trigger watcher
 │   ├── stp-tle.service           ISS TLE refresh oneshot template
 │   └── stp-tle.timer             daily ISS TLE schedule (05:40 ±20 min)
-└── test/                         16 vitest files, 147 cases
+└── test/                         16 vitest files, 148 cases
 ```
 
 ## License

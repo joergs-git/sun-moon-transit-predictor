@@ -322,11 +322,17 @@ export class HistoryStore {
       cur.latestClosestAtMs = Math.max(cur.latestClosestAtMs, r.closest_at_ms);
     }
 
+    // History-display outcome (v0.14.1). Sharper than the learning-panel
+    // taxonomy: only an `imminent` stage means the close approach was
+    // actually reached (±30 s, time-confirmed). A `candidate` that never
+    // reached `imminent` was only *predicted* — the flight diverged / left
+    // the band before the ETA (this is exactly the "stale in Live but
+    // graduated in History" confusion). 'faded' = radio that never
+    // tightened. (Learning aggregates in episodes() are unchanged.)
     const classify = (stages) => {
-      const tightened = stages.has('candidate') || stages.has('imminent');
-      if (stages.has('radio') && tightened) return 'graduated';
-      if (stages.has('radio') && !tightened) return 'faded';
-      return 'surprise';
+      if (stages.has('imminent')) return 'confirmed';
+      if (stages.has('candidate')) return 'predicted';
+      return 'faded';
     };
 
     const consolidated = Array.from(byKey.values()).map(ep => {
@@ -334,23 +340,29 @@ export class HistoryStore {
         a.recorded_at_ms < b.recorded_at_ms ? a : b);
       const tightest = ep.rows.reduce((a, b) =>
         ((a.closest_sep_deg ?? Infinity) < (b.closest_sep_deg ?? Infinity)) ? a : b);
+      // Headline geometry: prefer an `imminent` row (truest — sampled at
+      // the ±30 s of real closest approach), else the tightest *predicted*
+      // row. sepConfirmed lets the UI strike through a sep that never
+      // actually happened.
+      const imminentRows = ep.rows.filter(r => r.stage === 'imminent');
+      const base = imminentRows.length
+        ? imminentRows.reduce((a, b) =>
+          ((a.closest_sep_deg ?? Infinity) < (b.closest_sep_deg ?? Infinity)) ? a : b)
+        : tightest;
       const topStage = ep.rows.reduce((a, b) =>
         (STAGE_RANK[a.stage] ?? 0) >= (STAGE_RANK[b.stage] ?? 0) ? a : b);
-      // Base shape is the tightest-sep row (best-refined geometry +
-      // payload), overridden with the earliest recorded time and the
-      // top stage. flight/callsign prefer non-null wins (route lookup
-      // often only resolves on later stages).
       const flight = ep.rows.map(r => r.flight).filter(Boolean).pop() ?? null;
       const callsign = ep.rows.map(r => r.callsign).filter(Boolean).pop() ?? null;
       return {
-        ...tightest,
+        ...base,
         recorded_at_ms: earliest.recorded_at_ms,
         stage: topStage.stage,
         stages: Array.from(ep.stages),
         flight,
         callsign,
         outcome: classify(ep.stages),
-        leadTimeMs: tightest.closest_at_ms - earliest.recorded_at_ms,
+        sepConfirmed: imminentRows.length > 0,
+        leadTimeMs: base.closest_at_ms - earliest.recorded_at_ms,
       };
     });
 
