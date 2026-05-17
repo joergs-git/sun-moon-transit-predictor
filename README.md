@@ -268,6 +268,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M20 (v0.9.0) | ISS transit prediction — dependency-free embedded SGP4 (validated against the official 88888 verification vectors), offline TLE file with opt-in `refresh-tle.js` fetcher; ISS surfaced in LIVE-TRACKING-SIGNALS + History + FOV in front of Sun **and** Moon with a distinct cyan highlight + 🛰 / station glyph, reusing the Disc-xing column | done |
 | M21 (v0.9.1) | History column reorder: Sun/Moon shown as a leading icon (Body text column dropped); geometry block `Sep · Dist · Disc xing · Speed · Alt` moved between Lead and Stage; Flight / ICAO / Route moved to the far right | done |
 | M22 (v0.10.0) | ISS Pushover (heads-up the moment a Sun/Moon transit is predicted) + History rows via the shared notifier path; "next visible ISS pass" line in Sky-now (el > 20°, after dusk, station sunlit — offline cylindrical-shadow test); Alert-learning aggregates exclude ISS (kept in the History table); Tracking table reordered like History (leading Sun/Moon icon, Flight/ICAO/Route to the right); detection funnel gains a live "Live planes" bar and "detected" → "Total detected" | done |
+| M23 (v0.10.1) | Click-to-update no longer fails silently: server self-diagnostic (`state.update`: pending → consumed → stuck), honest UI status line, `ok:false` surfaced; `auto-update.sh` warns when `stp-update.path` is missing; troubleshooting docs (the missing-watcher root cause on Pis upgraded from < v0.8.1) | done |
 
 ## Hardware + software bill of materials
 
@@ -468,6 +469,31 @@ Security model — the unauthenticated LAN UI never gets a shell:
 # is the click-to-update watcher active?
 systemctl status stp-update.path --no-pager
 ```
+
+#### Troubleshooting: "I click the version, confirm, but nothing updates"
+
+The endpoint only **drops a trigger file** — the actual `git pull` +
+restart is done by the privileged `stp-update.path` → `stp-update.service`
+units. Nothing happens if that watcher isn't running:
+
+* **It's a no-op on non-systemd hosts** (e.g. a macOS dev box). Click-to-
+  update is a Pi/Linux feature; test it on the Pi, not the laptop.
+* **`stp-update.path` not installed/enabled on the Pi.** The unit was added
+  in v0.8.1. `auto-update.sh` (nightly / code update) does **not** install
+  systemd units, so a Pi set up before v0.8.1 and only code-updated never
+  got it. One-time fix on the Pi:
+
+  ```bash
+  cd ~/sun-moon-transit-predictor
+  bash scripts/install-pi5.sh           # idempotent; installs + enables stp-update.path
+  systemctl is-active stp-update.path   # → active
+  ```
+
+Since v0.10.1 the UI no longer fails silently: after you confirm, the line
+under the title reports **requested → consumed (restarting…)**, or, if no
+watcher consumes the trigger within ~12 s, **"stuck — stp-update.path not
+installed/enabled (run scripts/install-pi5.sh)"**. The nightly updater also
+logs this warning to `journalctl -u stp-update.service`.
 
 ### Manual update
 

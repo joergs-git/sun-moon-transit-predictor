@@ -28,6 +28,19 @@ if [ -f "$REPO_DIR/data/update.request" ]; then
   rm -f "$REPO_DIR/data/update.request" || true
 fi
 
+# Diagnostic: the version-badge click only works if the stp-update.path
+# watcher is installed AND active. auto-update.sh (nightly/manual) does NOT
+# install systemd units, so a Pi set up before v0.8.1 and only code-updated
+# is missing it. Warn loudly in the journal with the one-time fix so the
+# failure mode is discoverable instead of a silent no-op.
+if command -v systemctl >/dev/null 2>&1; then
+  if ! systemctl is-active --quiet stp-update.path 2>/dev/null; then
+    log "WARNING: stp-update.path is not active — the web 'click-to-update'"
+    log "         will write a trigger that nothing consumes. One-time fix:"
+    log "         re-run  bash scripts/install-pi5.sh  on the Pi."
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # 1. Back up local config so the pull cannot delete or overwrite it.
 # ---------------------------------------------------------------------------
