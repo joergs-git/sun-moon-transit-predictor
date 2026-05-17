@@ -127,6 +127,28 @@ export function aircraftAzElFromObsEcef(obsEcef, obsLatDeg, obsLonDeg, latDeg, l
 }
 
 /**
+ * Az/El of a target whose ECEF position is already known (metres). Used for
+ * the ISS, where SGP4 → TEME → ECEF gives a Cartesian position directly, so
+ * the geodetic round-trip in `aircraftAzElFromObsEcef` would be wasted work.
+ *
+ * @param {{ x: number, y: number, z: number }} obsEcef
+ * @param {number} obsLatDeg
+ * @param {number} obsLonDeg
+ * @param {{ x: number, y: number, z: number }} tgtEcef  - metres
+ * @returns {AzEl}
+ */
+export function targetEcefAzEl(obsEcef, obsLatDeg, obsLonDeg, tgtEcef) {
+  const enu = ecefDeltaToEnu(
+    tgtEcef.x - obsEcef.x,
+    tgtEcef.y - obsEcef.y,
+    tgtEcef.z - obsEcef.z,
+    obsLatDeg,
+    obsLonDeg,
+  );
+  return enuToAzEl(enu.e, enu.n, enu.u);
+}
+
+/**
  * Az/El of an aircraft as seen from the observer. Convenience wrapper that
  * recomputes observer ECEF on every call — for tight loops, prefer caching
  * `observerEcef(observer)` and using `aircraftAzElFromObsEcef`.
