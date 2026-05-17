@@ -1,0 +1,17 @@
+[Unit]
+Description=Sun-Moon Transit Predictor — refresh ISS TLE (Celestrak)
+Documentation=https://github.com/joergs-git/sun-moon-transit-predictor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+Group=__USER__
+WorkingDirectory=__INSTALL_DIR__
+# Writes __INSTALL_DIR__/data/iss.tle. The running service never fetches
+# anything itself (offline by default) — this is the only network touch
+# for ISS. Without a TLE the ISS feature simply stays inactive.
+ExecStart=/usr/bin/node __INSTALL_DIR__/scripts/refresh-tle.js
+StandardOutput=journal
+StandardError=journal

@@ -179,6 +179,27 @@ and next Sun/Moon transit (horizonMs default 48 h → 14 d; state.iss
 
 - [x] Version 0.10.2; README M24; config example. Tests: 134 pass.
 
+Status: merged to main (v0.10.2, bef6b6b).
+
+---
+
+# v0.10.3 — "no ISS info" out of the box (branch fix/iss-tle-auto-fetch)
+
+CAUSE: ISS is offline-by-default — the service never fetches the TLE; it
+only reads data/iss.tle, written by the opt-in scripts/refresh-tle.js. If
+that was never run, state.iss.active=false and renderIssPass hides the
+whole Sky-now block → "no ISS info". Working as designed, but the user
+expects ISS info to appear.
+
+- [x] systemd/stp-tle.service + stp-tle.timer (daily 05:40 ±20m,
+      Persistent) — mirrors the auto-update timer pattern.
+- [x] install-pi5.sh: install+enable the TLE timer (independent of
+      --no-auto-update) AND a best-effort initial `node refresh-tle.js`
+      so ISS info appears right after install. Runtime stays offline.
+- [x] README: ISS TLE section rewritten + M25; version 0.10.3.
+      Diagnosis given to user: run scripts/refresh-tle.js now / re-run
+      install-pi5.sh (≥0.10.3). Tests: 134 pass (no logic change).
+
 Status: complete.
 
 # DONE — click-to-update (folded into v0.8.1)

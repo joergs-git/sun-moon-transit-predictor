@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily ISS TLE refresh for stp.service
+
+[Timer]
+# Once a day at 05:40 local ± 20 min jitter. An ISS TLE older than ~3 days
+# noticeably degrades transit timing, so daily is comfortable. Persistent
+# catches up after an offline window (a Pi that was off at 05:40 runs it on
+# the next boot).
+OnCalendar=*-*-* 05:40:00
+Persistent=true
+RandomizedDelaySec=20m
+Unit=stp-tle.service
+
+[Install]
+WantedBy=timers.target
