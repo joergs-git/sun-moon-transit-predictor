@@ -320,10 +320,16 @@ export class HistoryStore {
   episodes({ windowMs = 14 * 24 * 3600_000, episodeWindowMs = 5 * 60_000, nowMs = Date.now() } = {}) {
     const since = nowMs - windowMs;
     const rows = this.db
+      // Alert-learning is an ADS-B-traffic quality signal: hit/surprise/
+      // graze rates are "of the aircraft we detected …". The ISS is a
+      // deliberately-hunted rare orbital event from a different pipeline —
+      // including its rows would skew every aggregate (it would read as a
+      // permanent 'surprise' graze). Excluded here only; consolidatedHistory
+      // (the History *table*) still keeps ISS so the user sees it there.
       .prepare(`SELECT id, recorded_at_ms, closest_at_ms, stage, body, icao,
                        callsign, flight, closest_sep_deg
                 FROM transit_history
-                WHERE recorded_at_ms >= ?
+                WHERE recorded_at_ms >= ? AND icao <> 'ISS'
                 ORDER BY icao, body, closest_at_ms`)
       .all(since);
 
