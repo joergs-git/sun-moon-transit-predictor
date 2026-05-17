@@ -566,7 +566,11 @@ export async function runService({
       logger.info?.(`update requested via web UI → wrote trigger ${p}`);
       return {
         ok: true, pending: false,
-        message: 'Update requested — the service will pull origin/main and restart in a moment.',
+        // The HTTP layer only drops the trigger; an external privileged
+        // consumer (the systemd stp-update.path unit, Linux/Pi only) does
+        // the git pull + restart. The UI watches state.update to confirm
+        // the trigger was actually picked up — see the tick() diagnostic.
+        message: 'Update requested. Waiting for the background updater to pull & restart…',
       };
     } catch (e) {
       return { ok: false, message: describeFsError(e, p) };
@@ -619,6 +623,27 @@ export async function runService({
     }));
     state.candidates = enriched;
     state.lastUpdateMs = nowMs;
+
+    // Click-to-update self-diagnostic. The endpoint only drops a trigger
+    // file; a privileged systemd stp-update.path unit (Linux/Pi only) is
+    // what actually pulls + restarts. So "did anything consume it?" is the
+    // honest signal: the file vanishing = updater picked it up (restart
+    // imminent); still there after a grace = NOTHING is consuming it (not
+    // a systemd host, or stp-update.path not installed/enabled) — surface
+    // that instead of a silent no-op.
+    if (config.update?.enabled && lastUpdateRequestMs > 0) {
+      const ageMs = nowMs - lastUpdateRequestMs;
+      const stillThere = existsSync(config.update.triggerPath);
+      const status = !stillThere ? 'consumed'
+        : ageMs < 12_000 ? 'pending'
+          : 'stuck';
+      state.update = {
+        requestedAtMs: lastUpdateRequestMs, ageMs, status,
+        triggerPath: config.update.triggerPath,
+      };
+    } else {
+      state.update = { requestedAtMs: 0, ageMs: 0, status: 'idle' };
+    }
 
     // Detection funnel: every airframe with a usable fix counts toward the
     // total regardless of how far off the Sun/Moon line it is; a candidate
