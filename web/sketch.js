@@ -187,6 +187,16 @@ const HEADER_H = 18;
 const FOOTER_H = 30;
 const FOOTER_LINE_H = 14;
 
+// One shared annotation size for the whole right-hand column — every label
+// in the FOV sketch and the plan-view mini-map uses LABEL_SIZE, so nothing
+// reads bigger or smaller than its neighbour (the FOV sketch title is the
+// single deliberate exception at TITLE_SIZE). The AirNav box CSS
+// (.fov-aux & descendants) is aligned to the same 11 px. LINE_H is the
+// baseline-to-baseline step used to stack labels without overlap.
+const LABEL_SIZE = 11;
+const TITLE_SIZE = 13;
+const LINE_H = LABEL_SIZE + 3;
+
 const COLOURS = {
   fovStroke: '#5a6470',
   fovFill: '#080a0d',
@@ -287,7 +297,10 @@ function fmtTime(ms) {
   return new Date(ms).toLocaleTimeString();
 }
 
-// Bottom-left plan-view caption: "<FLIGHT> ORIG→DEST" when the route is known.
+// Plan-view caption: "<FLIGHT> · ORIG→DEST" when the route is known. Drawn
+// on its own line one LINE_H *above* the bottom dist/brg caption so the two
+// never collide horizontally (the overlap that prompted this) — bottom-left
+// route line, bottom-right distance line, separate baselines.
 // flight/origin/destination originate from a free external lookup (adsbdb /
 // AirNav), so they are clamped to a strict airport/callsign charset before
 // being placed into the SVG markup — txt() does not escape, and this is the
@@ -302,7 +315,8 @@ function routeCaption(m, H) {
   const leg = orig && dest ? `${orig}→${dest}` : '';
   const text = [flight, leg].filter(Boolean).join(' · ');
   if (!text) return '';
-  return txt(6, H - 6, text, { fill: COLOURS.label, size: 10, anchor: 'start' });
+  return txt(6, H - 6 - LINE_H, text,
+    { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'start' });
 }
 function fmtAlt(m) {
   if (m == null) return '—';
@@ -439,8 +453,8 @@ export function buildSketchSvg(d) {
   // ---- Compose SVG ----------------------------------------------------------
   const acTag = d.typeCode ? ` · ${d.typeCode}` : '';
   const header =
-    `${txt(PAD, HEADER_H, `${d.body} transit · ${d.flight ?? '—'}${acTag}`, { fill: '#e6edf3', size: 13, weight: 600 })}` +
-    `${txt(SVG_W - PAD, HEADER_H, `Sep ${fmtSepArcmin(d.sepDeg)}  ·  ${fmtTime(d.closestAtMs)}`, { fill: '#e6edf3', size: 12, anchor: 'end' })}`;
+    `${txt(PAD, HEADER_H, `${d.body} transit · ${d.flight ?? '—'}${acTag}`, { fill: '#e6edf3', size: TITLE_SIZE, weight: 600 })}` +
+    `${txt(SVG_W - PAD, HEADER_H, `Sep ${fmtSepArcmin(d.sepDeg)}  ·  ${fmtTime(d.closestAtMs)}`, { fill: '#e6edf3', size: LABEL_SIZE, anchor: 'end' })}`;
 
   const fovRect =
     `<rect x="${fovX}" y="${fovY}" width="${fovPxW}" height="${fovPxH}" ` +
@@ -452,7 +466,7 @@ export function buildSketchSvg(d) {
     ? txt(SVG_W / 2, HEADER_H + 12,
       `⤢ zoomed out · aircraft ${fmtSepArcmin(d.sepDeg)} from disc — `
       + `FOV ${fovWDeg.toFixed(2)}°×${fovHDeg.toFixed(2)}° box & disc shown to scale`,
-      { fill: COLOURS.label, size: 10, anchor: 'middle' })
+      { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'middle' })
     : '';
 
   // Axis crosshair through the body centre — subtle, helps eye lock to the
@@ -507,8 +521,8 @@ export function buildSketchSvg(d) {
   // Axis labels (AZ on FOV bottom, EL on FOV left side). Helps users tell
   // which way the disc would drift on a fixed altaz mount.
   const axisLabels =
-    txt(fovX + 4, fovY + 12, 'EL ↑', { fill: COLOURS.label, size: 10 }) +
-    txt(fovX + fovPxW - 4, fovY + fovPxH - 4, 'AZ →', { fill: COLOURS.label, size: 10, anchor: 'end' });
+    txt(fovX + 4, fovY + 12, 'EL ↑', { fill: COLOURS.label, size: LABEL_SIZE }) +
+    txt(fovX + fovPxW - 4, fovY + fovPxH - 4, 'AZ →', { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'end' });
 
   // Two-line footer. Line 1 = live aircraft state (R/Alt/v), line 2 = the
   // optical rig (FOV/focal/sensor). Left-aligned on both rows so long
@@ -519,8 +533,8 @@ export function buildSketchSvg(d) {
   const footTop = `R ${fmtRange(d.aircraftAt.rangeM)} · Alt ${fmtAlt(d.altMmsl)} · v ${fmtSpeed(d.groundSpeedMs)}`;
   const footBot = `FOV ${fovWDeg.toFixed(2)}° × ${fovHDeg.toFixed(2)}° · ${OPTICS.TELESCOPE_FOCAL_MM} mm · ${OPTICS.SENSOR_NAME}`;
   const footer =
-    txt(PAD, footYTop, footTop, { fill: COLOURS.label, size: 11 }) +
-    txt(PAD, footYBot, footBot, { fill: COLOURS.label, size: 11 });
+    txt(PAD, footYTop, footTop, { fill: COLOURS.label, size: LABEL_SIZE }) +
+    txt(PAD, footYBot, footBot, { fill: COLOURS.label, size: LABEL_SIZE });
 
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SVG_W} ${SVG_H}" width="${SVG_W}" height="${SVG_H}">` +
@@ -571,7 +585,7 @@ export function buildMiniMapSvg(m) {
     `<circle cx="${cx}" cy="${cy}" r="${(rad * scale).toFixed(1)}" fill="none" `
     + `stroke="${COLOURS.axis}" stroke-width="0.5" stroke-dasharray="2 4"/>`
     + txt(cx + 2, cy - rad * scale - 2, `${(rad / 1000).toFixed(0)} km`,
-      { fill: COLOURS.label, size: 9 });
+      { fill: COLOURS.label, size: LABEL_SIZE });
 
   // Heading vector from the aircraft in its track direction — doubled
   // length (24 px) and amber so it stands out from the blue sight line.
@@ -590,15 +604,15 @@ export function buildMiniMapSvg(m) {
     // What this is: a top-down plan view (not the eyepiece). Rings = great-
     // circle distance from the observer; this is "where on the ground", the
     // FOV sketch above is "where in the eyepiece".
-    + txt(6, 12, 'PLAN VIEW · rings = km from you', { fill: COLOURS.label, size: 9 })
-    + txt(cx, 24, 'N ↑', { fill: COLOURS.label, size: 9, anchor: 'middle' })
+    + txt(6, 12, 'PLAN VIEW · rings = km from you', { fill: COLOURS.label, size: LABEL_SIZE })
+    + txt(cx, 24, 'N ↑', { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'middle' })
     // sight line observer → aircraft
     + `<line x1="${cx}" y1="${cy}" x2="${sx.toFixed(1)}" y2="${sy.toFixed(1)}" `
     + `stroke="${COLOURS.pathStroke}" stroke-width="1" stroke-dasharray="4 3" stroke-opacity="0.8"/>`
     + headSvg
     // observer marker
     + `<circle cx="${cx}" cy="${cy}" r="3" fill="${COLOURS.SunRim}"/>`
-    + txt(cx + 6, cy + 11, 'you', { fill: COLOURS.label, size: 9 })
+    + txt(cx + 6, cy + 11, 'you', { fill: COLOURS.label, size: LABEL_SIZE })
     // aircraft marker
     + `<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="3.2" fill="${COLOURS.ac}" stroke="${COLOURS.acStroke}" stroke-width="0.5"/>`
     // Bottom-left: target route (origin→destination) and flight number, when
@@ -606,7 +620,7 @@ export function buildMiniMapSvg(m) {
     + routeCaption(m, H)
     + txt(W - 4, H - 6,
       `${m.label ?? ''} · ${(distM / 1000).toFixed(1)} km · brg ${bearing.toFixed(0)}°`,
-      { fill: COLOURS.label, size: 10, anchor: 'end' })
+      { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'end' })
     + `</svg>`
   );
 }
