@@ -93,6 +93,19 @@ Status: complete, awaiting commit/push/merge confirmation.
 - [x] `scripts/refresh-tle.js` opt-in Celestrak fetcher; config example;
       README M20 + ISS section. Version 0.9.0. Tests: 131 pass (+11).
 
+Status: merged to main (v0.9.0, cbb5a6c).
+
+---
+
+# v0.9.1 — History column reorder (branch feature/history-column-order)
+
+- [x] Body text column → leading Sun/Moon icon column (☀/🌙).
+- [x] Order: icon, Transit, Recorded, Lead, Sep, Dist, Disc xing, Speed,
+      Alt, Stage, Outcome, Flight, ICAO, Route (Flight/ICAO/Route far right).
+- [x] ISS Flight-cell highlight selector moved to col 12 (#history) while
+      Tracking keeps col 5; added .th-icon/.td-icon styling. Version 0.9.1.
+      Frontend-only; 131 tests still pass.
+
 Status: complete, awaiting commit/push/merge confirmation.
 
 # DONE — click-to-update (folded into v0.8.1)
