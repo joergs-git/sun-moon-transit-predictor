@@ -288,6 +288,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M25 (v0.10.3) | "No ISS info" out of the box fixed: `install-pi5.sh` now does an initial TLE fetch and installs a daily `stp-tle.timer` + `stp-tle.service` (the running service still never fetches — offline by default) so `data/iss.tle` exists and stays fresh automatically | done |
 | M26 (v0.10.4) | ISS rows in Live-Tracking + History recoloured **blue** (was cyan) for an unambiguous identity, matched by the Sky-now ISS line; ISS rows show the 🛰 satellite symbol in the status cell instead of the ✈️ aircraft glyph so they can't be mistaken for traffic | done |
 | M27 (v0.10.5) | `bootstrap-pi5.sh` bare-image one-liner (apt deps → clone → install-pi5.sh, args/env forwarded); fixed `install-pi5.sh` writing a stale `service.json` (it pinned old `horizonS:300` / `looseThresholdDeg:5` / `staleGraceMs:0` / `maxEntries:20` and omitted `iss`/`update`) — fresh installs now get the current defaults + explicit ISS config | done |
+| M28 (v0.10.6) | Docs: validated **Raspberry Pi OS Lite (Legacy, 64-bit)** as the known-good image (exact Imager path; current/Bookworm caused dependency trouble) + a copy-paste, no-experiments **ADS-B receiver setup** for dump1090-fa with the AirNav FlightStick (FlightAware apt repo + DVB-T blacklist + verify); `--with-dump1090` aligned to the same reliable steps | done |
 
 ## Hardware + software bill of materials
 
@@ -322,8 +323,8 @@ is the host computer it runs on.
 
 | Item | What it does |
 |---|---|
-| **Raspberry Pi OS Lite, 64-bit** (Bookworm) | Headless OS image flashed via Raspberry Pi Imager. Set hostname, SSH key, and Wi-Fi in the Imager's "Edit Settings" before flashing for a zero-touch first boot. |
-| **`dump1090-fa`** (FlightAware) | The ADS-B decoder. Listens to the RTL-SDR, parses Mode S messages, exposes the rolling `aircraft.json` on `http://localhost:8080/data/aircraft.json` that this service polls every 2 s. Install via `sudo apt install dump1090-fa`. |
+| **Raspberry Pi OS Lite, 64-bit — *Legacy* (Bullseye)** | **Use the Legacy image.** In Raspberry Pi Imager: *Choose OS → Raspberry Pi OS (other) → "Raspberry Pi OS Lite (Legacy, 64-bit)"*. This is the **known-good** image — the current (Bookworm) Lite image caused dependency/version trouble with the ADS-B + Node stack during bring-up. Set hostname, SSH key and Wi-Fi in the Imager's "Edit Settings" before flashing for a zero-touch first boot. |
+| **`dump1090-fa`** (FlightAware) | The ADS-B decoder for the RTL-SDR / AirNav FlightStick — exposes `aircraft.json` on `http://localhost:8080/data/aircraft.json` (polled every 2 s). **Not** in the default repos; install per the copy-paste **[ADS-B receiver setup](#ads-b-receiver-setup-dump1090-fa--airnav-flightstick)** below (or `bootstrap-pi5.sh --with-dump1090`). |
 | **Node.js 22+** | Runtime. Pulled from NodeSource by the installer if absent. Needs `--experimental-sqlite` on Node 22; stable on Node 24+. |
 | **This repo** (`sun-moon-transit-predictor`) | `git clone https://github.com/joergs-git/sun-moon-transit-predictor.git` — contains `bin/stp.js`, the systemd units in `systemd/`, the install + auto-update scripts in `scripts/`, the web UI in `web/`. |
 
@@ -334,11 +335,53 @@ is the host computer it runs on.
 | **adsbdb.com** (no account needed) | IATA flight numbers, origin / destination airports, airline names attached to every candidate. Used live for the tracking panel and Pushover payload, cached for 1 h per callsign. Skip with `routes.enabled=false`. |
 | **OpenSky Network** account (free) | Optional schedule augmentation: backfills the predictor's watchlist with flights you may not have seen yourself yet. Configured via `scripts/refresh-schedule.js`. Off by default. |
 
+## ADS-B receiver setup (dump1090-fa + AirNav FlightStick)
+
+The **AirNav RadarBox / AirNav ADS-B FlightStick** is a standard RTL-SDR
+(RTL2832U + R820T2, built-in 1090 MHz SAW filter) — it needs **no special
+driver**, just `dump1090-fa` from FlightAware's apt repo. Do this once,
+before (or instead of via `--with-dump1090`) the app install. Plug the
+FlightStick into a **USB-2** port (USB-3 ports are RF-noisy at 1090 MHz),
+antenna attached, then:
+
+```bash
+# 1. FlightAware apt repo + the decoder (pulls in rtl-sdr automatically)
+sudo apt-get update
+wget -O /tmp/fa-repo.deb \
+  https://www.flightaware.com/adsb/piaware/files/packages/pool/piaware/f/flightaware-apt-repository/flightaware-apt-repository_1.2_all.deb
+sudo dpkg -i /tmp/fa-repo.deb && rm /tmp/fa-repo.deb
+sudo apt-get update
+sudo apt-get install -y dump1090-fa
+
+# 2. Stop the DVB-T kernel driver grabbing the stick (idempotent; harmless
+#    if dump1090-fa already did it). Then reboot so it takes effect.
+echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtl.conf
+sudo reboot
+```
+
+After the reboot it runs as a systemd service (`dump1090-fa`) on port
+**8080**. Verify — **do not start the app until this returns aircraft**
+(needs sky view + planes overhead):
+
+```bash
+systemctl status dump1090-fa --no-pager
+curl -s localhost:8080/data/aircraft.json | head -c 300   # JSON with "aircraft":[…]
+# or open  http://<pi-ip>:8080/  (SkyAware map) in a browser
+```
+
+**Gain:** leave the dump1090-fa default — the FlightStick's built-in
+filter makes AGC work well out of the box. Only if range is poor, tune
+`--gain` in `/etc/default/dump1090-fa` then
+`sudo systemctl restart dump1090-fa` (no other experiments needed). The
+app's `adsb.url` default (`http://localhost:8080/data/aircraft.json`)
+already matches this — nothing to configure on the app side.
+
 ## Quick install on the Pi 5
 
-Recommended OS image: **Raspberry Pi OS Lite (64-bit)** via the Pi Imager
-(set hostname, SSH key, and Wi-Fi in the Imager's "Edit Settings" before
-flashing).
+Recommended OS image: **Raspberry Pi OS Lite (Legacy, 64-bit)** — see the
+[Required software](#required-software-installed-by-scriptsinstall-pi5sh)
+note above; the Legacy image is the validated one. Set hostname, SSH key
+and Wi-Fi in the Imager's "Edit Settings" before flashing.
 
 ### From a blank image (one-liner bootstrap)
 

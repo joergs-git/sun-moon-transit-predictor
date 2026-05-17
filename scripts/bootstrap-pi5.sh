@@ -53,16 +53,25 @@ sudo_run apt-get update
 sudo_run apt-get install -y git curl ca-certificates
 
 # ---------------------------------------------------------------------------
-# 2. Optional best-effort dump1090-fa. Only attempts the FlightAware apt
-#    package; SDR driver / blacklist / antenna remain a manual hardware step.
+# 2. Optional dump1090-fa (AirNav FlightStick / any RTL-SDR). Same reliable
+#    path as the README "ADS-B receiver setup": FlightAware apt repo +
+#    dump1090-fa + DVB-T blacklist. Antenna/sky view stay the user's job.
+#    A reboot is recommended afterwards (the blacklist needs it) but is NOT
+#    forced here so the app install can continue in the same run.
 # ---------------------------------------------------------------------------
 if [ "$WITH_DUMP1090" -eq 1 ]; then
-  log "Attempting dump1090-fa via the FlightAware apt repository ..."
-  if curl -fsSL https://flightaware.com/adsb/piaware/files/packages/pool/piaware/f/flightaware-apt-repository/flightaware-apt-repository_1.2_all.deb -o /tmp/fa-repo.deb; then
+  log "Installing dump1090-fa via the FlightAware apt repository ..."
+  if curl -fsSL https://www.flightaware.com/adsb/piaware/files/packages/pool/piaware/f/flightaware-apt-repository/flightaware-apt-repository_1.2_all.deb -o /tmp/fa-repo.deb; then
     sudo_run dpkg -i /tmp/fa-repo.deb || true
     sudo_run apt-get update || true
-    sudo_run apt-get install -y dump1090-fa || \
-      log "dump1090-fa install failed — set it up manually (see README / flightaware.com/adsb/piaware/install)."
+    if sudo_run apt-get install -y dump1090-fa; then
+      echo 'blacklist dvb_usb_rtl28xxu' | sudo_run tee /etc/modprobe.d/blacklist-rtl.conf >/dev/null
+      sudo_run modprobe -r dvb_usb_rtl28xxu 2>/dev/null || true
+      log "dump1090-fa installed. REBOOT recommended so the DVB-T blacklist"
+      log "takes effect; verify with: curl -s localhost:8080/data/aircraft.json"
+    else
+      log "dump1090-fa install failed — set it up manually (see README §ADS-B receiver setup)."
+    fi
     rm -f /tmp/fa-repo.deb
   else
     log "Could not fetch the FlightAware repo package — install dump1090-fa manually."
