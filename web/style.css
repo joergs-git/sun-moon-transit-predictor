@@ -635,6 +635,18 @@ tr.sketchable.near-hit.fov-pinned td:first-child {
   margin-bottom: 6px;
   background: var(--bg);
 }
+/* AirNav box: photo | data side by side (each ~half) so it stays short and
+   the FOV sketch stays the larger element. Wraps to stacked only when the
+   pane is genuinely too narrow for two readable columns. */
+.acinfo-cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-start;
+}
+.acinfo-photo { flex: 1 1 45%; min-width: 130px; }
+.acinfo-photo .ac-photo { margin-bottom: 0; }
+.acinfo-data { flex: 1 1 45%; min-width: 150px; }
 /* Flight-number cell is hover-interactive (AirNav popover). */
 .flight-cell { cursor: help; }
 #tracking .flight-cell, #history .flight-cell { text-decoration: underline dotted var(--line); }
