@@ -189,3 +189,44 @@ describe('HTTP server — /api/acinfo disabled', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('HTTP server — /api/route (free callsign → route)', () => {
+  let srv;
+  let url;
+
+  beforeAll(async () => {
+    srv = createHttpServer({
+      port: 0,
+      host: '127.0.0.1',
+      getState: () => fakeState,
+      store,
+      webRoot: resolve(ROOT, 'web'),
+      requestRoute: async (cs) => (cs === 'DLH400'
+        ? { flight: 'LH400', airline: { name: 'Lufthansa' }, origin: { iata: 'FRA' }, destination: { iata: 'JFK' } }
+        : null),
+    });
+    const { port } = await srv.start();
+    url = `http://127.0.0.1:${port}`;
+  });
+  afterAll(async () => { if (srv) await srv.stop(); });
+
+  it('400s a bad callsign', async () => {
+    const res = await fetch(`${url}/api/route?cs=%20`);
+    expect(res.status).toBe(400);
+  });
+  it('200s a known callsign with the normalised route', async () => {
+    const res = await fetch(`${url}/api/route?cs=dlh400`);
+    expect(res.ok).toBe(true);
+    const b = await res.json();
+    expect(b.callsign).toBe('DLH400');
+    expect(b.route.airline.name).toBe('Lufthansa');
+  });
+  it('404s an unknown callsign', async () => {
+    const res = await fetch(`${url}/api/route?cs=ZZZ999`);
+    expect(res.status).toBe(404);
+  });
+  it('404s when requestRoute is not wired', async () => {
+    const res = await fetch(`${baseUrl}/api/route?cs=DLH400`);
+    expect(res.status).toBe(404);
+  });
+});

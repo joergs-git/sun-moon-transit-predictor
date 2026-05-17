@@ -182,7 +182,7 @@ function renderTracking(state) {
       <td>${fmtDistance(rangeM)}</td>
       <td>${iss ? '—' : fmtSpeed(ac?.groundSpeedMs)}</td>
       <td>${iss ? 'LEO' : fmtAlt(ac?.altMmsl)}</td>
-      <td class="flight-cell" data-hex="${e.icao ?? ''}">${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '—')}</td>
+      <td class="flight-cell" data-hex="${e.icao ?? ''}" data-cs="${e.callsign ?? e.flight ?? ''}">${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '—')}</td>
       <td>${iss ? 'orbit' : (e.icao ? e.icao.toUpperCase() : '—')}</td>
       <td>${iss ? '—' : fmtRoute(route?.origin?.iata ?? route?.origin?.icao, route?.destination?.iata ?? route?.destination?.icao)}</td>
     `;
@@ -265,7 +265,7 @@ function historyTr(e, absIdx) {
     <td title="${dtTooltip(dt)}">${fmtDiscTransit(dt)}</td>
     <td>${iss ? '—' : fmtSpeed(e.ground_speed_ms)}</td>
     <td>${iss ? 'LEO' : fmtAlt(e.altitude_m)}</td>
-    <td class="flight-cell" data-hex="${e.icao ?? ''}">${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '')}</td>
+    <td class="flight-cell" data-hex="${e.icao ?? ''}" data-cs="${e.callsign ?? e.flight ?? ''}">${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '')}</td>
     <td>${iss ? 'orbit' : e.icao.toUpperCase()}</td>
     <td>${iss ? '—' : fmtRoute(e.origin, e.destination)}</td>
   `;
@@ -458,7 +458,20 @@ function applyExternalLinks(links) {
   const a = $('#dump1090-link');
   if (!a) return;
   const explicit = (links?.dump1090Url ?? '').trim();
-  a.href = explicit || `${window.location.protocol}//${window.location.hostname}:8080/`;
+  let href = explicit || `${window.location.protocol}//${window.location.hostname}:8080/`;
+  try {
+    const u = new URL(href, window.location.href);
+    // dump1090-fa serves on :8080. Never point at the app's own port
+    // (e.g. 8081) — a blank/stale config or same-port explicit value must
+    // still resolve to the decoder, not back to this UI.
+    if (!u.port || u.port === window.location.port) {
+      u.port = '8080';
+      href = u.href;
+    }
+  } catch {
+    href = `${window.location.protocol}//${window.location.hostname}:8080/`;
+  }
+  a.href = href;
 }
 
 async function pollHistory() {
@@ -501,7 +514,8 @@ function renderAcstatsBars(elId, rows, kind) {
       labelEl = `<span class="acstats-label flight-cell" data-hex="${key.toLowerCase()}" `
         + `title="ICAO 24-bit hex — hover for the airframe (AirNav)">${key.toUpperCase()}</span>`;
     } else {
-      labelEl = `<span class="acstats-label" title="ADS-B callsign (airline = first 3 letters, ICAO code). ${seen}">${key.toUpperCase()}</span>`;
+      labelEl = `<span class="acstats-label flight-cell" data-cs="${key.toUpperCase()}" `
+        + `title="ADS-B callsign — hover for the route (adsbdb, free). ${seen}">${key.toUpperCase()}</span>`;
     }
     return `<div class="acstats-row" title="${seen}">`
       + labelEl
@@ -735,6 +749,23 @@ function fetchAcInfo(hex) {
     .catch(() => null);
   acInfoCache.set(k, p);
   p.then((v) => { if (!v) setTimeout(() => acInfoCache.delete(k), 60_000); });
+  return p;
+}
+
+// Free callsign → route (adsbdb via our /api/route proxy). No token, no
+// credits, cached for the session; powers the flight-number hover even
+// when AirNav is disabled.
+const routeCache = new Map();
+function fetchRoute(cs) {
+  const k = String(cs || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{2,10}$/.test(k)) return Promise.resolve(null);
+  if (routeCache.has(k)) return routeCache.get(k);
+  const p = fetch(`/api/route?cs=${encodeURIComponent(k)}`)
+    .then(r => (r.ok ? r.json() : null))
+    .then(d => d?.route ?? null)
+    .catch(() => null);
+  routeCache.set(k, p);
+  p.then((v) => { if (!v) setTimeout(() => routeCache.delete(k), 60_000); });
   return p;
 }
 
@@ -976,18 +1007,40 @@ function acPopHtml(info) {
     + (sub ? `<div class="acpop-sub">${sub}</div>` : '')
     + (route ? `<div class="acpop-sub">${route}${f && f.status ? ` · ${f.status}` : ''}</div>` : '');
 }
+// Free-route popover (adsbdb) — used for callsign-only targets and as the
+// fallback when AirNav has no data / is disabled.
+function routePopHtml(route, cs) {
+  const title = route.flight || cs;
+  const airline = route.airline?.name || '';
+  const r = [airportStr(route.origin), airportStr(route.destination)].filter(Boolean).join(' → ');
+  return `<div class="acpop-title">${title}</div>`
+    + (airline ? `<div class="acpop-sub">${airline}</div>` : '')
+    + (r ? `<div class="acpop-sub">${r}</div>` : '<div class="acpop-sub">route unknown</div>')
+    + '<div class="acpop-sub" style="opacity:.6">via adsbdb (free)</div>';
+}
 document.body.addEventListener('mouseover', (ev) => {
   const cell = ev.target.closest && ev.target.closest('.flight-cell');
   if (!cell || !acPop) return;
   const hex = (cell.dataset.hex || '').toLowerCase();
-  if (!/^[0-9a-f]{6}$/.test(hex)) return;     // ISS / unknown → no popover
+  const cs = (cell.dataset.cs || '').toUpperCase();
+  const hasHex = /^[0-9a-f]{6}$/.test(hex);   // ISS / blank → not a hex
+  const hasCs = /^[A-Z0-9]{2,10}$/.test(cs);
+  if (!hasHex && !hasCs) return;
   const x = ev.clientX;
   const y = ev.clientY;
   if (acHoverTimer) clearTimeout(acHoverTimer);
   acHoverTimer = setTimeout(async () => {
-    const info = await fetchAcInfo(hex);
-    if (!info || !cell.matches(':hover')) return;
-    acPop.innerHTML = acPopHtml(info);
+    let html = null;
+    if (hasHex) {                              // AirNav (photo + airframe)
+      const info = await fetchAcInfo(hex);
+      if (info) html = acPopHtml(info);
+    }
+    if (!html && hasCs) {                       // free route fallback
+      const route = await fetchRoute(cs);
+      if (route) html = routePopHtml(route, cs);
+    }
+    if (!html || !cell.matches(':hover')) return;
+    acPop.innerHTML = html;
     placeAcPop(x, y);
   }, 450);
 });

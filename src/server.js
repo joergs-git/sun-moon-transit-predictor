@@ -88,7 +88,7 @@ async function readJsonBody(req, maxBytes = 64 * 1024) {
 export function createHttpServer(opts) {
   const {
     port, host = '0.0.0.0', getState, store, webRoot,
-    getConfig, updateConfig, requestUpdate, requestAcInfo,
+    getConfig, updateConfig, requestUpdate, requestAcInfo, requestRoute,
   } = opts;
 
   const server = createServer(async (req, res) => {
@@ -151,6 +151,22 @@ export function createHttpServer(opts) {
             return jsonResponse(res, 404, { error: 'no aircraft info (AirNav disabled or unknown airframe)' });
           }
           return jsonResponse(res, 200, info);
+        } catch (e) {
+          return jsonResponse(res, 502, { error: String(e?.message ?? e) });
+        }
+      }
+      if (url.pathname === '/api/route') {
+        // Free callsign → route (adsbdb, no token, server-cached). Powers
+        // the flight-number hover regardless of AirNav.
+        if (!requestRoute) return jsonResponse(res, 404, { error: 'route api disabled' });
+        const cs = (url.searchParams.get('cs') ?? '').trim().toUpperCase();
+        if (!/^[A-Z0-9]{2,10}$/.test(cs)) {
+          return jsonResponse(res, 400, { error: 'cs must be a 2–10 char callsign' });
+        }
+        try {
+          const route = await requestRoute(cs);
+          if (!route) return jsonResponse(res, 404, { error: 'no route for callsign' });
+          return jsonResponse(res, 200, { callsign: cs, route });
         } catch (e) {
           return jsonResponse(res, 502, { error: String(e?.message ?? e) });
         }

@@ -670,6 +670,9 @@ export async function runService({
     // AirNav proxy: null when disabled/no token → /api/acinfo 404s and the
     // UI degrades. The token never leaves the server.
     requestAcInfo: (hex) => (airnav ? airnav.lookup(hex) : null),
+    // Free callsign → route (adsbdb, no token, cached). Powers the
+    // flight-number hover even when AirNav is off.
+    requestRoute: (cs) => routeLookup.lookup(cs),
   });
   if (httpServer) await httpServer.start();
 
