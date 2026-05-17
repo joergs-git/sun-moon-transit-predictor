@@ -35,6 +35,7 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SERVICE_FILE="/etc/systemd/system/stp.service"
 UPDATE_SERVICE_FILE="/etc/systemd/system/stp-update.service"
 UPDATE_TIMER_FILE="/etc/systemd/system/stp-update.timer"
+UPDATE_PATH_FILE="/etc/systemd/system/stp-update.path"
 SUDOERS_FILE="/etc/sudoers.d/stp-update"
 TARGET_USER="${SUDO_USER:-$USER}"
 
@@ -193,6 +194,17 @@ if [ "$ENABLE_AUTO_UPDATE" -eq 1 ]; then
   sudo_run install -m 0644 "$REPO_DIR/systemd/stp-update.timer" "$UPDATE_TIMER_FILE"
   rm -f "$TMP_UPDATE_SVC"
 
+  # Click-to-update: the .path unit watches the trigger file the web UI
+  # drops (POST /api/update) and fires the same privileged updater the
+  # timer uses. __INSTALL_DIR__ is substituted so the watched path is
+  # absolute and matches the service's WorkingDirectory.
+  TMP_UPDATE_PATH="$(mktemp)"
+  sed -e "s|__USER__|$TARGET_USER|g" \
+      -e "s|__INSTALL_DIR__|$REPO_DIR|g" \
+      "$REPO_DIR/systemd/stp-update.path" > "$TMP_UPDATE_PATH"
+  sudo_run install -m 0644 "$TMP_UPDATE_PATH" "$UPDATE_PATH_FILE"
+  rm -f "$TMP_UPDATE_PATH"
+
   # Sudoers fragment: only allow the exact restart command, nothing else.
   TMP_SUDOERS="$(mktemp)"
   printf '%s ALL=(root) NOPASSWD: /bin/systemctl restart stp.service\n' "$TARGET_USER" > "$TMP_SUDOERS"
@@ -201,7 +213,9 @@ if [ "$ENABLE_AUTO_UPDATE" -eq 1 ]; then
 
   sudo_run systemctl daemon-reload
   sudo_run systemctl enable --now stp-update.timer
+  sudo_run systemctl enable --now stp-update.path
   log "Auto-update timer enabled. Check schedule: systemctl list-timers | grep stp-update"
+  log "Click-to-update watcher enabled (stp-update.path → stp-update.service)."
 else
   log "Skipping auto-update timer (--no-auto-update). Existing timer (if any) is left untouched."
 fi

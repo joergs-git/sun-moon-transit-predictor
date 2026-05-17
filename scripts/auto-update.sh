@@ -18,6 +18,17 @@ cd "$REPO_DIR"
 log() { printf '[stp-update] %s\n' "$*"; }
 
 # ---------------------------------------------------------------------------
+# 0. Consume the web-UI trigger, if this run was kicked off by the
+#    stp-update.path unit. Removing it clears that unit's PathExists=
+#    condition so a single click can't make the updater loop. Harmless on a
+#    timer/manual run where the file does not exist.
+# ---------------------------------------------------------------------------
+if [ -f "$REPO_DIR/data/update.request" ]; then
+  log "web-UI update trigger found; consuming it."
+  rm -f "$REPO_DIR/data/update.request" || true
+fi
+
+# ---------------------------------------------------------------------------
 # 1. Back up local config so the pull cannot delete or overwrite it.
 # ---------------------------------------------------------------------------
 BACKUP_DIR="$(mktemp -d -t stp-update.XXXXXX)"
