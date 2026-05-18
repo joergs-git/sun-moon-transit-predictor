@@ -811,7 +811,10 @@ function renderFovEmpty(message) {
 function renderFovSketch(input, { pinned, label }) {
   // Stamp the current time on every render so buildSketchSvg can place the
   // moving "now" marker along the predicted path — the time-lapse feel.
-  fovBody.innerHTML = buildSketchSvg({ ...input, nowMs: Date.now() });
+  // obsLat feeds the parallactic celestial N/E rose.
+  fovBody.innerHTML = buildSketchSvg({
+    ...input, nowMs: Date.now(), obsLat: lastObserver?.latitudeDeg ?? null,
+  });
   fovMode.textContent = pinned ? 'pinned' : 'auto';
   fovMode.classList.toggle('pinned', pinned);
   fovMode.title = pinned

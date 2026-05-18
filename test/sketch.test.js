@@ -143,6 +143,33 @@ describe('sketch renderer', () => {
     expect(live).toContain('#ff8f8f');
   });
 
+  it('draws the horizon compass always and the celestial rose only with obsLat', () => {
+    const candidate = syntheticTransitCandidate();
+    const entry = {
+      body: 'Sun', icao: candidate.icao, flight: 'TST123', callsign: 'TST123',
+      closestApproachAtMs: candidate.closestApproachAtMs,
+      closestApproachSepDeg: candidate.closestApproachSepDeg,
+      candidate,
+    };
+    const input = fromLifecycleEntry(entry);
+    const az = input.bodyAt.az;
+    const C = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    const dir = (b) => C[Math.round((((b % 360) + 360) % 360) / 45) % 8];
+
+    // Horizon compass only needs the body azimuth → present even without lat.
+    const noLat = buildSketchSvg(input);
+    for (const b of [az, az + 90, az + 180, az - 90]) {
+      expect(noLat).toContain(`>${dir(b)}<`);
+    }
+    expect(noLat).not.toContain('#7fd0ff');         // no celestial rose
+
+    // With observer latitude → the parallactic N/E rose is added.
+    const withLat = buildSketchSvg({ ...input, obsLat: 52.28 });
+    expect(withLat).toContain('#7fd0ff');
+    expect(withLat).toContain('>N<');
+    expect(withLat).toContain('>E<');
+  });
+
   it('falls back gracefully when transitPath is missing (old history row)', () => {
     const candidate = syntheticTransitCandidate();
     // Simulate an old DB row: the payload still has aircraftAtClosest /
