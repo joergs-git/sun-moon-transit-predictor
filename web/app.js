@@ -156,6 +156,24 @@ function liveRowQuality(e) {
   return '';
 }
 
+// Inner HTML for the ICAO (airframe-hex) table cell. A valid 6-hex code is
+// turned into a direct adsbexchange "globe" link — that site has global
+// search + history/playback and keeps blocked airframes, so it resolves
+// these brief long-range transits when AirNav/SkyAware can't (see the
+// troubleshooting note). ISS → "orbit"; a missing / partially-decoded
+// (non-6-hex) value is shown as plain text, no misleading link.
+function icaoCellInner(icao, iss) {
+  if (iss) return 'orbit';
+  const raw = String(icao ?? '').trim();
+  if (!raw) return '—';
+  const up = raw.toUpperCase();
+  if (!/^[0-9A-F]{6}$/.test(up)) return up;            // e.g. weak-signal partial
+  return `<a class="hex-link" href="https://globe.adsbexchange.com/?icao=${up.toLowerCase()}" `
+    + `target="_blank" rel="noopener noreferrer" `
+    + `title="Open airframe ${up} on adsbexchange globe — global search + history, keeps blocked aircraft">`
+    + `${up}</a>`;
+}
+
 function renderSky(state) {
   const tbody = $('#sky tbody');
   tbody.innerHTML = '';
@@ -238,7 +256,7 @@ function renderTracking(state) {
       <td>${iss ? '—' : fmtSpeed(ac?.groundSpeedMs)}</td>
       <td>${iss ? 'LEO' : fmtAlt(ac?.altMmsl)}</td>
       <td class="flight-cell" data-hex="${e.icao ?? ''}" data-cs="${e.callsign ?? e.flight ?? ''}">${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '—')}</td>
-      <td>${iss ? 'orbit' : (e.icao ? e.icao.toUpperCase() : '—')}</td>
+      <td>${icaoCellInner(e.icao, iss)}</td>
       <td>${iss ? '—' : fmtRoute(route?.origin?.iata ?? route?.origin?.icao, route?.destination?.iata ?? route?.destination?.icao)}</td>
     `;
     tbody.appendChild(tr);
@@ -322,7 +340,7 @@ function historyTr(e, absIdx) {
     <td>${iss ? '—' : fmtSpeed(e.ground_speed_ms)}</td>
     <td>${iss ? 'LEO' : fmtAlt(e.altitude_m)}</td>
     <td class="flight-cell" data-hex="${e.icao ?? ''}" data-cs="${e.callsign ?? e.flight ?? ''}">${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '')}</td>
-    <td>${iss ? 'orbit' : e.icao.toUpperCase()}</td>
+    <td>${icaoCellInner(e.icao, iss)}</td>
     <td>${iss ? '—' : fmtRoute(e.origin, e.destination)}</td>
   `;
   return tr;
@@ -1150,6 +1168,9 @@ function pinFromRow(source, index) {
 document.body.addEventListener('click', (ev) => {
   const row = ev.target.closest('tr.sketchable');
   if (!row) return;
+  // A link inside a row (the ICAO → adsbexchange hex link) is navigation,
+  // not a pin gesture — let it open without also pinning + scrolling away.
+  if (ev.target.closest('a')) return;
   pinFromRow(row.dataset.source, row.dataset.index);
   // Jump the viewport up to the FOV pane so the user actually sees the
   // illustration they just pinned — without this the click on a History
