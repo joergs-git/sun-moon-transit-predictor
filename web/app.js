@@ -905,9 +905,6 @@ function renderFovMap(meta) {
       trackDeg: meta.trackDeg ?? null,
       rangeM: meta.rangeM ?? null,
       label,
-      flight: meta.flight ?? null,
-      origin: meta.origin ?? null,
-      destination: meta.destination ?? null,
     }) : '';
   }
   // Side view only needs elevation + slant range (no lat/lon), so it can
@@ -917,10 +914,6 @@ function renderFovMap(meta) {
     fovSide.innerHTML = (meta && !meta.isISS) ? buildSideViewSvg({
       elevationDeg: meta.elevationDeg ?? null,
       rangeM: meta.rangeM ?? null,
-      label,
-      flight: meta.flight ?? null,
-      origin: meta.origin ?? null,
-      destination: meta.destination ?? null,
     }) : '';
   }
   syncFovAux();

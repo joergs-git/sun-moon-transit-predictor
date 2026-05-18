@@ -93,11 +93,15 @@ function aircraftAngularDeg(meters, rangeM) {
  * @property {number|null} altMmsl
  * @property {number|null} closestAtMs
  * @property {string|null} flight
+ * @property {string|null} [origin]      - departure IATA/ICAO, if routed
+ * @property {string|null} [destination] - arrival IATA/ICAO, if routed
  * @property {string|null} icao
  * @property {string|null} typeCode      - ICAO type designator, if resolvable
  * @property {boolean} [isISS]           - draw the station glyph, not a plane
  * @property {number|null} wingspanM     - real wingspan when the type is known
  * @property {number|null} lengthM       - real length when the type is known
+ * @property {number} [nowMs]            - live time → drives the "now" marker
+ *                                         + the ETA in the header
  * @property {Array<{tOffsetMs: number, aircraftAz: number, aircraftEl: number, bodyAz: number, bodyEl: number}>} transitPath
  */
 
@@ -123,6 +127,7 @@ function dimsFromType(typeCode) {
 export function fromLifecycleEntry(entry) {
   const c = entry?.candidate;
   if (!c?.aircraftAtClosest || !c?.bodyAtClosest) return null;
+  const route = entry.route ?? c?.route ?? null;
   return {
     body: entry.body,
     bodyAt: { az: c.bodyAtClosest.azimuthDeg, el: c.bodyAtClosest.elevationDeg },
@@ -137,6 +142,8 @@ export function fromLifecycleEntry(entry) {
     altMmsl: c.aircraft?.altMmsl ?? null,
     closestAtMs: entry.closestApproachAtMs ?? c.closestApproachAtMs ?? null,
     flight: entry.flight ?? entry.callsign ?? null,
+    origin: route?.origin?.iata ?? route?.origin?.icao ?? null,
+    destination: route?.destination?.iata ?? route?.destination?.icao ?? null,
     icao: entry.icao ?? null,
     isISS: c.isISS === true || c.aircraft?.typeCode === 'ISS',
     ...dimsFromType(c.aircraft?.typeCode),
@@ -154,6 +161,7 @@ export function fromLifecycleEntry(entry) {
 export function fromHistoryRow(row) {
   const c = row?.payload?.candidate;
   if (!c?.aircraftAtClosest || !c?.bodyAtClosest) return null;
+  const route = c?.route ?? null;
   return {
     body: row.body,
     bodyAt: { az: c.bodyAtClosest.azimuthDeg, el: c.bodyAtClosest.elevationDeg },
@@ -168,6 +176,8 @@ export function fromHistoryRow(row) {
     altMmsl: row.altitude_m ?? c.aircraft?.altMmsl ?? null,
     closestAtMs: row.closest_at_ms ?? c.closestApproachAtMs ?? null,
     flight: row.flight ?? row.callsign ?? null,
+    origin: row.origin ?? route?.origin?.iata ?? route?.origin?.icao ?? null,
+    destination: row.destination ?? route?.destination?.iata ?? route?.destination?.icao ?? null,
     icao: row.icao ?? null,
     isISS: c.isISS === true || c.aircraft?.typeCode === 'ISS' || row.icao === 'ISS',
     ...dimsFromType(c.aircraft?.typeCode),
@@ -191,11 +201,9 @@ const FOOTER_LINE_H = 14;
 // in the FOV sketch and the plan-view mini-map uses LABEL_SIZE, so nothing
 // reads bigger or smaller than its neighbour (the FOV sketch title is the
 // single deliberate exception at TITLE_SIZE). The AirNav box CSS
-// (.fov-aux & descendants) is aligned to the same 11 px. LINE_H is the
-// baseline-to-baseline step used to stack labels without overlap.
+// (.fov-aux & descendants) is aligned to the same 11 px.
 const LABEL_SIZE = 11;
 const TITLE_SIZE = 13;
-const LINE_H = LABEL_SIZE + 3;
 
 const COLOURS = {
   fovStroke: '#5a6470',
@@ -297,26 +305,14 @@ function fmtTime(ms) {
   return new Date(ms).toLocaleTimeString();
 }
 
-// Plan-view caption: "<FLIGHT> · ORIG→DEST" when the route is known. Drawn
-// on its own line one LINE_H *above* the bottom dist/brg caption so the two
-// never collide horizontally (the overlap that prompted this) — bottom-left
-// route line, bottom-right distance line, separate baselines.
-// flight/origin/destination originate from a free external lookup (adsbdb /
-// AirNav), so they are clamped to a strict airport/callsign charset before
-// being placed into the SVG markup — txt() does not escape, and this is the
-// only externally-sourced string the sketch renders.
-function routeCaption(m, H) {
-  const clean = (s, max) => (typeof s === 'string'
-    ? s.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, max)
-    : '');
-  const flight = clean(m.flight, 8);
-  const orig = clean(m.origin, 4);
-  const dest = clean(m.destination, 4);
-  const leg = orig && dest ? `${orig}→${dest}` : '';
-  const text = [flight, leg].filter(Boolean).join(' · ');
-  if (!text) return '';
-  return txt(6, H - 6 - LINE_H, text,
-    { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'start' });
+// Origin/destination come from a free external lookup (adsbdb / AirNav), so
+// they are clamped to a strict airport charset before being placed into the
+// SVG markup — txt() does not escape. Used only for the transit-view header
+// route ("ORIG→DEST"); the plan/side views no longer repeat it.
+function safeIata(s) {
+  return typeof s === 'string'
+    ? s.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4)
+    : '';
 }
 function fmtAlt(m) {
   if (m == null) return '—';
@@ -452,9 +448,28 @@ export function buildSketchSvg(d) {
 
   // ---- Compose SVG ----------------------------------------------------------
   const acTag = d.typeCode ? ` · ${d.typeCode}` : '';
+  // Route shown once, here in the header (flight number already is); the
+  // plan/side views no longer repeat it.
+  const orig = safeIata(d.origin);
+  const dest = safeIata(d.destination);
+  const routeStr = orig && dest ? ` · ${orig}→${dest}` : '';
+
+  // ETA in minutes + the closest-approach wall-clock. Soft red so it is
+  // noticeable but unobtrusive (user request). Falls back to just the
+  // clock when there is no live time (old callers / tests, back-compat).
+  const clock = fmtTime(d.closestAtMs);
+  let etaClock = clock;
+  if (Number.isFinite(d.nowMs) && Number.isFinite(d.closestAtMs)) {
+    const dMs = d.closestAtMs - d.nowMs;
+    const mins = Math.round(dMs / 60_000);
+    const eta = Math.abs(dMs) < 45_000 ? 'now'
+      : mins > 0 ? `in ${mins} min`
+        : `${-mins} min ago`;
+    etaClock = `${eta} · ${clock}`;
+  }
   const header =
-    `${txt(PAD, HEADER_H, `${d.body} transit · ${d.flight ?? '—'}${acTag}`, { fill: '#e6edf3', size: TITLE_SIZE, weight: 600 })}` +
-    `${txt(SVG_W - PAD, HEADER_H, `Sep ${fmtSepArcmin(d.sepDeg)}  ·  ${fmtTime(d.closestAtMs)}`, { fill: '#e6edf3', size: LABEL_SIZE, anchor: 'end' })}`;
+    `${txt(PAD, HEADER_H, `${d.body} transit · ${d.flight ?? '—'}${acTag}${routeStr}`, { fill: '#e6edf3', size: TITLE_SIZE, weight: 600 })}` +
+    `${txt(SVG_W - PAD, HEADER_H, `Sep ${fmtSepArcmin(d.sepDeg)}  ·  <tspan fill="#ff8f8f">${etaClock}</tspan>`, { fill: '#e6edf3', size: LABEL_SIZE, anchor: 'end' })}`;
 
   const fovRect =
     `<rect x="${fovX}" y="${fovY}" width="${fovPxW}" height="${fovPxH}" ` +
@@ -464,8 +479,7 @@ export function buildSketchSvg(d) {
   // the tiny FOV box + disc are read as "this far outside the frame".
   const zoomNote = zoomedOut
     ? txt(SVG_W / 2, HEADER_H + 12,
-      `⤢ zoomed out · aircraft ${fmtSepArcmin(d.sepDeg)} from disc — `
-      + `FOV ${fovWDeg.toFixed(2)}°×${fovHDeg.toFixed(2)}° box & disc shown to scale`,
+      `⤢ zoomed out · FOV ${fovWDeg.toFixed(2)}°×${fovHDeg.toFixed(2)}° box & disc shown to scale`,
       { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'middle' })
     : '';
 
@@ -658,9 +672,8 @@ export function buildMiniMapSvg(m) {
     + txt(cx + 6, cy + 11, 'you', { fill: COLOURS.label, size: LABEL_SIZE })
     // aircraft marker
     + `<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="3.2" fill="${COLOURS.ac}" stroke="${COLOURS.acStroke}" stroke-width="0.5"/>`
-    // Bottom-left: target route (origin→destination) and flight number, when
-    // known. Free adsbdb / AirNav supplies these; absent for ISS / unrouted.
-    + routeCaption(m, H)
+    // Route/flight is shown once, in the transit-view header (not repeated
+    // here or in the side view).
     + txt(W - 4, H - 6,
       `${m.label ?? ''} · ${(distM / 1000).toFixed(1)} km · brg ${bearing.toFixed(0)}°`,
       { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'end' })
@@ -691,8 +704,7 @@ function sideBandColour(elDeg) {
  * rays are drawn in their band colours so the angle reads at a glance. The
  * x and y axes share one scale, so the drawn angle IS the true elevation.
  *
- * @param {{ elevationDeg:number, rangeM:number, label?:string,
- *           flight?:string, origin?:string, destination?:string }} m
+ * @param {{ elevationDeg:number, rangeM:number }} m
  */
 export function buildSideViewSvg(m) {
   const el = m?.elevationDeg;
@@ -764,7 +776,6 @@ export function buildSideViewSvg(m) {
     + `<circle cx="${ox}" cy="${oy}" r="3" fill="${COLOURS.SunRim}"/>`
     + txt(ox + 5, oy - 5, 'you', { fill: COLOURS.label, size: LABEL_SIZE })
     + `<circle cx="${acX.toFixed(1)}" cy="${acY.toFixed(1)}" r="3.2" fill="${COLOURS.ac}" stroke="${COLOURS.acStroke}" stroke-width="0.5"/>`
-    + routeCaption(m, H)
     + txt(W - 4, H - 6,
       `${el.toFixed(0)}° · ${slantKm} km · alt ${altKm} km`,
       { fill: band, size: LABEL_SIZE, anchor: 'end' })
