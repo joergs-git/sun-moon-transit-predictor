@@ -733,6 +733,15 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
 .flight-cell { cursor: help; }
 #tracking .flight-cell, #history .flight-cell { text-decoration: underline dotted var(--line); }
 
+/* ICAO-hex cell → direct adsbexchange "globe" lookup. Subtle (it sits in
+   every row); the accent + hover underline mark it as actionable. */
+.hex-link {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: alias;
+}
+.hex-link:hover { text-decoration: underline; }
+
 /* Cursor-following hover popover with the AirNav photo + route. */
 .ac-popover {
   position: fixed;
