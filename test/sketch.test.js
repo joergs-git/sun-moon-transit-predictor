@@ -100,6 +100,26 @@ describe('sketch renderer', () => {
     expect(svg).toContain('Sun');
   });
 
+  it('draws the time-lapse "now" marker only while inside the path window', () => {
+    const candidate = syntheticTransitCandidate();
+    const entry = {
+      body: 'Sun', icao: candidate.icao, flight: 'TST123', callsign: 'TST123',
+      closestApproachAtMs: candidate.closestApproachAtMs,
+      closestApproachSepDeg: candidate.closestApproachSepDeg,
+      candidate,
+    };
+    const input = fromLifecycleEntry(entry);
+    // No nowMs → no marker (back-compat; existing callers unaffected).
+    expect(buildSketchSvg(input)).not.toContain('<animate');
+    // nowMs at closest approach → marker present (pulsing + "now" label).
+    const atClosest = buildSketchSvg({ ...input, nowMs: input.closestAtMs });
+    expect(atClosest).toContain('<animate');
+    expect(atClosest).toContain('>now<');
+    // nowMs far outside the depicted window → no marker.
+    const wayOff = buildSketchSvg({ ...input, nowMs: input.closestAtMs + 1e12 });
+    expect(wayOff).not.toContain('<animate');
+  });
+
   it('falls back gracefully when transitPath is missing (old history row)', () => {
     const candidate = syntheticTransitCandidate();
     // Simulate an old DB row: the payload still has aircraftAtClosest /
