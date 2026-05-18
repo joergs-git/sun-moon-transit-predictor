@@ -470,7 +470,6 @@ async function pollState() {
         currentFocalMm = state.optics.telescopeFocalMm;
       }
     }
-    if (state.externalLinks) applyExternalLinks(state.externalLinks);
     // The preview pane needs the latest lifecycle on every tick — both to
     // pick a fresh auto entry and to refresh the pinned row's highlight.
     refreshFovPane();
@@ -498,27 +497,14 @@ async function pollState() {
   }
 }
 
-// Compose the dump1090 link target. If the server config overrides it, use
-// that verbatim; otherwise derive http://<current-host>:8080/ so opening the
-// UI from any LAN client lands on the right machine.
-function applyExternalLinks(links) {
+// dump1090-fa always serves its status page on :8080 of the same host that
+// runs this service, so the header link is simply derived from the current
+// host — no config, no override (that knob was removed in v0.15.2; the
+// configurable URL is now the Pushover notification link instead).
+function applyDump1090Link() {
   const a = $('#dump1090-link');
   if (!a) return;
-  const explicit = (links?.dump1090Url ?? '').trim();
-  let href = explicit || `${window.location.protocol}//${window.location.hostname}:8080/`;
-  try {
-    const u = new URL(href, window.location.href);
-    // dump1090-fa serves on :8080. Never point at the app's own port
-    // (e.g. 8081) — a blank/stale config or same-port explicit value must
-    // still resolve to the decoder, not back to this UI.
-    if (!u.port || u.port === window.location.port) {
-      u.port = '8080';
-      href = u.href;
-    }
-  } catch {
-    href = `${window.location.protocol}//${window.location.hostname}:8080/`;
-  }
-  a.href = href;
+  a.href = `${window.location.protocol}//${window.location.hostname}:8080/`;
 }
 
 async function pollHistory() {
@@ -1450,9 +1436,8 @@ document.addEventListener('keydown', (ev) => {
 // Pin the copyright year so it always matches the runtime — saves having to
 // edit the HTML on every January 1st.
 $('#copyright-year').textContent = String(new Date().getFullYear());
-// Pre-populate the dump1090 link with a sensible default before /api/state
-// answers, so the link works even during the initial loading window.
-applyExternalLinks({});
+// Set the dump1090 link from the current host (no server round-trip needed).
+applyDump1090Link();
 
 // Seed the preview pane with the placeholder copy so it isn't blank during
 // the brief window before the first /api/state response.

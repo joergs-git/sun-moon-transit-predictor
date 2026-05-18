@@ -5,6 +5,7 @@
 import { promises as fsp, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createRequire } from 'node:module';
+import { networkInterfaces } from 'node:os';
 
 // Single source of truth for the running version — read from package.json so
 // the UI badge can never drift from the actual deployed build.
@@ -69,6 +70,11 @@ export const DEFAULT_CONFIG = {
     // gate. The ISS is exempt (it has its own 15° visibility gate). History
     // and all statistics still record everything regardless of this gate.
     minElevationDeg: 30,
+    // Clickable URL Pushover shows on the notification (tap → opens the
+    // predictor web UI). Blank → auto-derived from the host's first
+    // non-internal LAN IPv4 and the server port, e.g.
+    // http://192.168.1.50:8081/. Set explicitly to override.
+    url: '',
   },
   lifecycle: {
     plannedWindowMs: 3600_000,    // surface watchlist entries within ±1 h
@@ -99,11 +105,6 @@ export const DEFAULT_CONFIG = {
   lifecyclePersist: {
     path: './data/lifecycle.json',
     snapshotIntervalMs: 30_000,
-  },
-  // External tools accessible from the web UI footer. dump1090's status page
-  // typically lives on port 8080 of the same host that runs this service.
-  externalLinks: {
-    dump1090Url: '',          // empty → frontend derives from window.location
   },
   // Click-to-update from the version badge. The HTTP layer only ever drops
   // `triggerPath` (no shell/sudo); a privileged systemd stp-update.path unit
@@ -210,8 +211,32 @@ function mergeConfig(user) {
     lifecycle: { ...DEFAULT_CONFIG.lifecycle, ...(user.lifecycle ?? {}) },
     optics:    { ...DEFAULT_CONFIG.optics,    ...(user.optics    ?? {}) },
     lifecyclePersist: { ...DEFAULT_CONFIG.lifecyclePersist, ...(user.lifecyclePersist ?? {}) },
-    externalLinks:    { ...DEFAULT_CONFIG.externalLinks,    ...(user.externalLinks    ?? {}) },
   };
+}
+
+// First non-internal IPv4 of the host — used to build the default Pushover
+// click URL ("http://<lan-ip>:<port>/") when pushover.url is left blank, so
+// tapping the notification opens this predictor's own web UI. Returns '' if
+// no LAN address can be found (then no link is attached).
+function lanIPv4() {
+  const ifaces = networkInterfaces();
+  for (const list of Object.values(ifaces)) {
+    for (const ni of list ?? []) {
+      const fam = typeof ni.family === 'number' ? ni.family === 4 : ni.family === 'IPv4';
+      if (fam && !ni.internal && ni.address) return ni.address;
+    }
+  }
+  return '';
+}
+
+// Effective clickable URL for Pushover: an explicit pushover.url wins;
+// otherwise auto-derive from the LAN IP + server port; '' → no link.
+function effectivePushoverUrl(config) {
+  const explicit = String(config.pushover?.url ?? '').trim();
+  if (explicit) return explicit;
+  const ip = lanIPv4();
+  if (ip) return `http://${ip}:${config.server.port}/`;
+  return String(config.server?.publicUrl ?? '').trim();
 }
 
 /**
@@ -270,7 +295,7 @@ export async function runService({
     radioThresholdDeg: config.pushover.radioThresholdDeg,
     minElevationDeg: config.pushover.minElevationDeg,
     imminentWindowMs: config.lifecycle.imminentWindowMs,
-    baseUrl: config.server.publicUrl || undefined,
+    baseUrl: effectivePushoverUrl(config) || undefined,
   });
 
   // Detection funnel — cumulative for the running session. Sets of ICAO
@@ -308,7 +333,6 @@ export async function runService({
     lifecycle: [],             // primary unified view used by the new UI
     watchlistMeta: { lastBuildMs: 0, entries: 0 },
     optics: config.optics,     // surfaced so the FOV sketch picks up edits live
-    externalLinks: config.externalLinks,
     // Session-cumulative detection funnel for the bar chart under "Alert
     // learning": every unique airframe the receiver saw, how many ever
     // projected inside the panel band, and how many ever skimmed < 0.5°.
@@ -423,6 +447,7 @@ export async function runService({
         device: config.pushover.device ?? '',
         radioThresholdDeg: config.pushover.radioThresholdDeg,
         minElevationDeg: config.pushover.minElevationDeg,
+        url: config.pushover.url ?? '',
         tokenMasked: mask(config.pushover.token),
         userMasked:  mask(config.pushover.user),
         hasToken: Boolean(config.pushover.token),
@@ -435,7 +460,6 @@ export async function runService({
         hasToken: Boolean(config.airnav.token),
       },
       optics: { ...config.optics },
-      externalLinks: { ...config.externalLinks },
       tracker: { ...config.tracker },
       _servicePath: configPaths.service ?? null,
     };
@@ -449,7 +473,7 @@ export async function runService({
    * timer) keep the new values.
    *
    * @param {{ observer?: object, pushover?: object, optics?: object,
-   *          externalLinks?: object }} patch
+   *          tracker?: object, airnav?: object }} patch
    */
   // Re-shape OS errors into actionable hints. The most common failure modes
   // on a Pi install are EROFS (systemd sandbox makes the path read-only —
@@ -529,6 +553,11 @@ export async function runService({
         config.pushover.minElevationDeg = v;
         notifier.minElevationDeg = v;
       }
+      if ('url' in p) {
+        // Clickable Pushover URL. '' → re-derive from the LAN IP + port.
+        config.pushover.url = String(p.url ?? '').trim();
+        notifier.baseUrl = effectivePushoverUrl(config) || undefined;
+      }
       // PushoverClient reads this.config on every send() call → in-place mutation
       // is enough; no client reconstruction needed.
       pushover.config = config.pushover;
@@ -538,6 +567,7 @@ export async function runService({
         device: config.pushover.device,
         radioThresholdDeg: config.pushover.radioThresholdDeg,
         minElevationDeg: config.pushover.minElevationDeg,
+        url: config.pushover.url,
         hasToken: Boolean(config.pushover.token),
         hasUser:  Boolean(config.pushover.user),
       };
@@ -586,13 +616,6 @@ export async function runService({
       applied.optics = { ...config.optics };
     }
 
-    if (patch.externalLinks && typeof patch.externalLinks === 'object') {
-      if (typeof patch.externalLinks.dump1090Url === 'string') {
-        config.externalLinks.dump1090Url = patch.externalLinks.dump1090Url.trim();
-      }
-      applied.externalLinks = { ...config.externalLinks };
-    }
-
     if (patch.airnav && typeof patch.airnav === 'object') {
       const a = patch.airnav;
       // Never accept the masked placeholder back as the real token.
@@ -611,7 +634,7 @@ export async function runService({
       };
     }
 
-    // Persist the service-level changes (pushover, optics, externalLinks)
+    // Persist the service-level changes (pushover, optics, tracker, airnav)
     // back to service.json. observer.json is written separately above.
     if (configPaths.service) {
       try {
@@ -623,11 +646,10 @@ export async function runService({
         }
         const merged = {
           ...existing,
-          tracker:       { ...(existing.tracker       ?? {}), ...config.tracker },
-          pushover:      { ...(existing.pushover      ?? {}), ...config.pushover },
-          optics:        { ...(existing.optics        ?? {}), ...config.optics },
-          externalLinks: { ...(existing.externalLinks ?? {}), ...config.externalLinks },
-          airnav:        { ...(existing.airnav        ?? {}), ...config.airnav },
+          tracker:       { ...(existing.tracker  ?? {}), ...config.tracker },
+          pushover:      { ...(existing.pushover ?? {}), ...config.pushover },
+          optics:        { ...(existing.optics   ?? {}), ...config.optics },
+          airnav:        { ...(existing.airnav   ?? {}), ...config.airnav },
         };
         await fsp.writeFile(configPaths.service, JSON.stringify(merged, null, 2), 'utf8');
       } catch (e) {

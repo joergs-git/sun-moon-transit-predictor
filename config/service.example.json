@@ -16,7 +16,8 @@
     "device": "",
     "enabled": false,
     "minStage": "radio",
-    "minElevationDeg": 30
+    "minElevationDeg": 30,
+    "url": ""
   },
   "lifecycle": {
     "plannedWindowMs": 3600000,
