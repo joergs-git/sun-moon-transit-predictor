@@ -448,11 +448,9 @@ export function buildSketchSvg(d) {
 
   // ---- Compose SVG ----------------------------------------------------------
   const acTag = d.typeCode ? ` · ${d.typeCode}` : '';
-  // Route shown once, here in the header (flight number already is); the
-  // plan/side views no longer repeat it.
   const orig = safeIata(d.origin);
   const dest = safeIata(d.destination);
-  const routeStr = orig && dest ? ` · ${orig}→${dest}` : '';
+  const legStr = orig && dest ? `${orig}→${dest}` : '';
 
   // ETA in minutes + the closest-approach wall-clock. Soft red so it is
   // noticeable but unobtrusive (user request). Falls back to just the
@@ -467,21 +465,24 @@ export function buildSketchSvg(d) {
         : `${-mins} min ago`;
     etaClock = `${eta} · ${clock}`;
   }
+
+  // Two-row header so the (variable-length) title and the route/ETA never
+  // collide — they used to overlap mid-line when both got long (title was
+  // start-anchored, the right block end-anchored from the opposite edge).
+  //   Row 1: "<body> transit · <flight> · <type>"   |  "Sep X′"
+  //   Row 2: "<ORIG→DEST> · <ETA · clock>" (route muted, ETA/clock soft red)
+  // Row 2 is a single start-anchored line, so it can be any length without
+  // colliding with anything.
+  const sub = (legStr ? `${legStr} · ` : '')
+    + `<tspan fill="#ff8f8f">${etaClock}</tspan>`;
   const header =
-    `${txt(PAD, HEADER_H, `${d.body} transit · ${d.flight ?? '—'}${acTag}${routeStr}`, { fill: '#e6edf3', size: TITLE_SIZE, weight: 600 })}` +
-    `${txt(SVG_W - PAD, HEADER_H, `Sep ${fmtSepArcmin(d.sepDeg)}  ·  <tspan fill="#ff8f8f">${etaClock}</tspan>`, { fill: '#e6edf3', size: LABEL_SIZE, anchor: 'end' })}`;
+    `${txt(PAD, HEADER_H, `${d.body} transit · ${d.flight ?? '—'}${acTag}`, { fill: '#e6edf3', size: TITLE_SIZE, weight: 600 })}` +
+    `${txt(SVG_W - PAD, HEADER_H, `Sep ${fmtSepArcmin(d.sepDeg)}`, { fill: '#e6edf3', size: LABEL_SIZE, anchor: 'end' })}` +
+    `${txt(PAD, HEADER_H + 13, sub, { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'start' })}`;
 
   const fovRect =
     `<rect x="${fovX}" y="${fovY}" width="${fovPxW}" height="${fovPxH}" ` +
     `fill="${COLOURS.fovFill}" stroke="${COLOURS.fovStroke}" stroke-width="1" rx="2"/>`;
-
-  // When auto-zoomed, tell the user the scale changed and by how much, so
-  // the tiny FOV box + disc are read as "this far outside the frame".
-  const zoomNote = zoomedOut
-    ? txt(SVG_W / 2, HEADER_H + 12,
-      `⤢ zoomed out · FOV ${fovWDeg.toFixed(2)}°×${fovHDeg.toFixed(2)}° box & disc shown to scale`,
-      { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'middle' })
-    : '';
 
   // Axis crosshair through the body centre — subtle, helps eye lock to the
   // disc when the aircraft passes off-centre.
@@ -545,7 +546,10 @@ export function buildSketchSvg(d) {
   const footYBot = SVG_H - PAD + 2;
   const footYTop = footYBot - FOOTER_LINE_H;
   const footTop = `R ${fmtRange(d.aircraftAt.rangeM)} · Alt ${fmtAlt(d.altMmsl)} · v ${fmtSpeed(d.groundSpeedMs)}`;
-  const footBot = `FOV ${fovWDeg.toFixed(2)}° × ${fovHDeg.toFixed(2)}° · ${OPTICS.TELESCOPE_FOCAL_MM} mm · ${OPTICS.SENSOR_NAME}`;
+  // Zoom-out indicator folded into the optics footer line (where the FOV
+  // dims already live) instead of a separate, often-truncated header note.
+  const footBot = `${zoomedOut ? '⤢ zoomed out · ' : ''}`
+    + `FOV ${fovWDeg.toFixed(2)}° × ${fovHDeg.toFixed(2)}° · ${OPTICS.TELESCOPE_FOCAL_MM} mm · ${OPTICS.SENSOR_NAME}`;
   const footer =
     txt(PAD, footYTop, footTop, { fill: COLOURS.label, size: LABEL_SIZE }) +
     txt(PAD, footYBot, footBot, { fill: COLOURS.label, size: LABEL_SIZE });
@@ -595,7 +599,6 @@ export function buildSketchSvg(d) {
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SVG_W} ${SVG_H}" width="${SVG_W}" height="${SVG_H}">` +
     header +
-    zoomNote +
     fovRect +
     cross +
     bodyDisc +
