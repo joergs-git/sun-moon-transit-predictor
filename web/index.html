@@ -122,18 +122,26 @@
         <span id="fov-mode" class="fov-mode" title="auto = newest live candidate with sep &lt; 1°. pinned = locked to your selection; cleared automatically when a newer qualifying candidate appears.">auto</span>
       </h2>
       <p class="hint" id="fov-hint">Waiting for a close approach (separation &lt; 1°). Click any tracking or history row to pin it here.</p>
-      <div id="fov-body" class="fov-body"></div>
+      <!-- Top row: the dominant transit sketch (left) + the compact AirNav
+           photo/data box beside it (right, ~38%). The AirNav column
+           collapses via .fov-top > [hidden] when empty so the sketch takes
+           the full width (auto-FOV with nothing clicked). -->
+      <div id="fov-top" class="fov-top">
+        <div id="fov-body" class="fov-body"></div>
+        <div id="fov-acinfo" class="fov-aux-right" hidden></div>
+      </div>
       <!-- Offline airframe specs for the shown transit. Filled from the
            ADS-B `t` (ICAO type) field via web/aircraft-types.js — no network,
            no photos. Hidden until a type is resolvable. -->
       <div id="fov-specs" class="fov-specs" hidden></div>
-      <!-- One combined box: LEFT = offline plan-view mini-map (radii, our
-           own ADS-B data); RIGHT = AirNav photo on top, aircraft data
-           below. The right column ends flush with the left (equal height).
-           The box hides when both halves are empty (ISS / no data). -->
+      <!-- Lower box: LEFT = offline plan-view mini-map (top-down, rings =
+           km from you); RIGHT = side view (vertical profile: observer →
+           aircraft, with the 20/30/45° elevation bands coloured so
+           visibility is obvious). Both pure SVG from our own ADS-B data;
+           each half collapses when empty (ISS / missing geometry). -->
       <div id="fov-aux" class="fov-aux" hidden>
-        <div id="fov-map" class="fov-aux-left" hidden></div>
-        <div id="fov-acinfo" class="fov-aux-right" hidden></div>
+        <div id="fov-map" class="fov-aux-cell" hidden></div>
+        <div id="fov-side" class="fov-aux-cell" hidden></div>
       </div>
     </section>
   </div>

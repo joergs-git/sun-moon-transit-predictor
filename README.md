@@ -292,7 +292,8 @@ load picks up wherever it left off, including the restored tracking list.
 | M29 (v0.10.7) | Install fixes from on-Pi testing: manual path now installs `git` first (absent on Pi OS Lite); FlightAware repo package bumped `1.2 → 1.3` (the 1.2 URL 404s) in the README + `bootstrap-pi5.sh`, with a version-drift note | done |
 | M30 (v0.10.8) | Docs: `rbfeeder`/AirNav-RadarBox sharing-key sidenote + MLAT explainer in the ADS-B section (independent of the predictor; same WGS84 location) | done |
 | M31 (v0.10.9) | ISS transits only push/log within `iss.notifyWithinMs` (default 72 h) — far-future SGP4 is noise that flips with each daily TLE, so this kills phantom-transit Pushover spam + "surprise" stat pollution; Sky-now still previews the soonest, flagged "tentative". README "Good to know" facts: ISS prediction reliability + observer coordinate/elevation pitfalls | done |
-| M44 (v0.15.0) | **Visibility traffic-light + elevation notify gate**: per-row 3-state ampel (🔴 < 30° · 🟡 30–45° · 🟢 ≥ 45°, aircraft elevation at closest approach) in History & Live-Tracking; Pushover now gated by configurable `notifier.minElevationDeg` (default 30°, 0 = off, ISS exempt — History/stats stay complete). New `store.usableCandidates()` + `GET /api/usable` powering a second Aircraft-stats list of real usable transits (elevation ≥ gate). Row colours redefined: **green only** = confirmed real disc overlap (sep < 0.27°), **yellow** = near-miss (< 0.5°), else neutral (removed the old magenta/green near-hit split) | done |
+| M45 (v0.15.1) | **Side view + FOV layout rework**: new vertical "side view" SVG beside the plan-view mini-map (observer → aircraft, real slant range + height, isotropic so the drawn angle *is* the true elevation; the line-of-sight wedge is filled in the visibility colour, the 20/30/45° reference rays drawn in their band hues). FOV rearranged per the chosen layout — top row = the dominant transit sketch + the compact AirNav photo/data box beside it (~62/38, AirNav collapses when empty), lower box = plan view \| side view. `acMeta*` now carry `elevationDeg` through `renderFovMap` → `buildSideViewSvg` | done |
+| M44 (v0.15.0) | **Visibility traffic-light + elevation notify gate**: per-row 3-state ampel (🔴 < 30° · 🟡 30–45° · 🟢 ≥ 45°, aircraft elevation at closest approach) in History & Live-Tracking; Pushover now gated by configurable `pushover.minElevationDeg` (default 30°, 0 = off, ISS exempt — History/stats stay complete). New `store.usableCandidates()` + `GET /api/usable` powering a second Aircraft-stats list of real usable transits (elevation ≥ gate). Row colours redefined: **green only** = confirmed real disc overlap (sep < 0.27°), **yellow** = near-miss (< 0.5°), else neutral (removed the old magenta/green near-hit split) | done |
 | M43 (v0.14.4) | **Unified type size across the whole right-hand column** — every label in the FOV sketch and the plan-view mini-map now renders at one shared `LABEL_SIZE` (11 px; the FOV sketch title is the single deliberate `TITLE_SIZE` exception), and the AirNav box / hover-popover CSS is aligned to the same 11 px. Plan-view fix: the route/flight caption and the distance/bearing caption no longer share one baseline (they overlapped on longer strings) — the route line is now stacked one `LINE_H` above the distance line, separate baselines | done |
 | M42 (v0.14.3) | **Range-stats card** at the very bottom (`GET /api/rangestats`, new `store.rangeStats()`): retrospective over *all* stored history — of the aircraft that **actually** passed within 0.5° (imminent-confirmed, not just predicted) it shows confirmed-pass count, median / closest / farthest / 90th-pct line-of-sight distance, an on-disc (&lt;0.27°) tally and a distance histogram (reuses the acstats bar markup). Plan-view mini-map gains a bottom-left **route + flight caption** (`<FLIGHT> ORIG→DEST`, charset-clamped since it comes from the free adsbdb/AirNav lookup); `acMeta*` carry `flight`/`origin`/`destination` through `renderFovMap` → `buildMiniMapSvg` | done |
 | M41 (v0.14.2) | Free `GET /api/route` (adsbdb, no token/credits, cached) → flight-number / callsign **hover popover now works without AirNav** (airline + origin→destination). Aircraft-stats: ICAO labels → AirNav popover, callsign labels → route popover (both interactive). History/Tracking flight cells gain a `data-cs` free-route fallback. Fixed the header **dump1090 link** never pointing at the app's own port (coerced to :8080) | done |
@@ -843,7 +844,7 @@ This is why the predictor (**v0.15.0**):
 * shows a **3-state visibility traffic-light** per row — **red below 30°**,
   **amber 30–45°**, **green ≥ 45°** (aircraft elevation at closest approach);
 * by default only sends **Pushover** notifications when the target is
-  **≥ 30° elevation** (configurable via `notifier.minElevationDeg`; set `0`
+  **≥ 30° elevation** (configurable via `pushover.minElevationDeg`; set `0`
   to disable the gate). The **ISS is exempt** — it has its own 15° visibility
   gate. **History and all statistics still record everything**, regardless of
   the notify gate.
@@ -1497,7 +1498,7 @@ from the notifier — happy to add that as a config switch if useful.
 │   ├── stp-update.path           click-to-update trigger watcher
 │   ├── stp-tle.service           ISS TLE refresh oneshot template
 │   └── stp-tle.timer             daily ISS TLE schedule (05:40 ±20 min)
-└── test/                         16 vitest files, 154 cases
+└── test/                         16 vitest files, 161 cases
 ```
 
 ## License

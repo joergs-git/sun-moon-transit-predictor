@@ -9,6 +9,7 @@ import { sunAzEl } from '../src/geometry.js';
 import { findTransits } from '../src/tracker.js';
 import {
   buildSketchSvg,
+  buildSideViewSvg,
   fromHistoryRow,
   fromLifecycleEntry,
   SKETCH_OPTICS,
@@ -132,5 +133,29 @@ describe('sketch renderer', () => {
     expect(fromLifecycleEntry({})).toBeNull();
     expect(fromLifecycleEntry({ candidate: {} })).toBeNull();
     expect(fromHistoryRow({ payload: null })).toBeNull();
+  });
+});
+
+describe('side view', () => {
+  it('renders an SVG and colours the wedge by elevation band', () => {
+    // 50° → green band (≥ 45°).
+    const green = buildSideViewSvg({ elevationDeg: 50, rangeM: 18000, label: 'D-AIBC' });
+    expect(green.startsWith('<svg')).toBe(true);
+    expect(green).toContain('SIDE VIEW');
+    expect(green).toContain('#5fd07f');          // green band hue
+    expect(green).toContain('50° · 18.0 km');    // elevation + slant caption
+    // 22° → red band (< 30°).
+    const red = buildSideViewSvg({ elevationDeg: 22, rangeM: 32000 });
+    expect(red).toContain('#ff5d5d');
+    // The 20/30/45 reference rays are always drawn.
+    expect(red).toContain('20°');
+    expect(red).toContain('45°');
+  });
+
+  it('returns "" when elevation or range is missing/invalid', () => {
+    expect(buildSideViewSvg({ rangeM: 18000 })).toBe('');
+    expect(buildSideViewSvg({ elevationDeg: 30 })).toBe('');
+    expect(buildSideViewSvg({ elevationDeg: 0, rangeM: 18000 })).toBe('');
+    expect(buildSideViewSvg(null)).toBe('');
   });
 });
