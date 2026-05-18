@@ -146,6 +146,9 @@ export class Notifier {
    *                                                  on the wide radio band; the
    *                                                  tracker still surfaces the
    *                                                  full 5° band to the UI
+   *   minElevationDeg?: number,                    - Pushover-only elevation
+   *                                                  gate at closest approach
+   *                                                  (0 = off; ISS exempt)
    *   baseUrl?: string,
    * }} opts
    */
@@ -157,6 +160,8 @@ export class Notifier {
     this.forgetAfterMs = opts.forgetAfterMs ?? DEFAULT_FORGET_AFTER_MS;
     this.minStage = opts.minStage ?? 'radio';      // default: send all stages
     this.radioThresholdDeg = opts.radioThresholdDeg ?? DEFAULT_RADIO_THRESHOLD_DEG;
+    // 0 (or non-finite) disables the elevation gate entirely.
+    this.minElevationDeg = opts.minElevationDeg ?? 0;
     this.baseUrl = opts.baseUrl;
     /** @type {Map<string, { radioSent: boolean, candidateSent: boolean,
      *                       imminentSent: boolean, lastClosestMs: number }>} */
@@ -281,6 +286,20 @@ export class Notifier {
           && Number.isFinite(cand.closestApproachSepDeg)
           && cand.closestApproachSepDeg > this.radioThresholdDeg) {
         st.radioSent = true;
+        continue;
+      }
+      // Elevation gate (Pushover-only, all stages). Below minElevationDeg a
+      // target is barely usable visually (long hazy/turbulent slant path,
+      // horizon clouds), so the phone stays quiet — but the History record
+      // above already ran, so stats remain complete. The ISS is exempt: it
+      // carries its own 15° visibility gate (see iss.js) and is rare enough
+      // to always be worth a heads-up. Mark sent (subsuming lower stages) so
+      // a still-too-low match doesn't re-evaluate every poll.
+      if (!cand.isISS
+          && Number.isFinite(this.minElevationDeg) && this.minElevationDeg > 0
+          && Number.isFinite(cand.aircraftAtClosest?.elevationDeg)
+          && cand.aircraftAtClosest.elevationDeg < this.minElevationDeg) {
+        mark('Sent', sendStage);
         continue;
       }
 

@@ -206,3 +206,46 @@ Status: complete.
 
 Implemented with the user-chosen safe approach: trigger file + systemd
 `stp-update.path`. HTTP layer never runs git/systemctl.
+
+# Visibility ampel + notify gate + color semantics (v0.15.0)
+
+Branch: feature/visibility-ampel-notify-gate
+
+## Decisions (locked with user)
+- Notify gate: configurable `notifier.minElevationDeg = 30` (Settings-editable,
+  0 = off). Pushover only; History/stats stay complete (decoupled). ISS exempt
+  (keeps its own 15 deg gate).
+- Ampel (3 states): red < 30 deg / amber 30-45 deg / green >= 45 deg. Source =
+  candidate.aircraftAtClosest.elevationDeg at closest approach.
+- Aircraft-stats: NEW 2nd list "usable candidates" from transit_history
+  (elevation >= gate). Sightings tally has no elevation -> untouched.
+- Row colors (History & Live), unified:
+  - GREEN only: History outcome==='confirmed' && sepConfirmed && sep < 0.27;
+    Live status==='imminent' && sep < 0.27 (real disc overlap).
+  - YELLOW: sep < 0.5 but not green ("almost"). else neutral.
+  - Removes old magenta(Tracking)/green(History) near-hit split.
+
+## Tasks
+- [x] Backend gate (service.js + notifier.js + example json + install script)
+- [x] store.usableCandidates() + /api/usable
+- [x] Frontend: vis column + rowQuality colors + 2nd stats list + Settings field
+- [x] README Good-to-know + table; milestone M44; package.json -> 0.15.0
+- [x] Tests (store/notifier/server) + node --check + npm test
+- [x] Phase B: side view (buildSideViewSvg) + FOV layout rework
+      (transit+AirNav top row, plan|side lower box) + M45; v0.15.1
+- [x] merge to main + push
+
+## Results
+- v0.15.0 (commit ec72bb6): pushover.minElevationDeg gate (default 30, 0=off,
+  ISS exempt, hot-reload+persist), visibility traffic-light column in
+  History+Live, store.usableCandidates()/GET /api/usable + 2nd Aircraft-stats
+  list, unified q-green/q-amber row colours (green = confirmed real disc
+  overlap sep<0.27°, amber = near-miss <0.5°). README good-to-know + table.
+- v0.15.1: buildSideViewSvg (isotropic elevation profile, wedge in band
+  colour, 20/30/45° rays) beside the plan view; FOV layout = top row
+  transit-sketch + compact AirNav, lower box plan|side.
+- Tests 154 → 161 (notifier gate ×4, usableCandidates ×1, side view ×2).
+  Full suite green, node --check clean. README key corrected to
+  pushover.minElevationDeg.
+
+Status: complete.

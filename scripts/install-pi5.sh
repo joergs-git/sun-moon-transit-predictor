@@ -154,7 +154,7 @@ if [ ! -f "$SERVICE_FILE_LOCAL" ] || [ "$OVERWRITE_CONFIG" -eq 1 ]; then
 {
   "adsb":      { "url": "$ADSB_URL", "pollIntervalMs": 2000 },
   "tracker":   { "horizonS": 900, "stepS": 0.5, "thresholdDeg": 0.3, "looseThresholdDeg": 2.0, "bodies": ["Sun", "Moon"] },
-  "pushover":  { "token": "$PUSH_TOKEN", "user": "$PUSH_USER", "device": "", "enabled": $PUSH_ENABLED, "minStage": "radio", "radioThresholdDeg": 1.0 },
+  "pushover":  { "token": "$PUSH_TOKEN", "user": "$PUSH_USER", "device": "", "enabled": $PUSH_ENABLED, "minStage": "radio", "radioThresholdDeg": 1.0, "minElevationDeg": 30 },
   "server":    { "port": $PORT, "host": "0.0.0.0", "publicUrl": "$PUB_URL" },
   "store":     { "path": "$REPO_DIR/data/history.db" },
   "routes":    { "enabled": true, "ttlMs": 3600000, "negativeTtlMs": 300000 },

@@ -362,3 +362,45 @@ describe('HistoryStore — rangeStats (retrospective close-pass distances)', () 
     } finally { store.close(); }
   });
 });
+
+describe('HistoryStore — usableCandidates (elevation-gated real transits)', () => {
+  it('keeps only imminent rows whose elevation ≥ gate, grouped by icao/flight', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      const nowMs = 2_000_000_000_000;
+      const at = nowMs - 1000;
+      const rec = (stage, icao, callsign, el, sep) => {
+        const c = makeCandidate({ icao, callsign, sepDeg: sep });
+        c.aircraftAtClosest = { azimuthDeg: 180, elevationDeg: el, rangeM: 12000 };
+        store.recordEvent(stage, c, null, at);
+      };
+      // Counted: imminent, elevation ≥ 30°.
+      rec('imminent', 'aaa111', 'DLHAAA', 50, 0.2);
+      rec('imminent', 'aaa111', 'DLHAAA', 47, 0.1);   // 2nd usable pass, tighter sep
+      rec('imminent', 'bbb222', 'DLHBBB', 35, 0.4);
+      // Excluded: too low (elevation < gate).
+      rec('imminent', 'ccc333', 'DLHCCC', 20, 0.2);
+      // Excluded: not an imminent (confirmed) transit.
+      rec('candidate', 'ddd444', 'DLHDDD', 80, 0.2);
+
+      const u = store.usableCandidates({
+        minElevationDeg: 30, windowMs: 24 * 3600_000, nowMs, limit: 20,
+      });
+      expect(u.minElevationDeg).toBe(30);
+      expect(u.n).toBe(3);                              // 2×aaa + 1×bbb
+      expect(u.byIcao.map((x) => x.key)).toEqual(['aaa111', 'bbb222']);
+      const aaa = u.byIcao.find((x) => x.key === 'aaa111');
+      expect(aaa.visits).toBe(2);
+      expect(aaa.bestElevationDeg).toBe(50);
+      expect(aaa.minSepDeg).toBeCloseTo(0.1, 6);
+      expect(u.byFlight.map((x) => x.key)).toEqual(['DLHAAA', 'DLHBBB']);
+
+      // Gate 0 disables the elevation filter (still imminent-only → ccc joins).
+      const all = store.usableCandidates({
+        minElevationDeg: 0, windowMs: 24 * 3600_000, nowMs,
+      });
+      expect(all.n).toBe(4);
+      expect(all.byIcao.some((x) => x.key === 'ddd444')).toBe(false); // candidate excluded
+    } finally { store.close(); }
+  });
+});

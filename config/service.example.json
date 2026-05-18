@@ -15,7 +15,8 @@
     "user":  "PASTE_PUSHOVER_USER_KEY_HERE",
     "device": "",
     "enabled": false,
-    "minStage": "radio"
+    "minStage": "radio",
+    "minElevationDeg": 30
   },
   "lifecycle": {
     "plannedWindowMs": 3600000,
