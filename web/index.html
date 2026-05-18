@@ -14,6 +14,12 @@
       <div class="identity">
         <span>© <span id="copyright-year">2026</span> joergsflow</span>
         <span class="sep">·</span>
+        <span>If you like it —
+        <a href="https://buymeacoffee.com/joergsflow" target="_blank" rel="noopener noreferrer" title="Support the project with a coffee (opens in a new tab).">☕ buy me a coffee</a></span>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="ext-links">
         <a href="https://github.com/joergs-git/sun-moon-transit-predictor" target="_blank" rel="noopener noreferrer">GitHub</a>
         <span class="sep">·</span>
         <a href="https://app.astrobin.com/u/joergsflow#gallery" target="_blank" rel="noopener noreferrer">AstroBin</a>
@@ -22,11 +28,11 @@
         <span class="sep">·</span>
         <a href="https://www.airnavradar.com/stations/country/germany" target="_blank" rel="noopener noreferrer" title="AirNav Radar — ADS-B receiving stations in Germany (opens in a new tab).">AirNav ↗</a>
       </div>
-    </div>
-    <div class="header-right">
-      <time id="clock" class="clock" title="Local wall-clock time, ticking once per second.">--:--:--</time>
-      <div id="status" class="status" title="Service liveness. Shows seconds since the last successful tick and the number of aircraft currently tracked by dump1090.">connecting…</div>
-      <button id="settings-btn" type="button" class="btn" title="Edit Pushover credentials, observer location and optical setup (focal length + sensor).">⚙ Settings</button>
+      <div class="header-controls">
+        <time id="clock" class="clock" title="Local wall-clock time, ticking once per second.">--:--:--</time>
+        <div id="status" class="status" title="Service liveness. Shows seconds since the last successful tick and the number of aircraft currently tracked by dump1090.">connecting…</div>
+        <button id="settings-btn" type="button" class="btn" title="Edit Pushover credentials, observer location and optical setup (focal length + sensor).">⚙ Settings</button>
+      </div>
     </div>
   </header>
 
@@ -152,13 +158,16 @@
       Unified list, sorted by urgency. Status transitions in real time as
       flights are detected, projected, and either confirmed or dropped:
     </p>
-    <ul class="legend">
-      <li><span class="status status-planned">📅 planned</span> watchlist entry expected within ~1 h; no live ADS-B match yet.</li>
-      <li><span class="status status-radio">📡 radio</span> in ADS-B range, projected to pass within the panel band (≤ 2°) of the body — early-warning.</li>
-      <li><span class="status status-candidate">✈️ candidate</span> projected to pass within 0.3° (tight transit band); camera-prep.</li>
-      <li><span class="status status-imminent">🎯 imminent</span> closest approach within ±30 s; press the shutter.</li>
-      <li><span class="status status-stale">❌ stale</span> contact lost — held while coasting through a brief gap, then ≤ 30 min before it drops.</li>
-    </ul>
+    <details class="legend-details">
+      <summary>Status legend (planned · radio · candidate · imminent · stale)</summary>
+      <ul class="legend">
+        <li><span class="status status-planned">📅 planned</span> watchlist entry expected within ~1 h; no live ADS-B match yet.</li>
+        <li><span class="status status-radio">📡 radio</span> in ADS-B range, projected to pass within the panel band (≤ 2°) of the body — early-warning.</li>
+        <li><span class="status status-candidate">✈️ candidate</span> projected to pass within 0.3° (tight transit band); camera-prep.</li>
+        <li><span class="status status-imminent">🎯 imminent</span> closest approach within ±30 s; press the shutter.</li>
+        <li><span class="status status-stale">❌ stale</span> contact lost — held while coasting through a brief gap, then ≤ 30 min before it drops.</li>
+      </ul>
+    </details>
     <table id="tracking">
       <thead>
         <tr>
