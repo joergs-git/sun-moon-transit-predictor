@@ -46,7 +46,7 @@ describe('Notifier', () => {
     expect(events.length).toBe(1);
     expect(events[0].stage).toBe('candidate');
     expect(px.calls.length).toBe(1);
-    expect(px.calls[0].title).toMatch(/Sun candidate/);
+    expect(px.calls[0].title).toMatch(/^Sun crosser - sep \d+\.\d+° /);
   });
 
   it('sends a radio notification first when first sighting is level=radio', async () => {
@@ -57,7 +57,7 @@ describe('Notifier', () => {
     const cand = makeCandidate({ closestInMs: 90_000, level: 'radio', sepDeg: 0.8 });
     const events = await n.tick([cand], 1_000_000_000_000);
     expect(events[0].stage).toBe('radio');
-    expect(px.calls[0].title).toMatch(/Sun approach/);
+    expect(px.calls[0].title).toMatch(/^Sun crosser - sep /);
   });
 
   it('suppresses radio Pushovers wider than radioThresholdDeg', async () => {
@@ -128,7 +128,9 @@ describe('Notifier', () => {
     expect(evts.length).toBe(1);
     expect(evts[0].stage).toBe('imminent');
     expect(px.calls.length).toBe(2);
-    expect(px.calls[1].title).toMatch(/Sun TRANSIT/);
+    // No stage prefix any more — inside the imminent window the lead reads
+    // "now"; priority:1 is what makes it stand out.
+    expect(px.calls[1].title).toMatch(/^Sun crosser - sep \d+\.\d+° now$/);
     expect(px.calls[1].priority).toBe(1);
   });
 
@@ -203,9 +205,10 @@ describe('Notifier', () => {
     const n = new Notifier({ pushover: px, routeLookup: async () => route });
     const cand = makeCandidate();
     await n.tick([cand], 1_000_000_000_000);
-    expect(px.calls[0].message).toMatch(/Lufthansa/);
+    // v0.15.2: the body is trimmed to flight + route (airline name dropped).
     expect(px.calls[0].message).toMatch(/LH123/);
     expect(px.calls[0].message).toMatch(/FRA→JFK/);
+    expect(px.calls[0].message).not.toMatch(/Lufthansa/);
   });
 
   it('still notifies when the route lookup throws', async () => {
@@ -262,5 +265,44 @@ describe('Notifier — elevation gate (v0.15.0)', () => {
     const n = new Notifier({ pushover: px });  // default → 0 = off
     const events = await n.tick([atEl(5)], 1_000_000_000_000);
     expect(events.length).toBe(1);
+  });
+});
+
+describe('Notifier — message format (v0.15.2)', () => {
+  it('puts body+sep+lead in the title and only the rest in the body', async () => {
+    const px = new FakePushover();
+    const n = new Notifier({ pushover: px, baseUrl: 'http://192.168.1.50:8081/' });
+    const cand = makeCandidate({ body: 'Moon', sepDeg: 0.12, closestInMs: 7 * 60_000 });
+    cand.aircraftAtClosest = { azimuthDeg: 180, elevationDeg: 52, rangeM: 18000 };
+    await n.tick([cand], 1_000_000_000_000);
+    const m = px.calls[0];
+    expect(m.title).toBe('Moon crosser - sep 0.12° in 7 minutes');
+    // Body carries only what is NOT in the title.
+    expect(m.message).not.toMatch(/sep 0\.12/);
+    expect(m.message).toMatch(/DLH123/);          // flight
+    expect(m.message).toMatch(/km\/h/);           // speed
+    expect(m.message).toMatch(/km/);              // distance
+    expect(m.message).toMatch(/🟢 52° elevation/); // visibility traffic-light
+    // The clickable link is the configured URL.
+    expect(m.url).toBe('http://192.168.1.50:8081/');
+    expect(m.urlTitle).toBe('Open predictor');
+  });
+
+  it('colours the visibility tag by the 30/45° bands and reads "now" when imminent', async () => {
+    const px = new FakePushover();
+    const n = new Notifier({ pushover: px, imminentWindowMs: 30_000 });
+    const cand = makeCandidate({ body: 'Sun', sepDeg: 0.2, closestInMs: 10_000 });
+    cand.aircraftAtClosest = { azimuthDeg: 180, elevationDeg: 22, rangeM: 32000 };
+    await n.tick([cand], 1_000_000_000_000);
+    const m = px.calls[0];
+    expect(m.title).toBe('Sun crosser - sep 0.20° now');
+    expect(m.message).toMatch(/🔴 22° elevation \(poor\)/);
+  });
+
+  it('omits the link when no baseUrl is configured', async () => {
+    const px = new FakePushover();
+    const n = new Notifier({ pushover: px });
+    await n.tick([makeCandidate()], 1_000_000_000_000);
+    expect(px.calls[0].url).toBeUndefined();
   });
 });

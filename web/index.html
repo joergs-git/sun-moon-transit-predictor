@@ -349,6 +349,8 @@
           <label>
             Min elevation °<input name="pushover.minElevationDeg" type="number" step="any" min="0" max="90">
             <small class="field-hint">Phone-only: only buzz when the target is at least this far above the horizon at closest approach (default 30°; below that it's barely usable). 0 = off. The ISS is exempt. History/stats always record everything.</small></label>
+          <label>Notification link<input name="pushover.url" type="text" autocomplete="off" spellcheck="false" placeholder="http://192.168.x.y:8081/">
+            <small class="field-hint">The clickable URL Pushover shows on the alert (tap → opens this predictor's web UI). Blank = auto-detected LAN IP on the app's port (e.g. http://&lt;lan-ip&gt;:8081/).</small></label>
         </fieldset>
 
         <fieldset>
@@ -391,11 +393,6 @@
             <small class="field-hint">On-Demand API v2 base. Change only if AirNav moves the host.</small></label>
         </fieldset>
 
-        <fieldset>
-          <legend>External links</legend>
-          <label>dump1090 URL<input name="externalLinks.dump1090Url" type="text" placeholder="http://pi.local:8080/">
-            <small class="field-hint">Override the header's dump1090 link. Blank = http://&lt;this-host&gt;:8080/.</small></label>
-        </fieldset>
         </div><!-- /.settings-fields -->
 
         <div class="settings-actions">
