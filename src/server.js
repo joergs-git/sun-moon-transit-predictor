@@ -189,6 +189,18 @@ export function createHttpServer(opts) {
         return jsonResponse(res, 200,
           store.rangeStats({ sepBelowDeg: sepDeg, windowMs: windowDays * 24 * 3600_000 }));
       }
+      if (url.pathname === '/api/usable') {
+        // Real usable transit candidates: imminent-confirmed transits whose
+        // aircraft was ≥ minElevationDeg above the horizon at closest
+        // approach (default 30°, same as the Pushover gate). Powers the
+        // second Aircraft-stats list.
+        const minEl = Math.min(90, Math.max(0, Number(url.searchParams.get('minElevationDeg') ?? '30')));
+        const windowDays = Math.min(3650, Math.max(1, Number(url.searchParams.get('windowDays') ?? '3650')));
+        const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? '20')));
+        return jsonResponse(res, 200, store.usableCandidates({
+          minElevationDeg: minEl, windowMs: windowDays * 24 * 3600_000, limit,
+        }));
+      }
       if (url.pathname === '/api/history') {
         const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') ?? '100')));
         // Episode-consolidated history view (v0.7.8+): one row per real

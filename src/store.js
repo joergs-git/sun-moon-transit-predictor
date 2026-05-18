@@ -246,6 +246,80 @@ export class HistoryStore {
   }
 
   /**
+   * "Real, usable candidates": of the aircraft that ACTUALLY transited
+   * (the `imminent` stage), the ones high enough to be worth a telescope —
+   * elevation at closest approach ≥ minElevationDeg (default 30°, the same
+   * default as the Pushover gate). Grouped by airframe (ICAO) and by flight
+   * so the frontend can reuse the acstats bar renderer.
+   *
+   * Elevation is not a column — it lives in payload_json under
+   * candidate.aircraftAtClosest.elevationDeg — so this parses per row. The
+   * window scan is bounded by recorded_at_ms like rangeStats().
+   *
+   * @param {{ minElevationDeg?: number, windowMs?: number, nowMs?: number,
+   *           limit?: number }} [opts]
+   * @returns {{
+   *   minElevationDeg:number, n:number,
+   *   byIcao:Array<{key:string,visits:number,bestElevationDeg:number|null,minSepDeg:number|null}>,
+   *   byFlight:Array<{key:string,visits:number,bestElevationDeg:number|null,minSepDeg:number|null}>,
+   * }}
+   */
+  usableCandidates({ minElevationDeg = 30, windowMs = 3650 * 24 * 3600_000,
+                     nowMs = Date.now(), limit = 20 } = {}) {
+    const since = nowMs - windowMs;
+    const lim = Math.min(200, Math.max(1, limit | 0));
+    const rows = this.db.prepare(
+      `SELECT icao, callsign, flight, body, closest_sep_deg AS sep, payload_json
+       FROM transit_history
+       WHERE stage = 'imminent' AND recorded_at_ms >= ?`,
+    ).all(since);
+
+    const byIcaoM = new Map();
+    const byFlightM = new Map();
+    let n = 0;
+    for (const r of rows) {
+      let el = null;
+      if (r.payload_json) {
+        try {
+          const p = JSON.parse(r.payload_json);
+          el = p?.candidate?.aircraftAtClosest?.elevationDeg ?? null;
+        } catch { /* unparseable payload → treat as unknown elevation */ }
+      }
+      if (!Number.isFinite(el) || el < minElevationDeg) continue;
+      n += 1;
+      const sep = Number.isFinite(r.sep) ? r.sep : null;
+      const bump = (m, key) => {
+        if (!key) return;
+        const cur = m.get(key)
+          ?? { key, visits: 0, bestElevationDeg: -Infinity, minSepDeg: Infinity };
+        cur.visits += 1;
+        if (el > cur.bestElevationDeg) cur.bestElevationDeg = el;
+        if (sep != null && sep < cur.minSepDeg) cur.minSepDeg = sep;
+        m.set(key, cur);
+      };
+      bump(byIcaoM, r.icao);
+      bump(byFlightM, r.flight || r.callsign || '');
+    }
+
+    const finalize = (m) => [...m.values()]
+      .map(x => ({
+        key: x.key,
+        visits: x.visits,
+        bestElevationDeg: x.bestElevationDeg === -Infinity ? null : x.bestElevationDeg,
+        minSepDeg: x.minSepDeg === Infinity ? null : x.minSepDeg,
+      }))
+      .sort((a, b) => b.visits - a.visits
+        || (b.bestElevationDeg ?? 0) - (a.bestElevationDeg ?? 0))
+      .slice(0, lim);
+
+    return {
+      minElevationDeg, n,
+      byIcao: finalize(byIcaoM),
+      byFlight: finalize(byFlightM),
+    };
+  }
+
+  /**
    * Persist a single schedule observation (e.g. from an OpenSky pull).
    * Idempotent on (source, flight, timestamp_ms).
    * @returns {boolean} true if a new row was inserted, false if it already existed

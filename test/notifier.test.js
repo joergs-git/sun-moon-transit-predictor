@@ -220,3 +220,47 @@ describe('Notifier', () => {
     expect(events[0].route).toBeNull();
   });
 });
+
+describe('Notifier — elevation gate (v0.15.0)', () => {
+  const atEl = (el, extra = {}) => {
+    const c = makeCandidate({ level: 'candidate', closestInMs: 90_000, ...extra });
+    c.aircraftAtClosest = { ...c.aircraftAtClosest, elevationDeg: el };
+    return c;
+  };
+
+  it('suppresses the Pushover below minElevationDeg but still records History', async () => {
+    const px = new FakePushover();
+    const recorded = [];
+    const n = new Notifier({ pushover: px, minElevationDeg: 30,
+      onEvent: (e) => recorded.push(e) });
+    const events = await n.tick([atEl(20)], 1_000_000_000_000);
+    expect(events.length).toBe(0);            // no Pushover dispatched
+    expect(px.calls.length).toBe(0);
+    expect(recorded.length).toBeGreaterThan(0); // History decoupled — still logged
+    expect(recorded.some((e) => e.stage === 'candidate')).toBe(true);
+  });
+
+  it('sends when the target is at or above minElevationDeg', async () => {
+    const px = new FakePushover();
+    const n = new Notifier({ pushover: px, minElevationDeg: 30 });
+    const events = await n.tick([atEl(45)], 1_000_000_000_000);
+    expect(events.length).toBe(1);
+    expect(px.calls.length).toBe(1);
+  });
+
+  it('exempts the ISS from the elevation gate', async () => {
+    const px = new FakePushover();
+    const n = new Notifier({ pushover: px, minElevationDeg: 30 });
+    const iss = atEl(8);                       // well below the gate
+    iss.isISS = true;
+    const events = await n.tick([iss], 1_000_000_000_000);
+    expect(events.length).toBe(1);             // ISS still notified
+  });
+
+  it('disables the gate when minElevationDeg is 0 (default)', async () => {
+    const px = new FakePushover();
+    const n = new Notifier({ pushover: px });  // default → 0 = off
+    const events = await n.tick([atEl(5)], 1_000_000_000_000);
+    expect(events.length).toBe(1);
+  });
+});
