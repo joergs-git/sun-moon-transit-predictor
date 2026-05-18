@@ -206,3 +206,31 @@ Status: complete.
 
 Implemented with the user-chosen safe approach: trigger file + systemd
 `stp-update.path`. HTTP layer never runs git/systemctl.
+
+# Visibility ampel + notify gate + color semantics (v0.15.0)
+
+Branch: feature/visibility-ampel-notify-gate
+
+## Decisions (locked with user)
+- Notify gate: configurable `notifier.minElevationDeg = 30` (Settings-editable,
+  0 = off). Pushover only; History/stats stay complete (decoupled). ISS exempt
+  (keeps its own 15 deg gate).
+- Ampel (3 states): red < 30 deg / amber 30-45 deg / green >= 45 deg. Source =
+  candidate.aircraftAtClosest.elevationDeg at closest approach.
+- Aircraft-stats: NEW 2nd list "usable candidates" from transit_history
+  (elevation >= gate). Sightings tally has no elevation -> untouched.
+- Row colors (History & Live), unified:
+  - GREEN only: History outcome==='confirmed' && sepConfirmed && sep < 0.27;
+    Live status==='imminent' && sep < 0.27 (real disc overlap).
+  - YELLOW: sep < 0.5 but not green ("almost"). else neutral.
+  - Removes old magenta(Tracking)/green(History) near-hit split.
+
+## Tasks
+- [ ] Backend gate (service.js + notifier.js + example json + install script)
+- [ ] store.usableCandidates() + /api/usable
+- [ ] Frontend: vis column + rowQuality colors + 2nd stats list + Settings field
+- [ ] README Good-to-know + table; milestone M44; package.json -> 0.15.0
+- [ ] Tests (store/notifier/server) + node --check + npm test + merge to main
+
+## Results
+(filled on completion)

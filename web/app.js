@@ -102,6 +102,51 @@ function isNearHit(sepDeg) {
   return Number.isFinite(sepDeg) && sepDeg < NEAR_HIT_DEG;
 }
 
+// v0.15.0 visibility traffic-light — aircraft elevation above the horizon
+// at closest approach. Below ~30° a target is barely usable (long hazy,
+// turbulent slant path, horizon clouds); 30–45° workable; ≥45° ideal. Same
+// 30° default as the Pushover gate (pushover.minElevationDeg).
+const VIS_AMBER_DEG = 30;
+const VIS_GREEN_DEG = 45;
+// Real Sun/Moon disc-overlap proxy (matches store.js rangeStats onDisc).
+const DISC_DEG = 0.27;
+
+function visInfo(elDeg) {
+  if (!Number.isFinite(elDeg)) return null;
+  if (elDeg >= VIS_GREEN_DEG) return { cls: 'vis-green', word: 'ideal' };
+  if (elDeg >= VIS_AMBER_DEG) return { cls: 'vis-amber', word: 'workable' };
+  return { cls: 'vis-red', word: 'poor' };
+}
+// One leftmost <td> for both tables. Neutral dot when elevation is unknown
+// (e.g. ISS visible-pass entries without an aircraftAtClosest sample).
+function visCell(elDeg) {
+  const v = visInfo(elDeg);
+  if (!v) {
+    return '<td class="td-icon vis-cell" title="elevation at closest approach unknown">'
+      + '<span class="vis-dot vis-unknown">·</span></td>';
+  }
+  const t = `${elDeg.toFixed(0)}° elevation — visibility ${v.word} `
+    + `(red <${VIS_AMBER_DEG}° · amber ${VIS_AMBER_DEG}–${VIS_GREEN_DEG}° · green ≥${VIS_GREEN_DEG}°)`;
+  return `<td class="td-icon vis-cell" title="${t}"><span class="vis-dot ${v.cls}">●</span></td>`;
+}
+
+// Unified row highlight (v0.15.0). GREEN only = a *real* Sun/Moon disc
+// overlap that actually happened; YELLOW = a near miss ("almost"); else
+// neutral. Replaces the old magenta(Tracking)/green(History) near-hit split.
+function historyRowQuality(e) {
+  const sep = e.closest_sep_deg;
+  if (e.outcome === 'confirmed' && e.sepConfirmed === true
+      && Number.isFinite(sep) && sep < DISC_DEG) return ' q-green';
+  if (isNearHit(sep)) return ' q-amber';
+  return '';
+}
+function liveRowQuality(e) {
+  const sep = e.closestApproachSepDeg;
+  if (e.status === 'imminent' && Number.isFinite(sep) && sep < DISC_DEG) return ' q-green';
+  if (isNearHit(sep)) return ' q-amber';
+  return '';
+}
+
 function renderSky(state) {
   const tbody = $('#sky tbody');
   tbody.innerHTML = '';
@@ -143,22 +188,21 @@ function renderTracking(state) {
     if (names.length && !anyObservable) {
       const lo = names.join(' & ');
       tbody.innerHTML =
-        `<tr class="empty"><td colspan="11" class="no-bodies">`
+        `<tr class="empty"><td colspan="12" class="no-bodies">`
         + `☀🌙 ${lo} below the observable limit (&lt; 20° elevation).`
         + `<br>No transit candidates can occur until one rises — ADS-B traffic`
         + ` elsewhere is expected and not tracked.</td></tr>`;
     } else {
       tbody.innerHTML =
-        '<tr class="empty"><td colspan="11">Tracking list empty — no aircraft'
+        '<tr class="empty"><td colspan="12">Tracking list empty — no aircraft'
         + ' currently projected onto the Sun/Moon line.</td></tr>';
     }
     return;
   }
   for (const [i, e] of rows.entries()) {
     const tr = document.createElement('tr');
-    const nearHit = isNearHit(e.closestApproachSepDeg);
     const iss = e.isISS === true || e.icao === 'ISS';
-    tr.className = `row-${e.status} sketchable${nearHit ? ' near-hit' : ''}${iss ? ' row-iss' : ''}`;
+    tr.className = `row-${e.status} sketchable${liveRowQuality(e)}${iss ? ' row-iss' : ''}`;
     tr.dataset.source = 'live';
     tr.dataset.index = String(i);
     const baseMeta = STATUS_LABELS[e.status] ?? { icon: '', label: e.status };
@@ -173,7 +217,9 @@ function renderTracking(state) {
     const route = e.route ?? e.candidate?.route;
     const rangeM = e.candidate?.aircraftAtClosest?.rangeM ?? null;
     const bodyIcon = e.body === 'Sun' ? '☀' : '🌙';
+    const elDeg = e.candidate?.aircraftAtClosest?.elevationDeg;
     tr.innerHTML = `
+      ${visCell(elDeg)}
       <td class="body-${e.body} td-icon" title="${e.body}">${bodyIcon}</td>
       <td><span class="status status-${e.status}" title="${meta.label}">${meta.icon} ${meta.label}</span></td>
       <td>${eta}</td>
@@ -235,9 +281,8 @@ function recentCutoffMs() {
 // paginated slice) so the click→pin handler keeps resolving correctly.
 function historyTr(e, absIdx) {
   const tr = document.createElement('tr');
-  const nearHit = isNearHit(e.closest_sep_deg);
   const iss = e.icao === 'ISS';
-  tr.className = `sketchable${nearHit ? ' near-hit' : ''}${iss ? ' row-iss' : ''}`;
+  tr.className = `sketchable${historyRowQuality(e)}${iss ? ' row-iss' : ''}`;
   tr.dataset.source = 'history';
   tr.dataset.index = String(absIdx);
   const oc = e.outcome ? OUTCOME_LABELS[e.outcome] : null;
@@ -251,7 +296,9 @@ function historyTr(e, absIdx) {
     : (e.closest_at_ms - e.recorded_at_ms);
   const dt = discTransit(e);
   const bodyIcon = e.body === 'Sun' ? '☀' : '🌙';
+  const elDeg = e.payload?.candidate?.aircraftAtClosest?.elevationDeg;
   tr.innerHTML = `
+    ${visCell(elDeg)}
     <td class="body-${e.body} td-icon" title="${e.body}">${bodyIcon}</td>
     <td class="stage-${e.stage}">${fmtDateTime(e.closest_at_ms)}</td>
     <td>${fmtDateTime(e.recorded_at_ms)}</td>
@@ -282,7 +329,7 @@ function renderHistory(events) {
   tbody.innerHTML = '';
   lastHistory = events ?? [];
   if (!lastHistory.length) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="14">No history yet.</td></tr>';
+    tbody.innerHTML = '<tr class="empty"><td colspan="15">No history yet.</td></tr>';
     if (pager) pager.hidden = true;
     return;
   }
@@ -312,7 +359,7 @@ function renderHistory(events) {
 
   if (slice.length === 0) {
     tbody.innerHTML =
-      '<tr class="empty"><td colspan="14">Nothing recorded today or yesterday yet — use “Older ▶”.</td></tr>';
+      '<tr class="empty"><td colspan="15">Nothing recorded today or yesterday yet — use “Older ▶”.</td></tr>';
   } else {
     for (const [absIdx, e] of slice) tbody.appendChild(historyTr(e, absIdx));
   }
@@ -537,6 +584,57 @@ async function pollAcstats() {
     const b = $('#acstats-flight-tot');
     if (a) a.textContent = fmtT(t.icao);
     if (b) b.textContent = fmtT(t.flight);
+  } catch { /* ignore */ }
+}
+
+// Second Aircraft-stats list: REAL usable transit candidates — aircraft
+// that actually transited (imminent-confirmed) while ≥ the elevation gate
+// (default 30°), so they were high enough to be worth a telescope. Reuses
+// the acstats bar markup + the flight-cell hover (AirNav / free route).
+function renderUsableBars(elId, rows, kind) {
+  const box = $(elId);
+  if (!box) return;
+  const top = (rows ?? []).slice(0, ACSTATS_TOP);
+  if (top.length === 0) {
+    box.innerHTML = '<div class="acstats-empty">No usable transits recorded yet '
+      + '(none confirmed above the elevation gate).</div>';
+    return;
+  }
+  const max = top[0].visits || 1;
+  box.innerHTML = top.map((r) => {
+    const pct = Math.max(3, Math.round((r.visits / max) * 100));
+    const el = Number.isFinite(r.bestElevationDeg) ? `${r.bestElevationDeg.toFixed(0)}°` : '—';
+    const sp = Number.isFinite(r.minSepDeg) ? fmtSep(r.minSepDeg) : '—';
+    const seen = `${r.visits} usable transit${r.visits === 1 ? '' : 's'} · `
+      + `best elevation ${el} · tightest sep ${sp}`;
+    const key = r.key || '?';
+    let labelEl;
+    if (kind === 'icao' && /^[0-9a-f]{6}$/.test(key.toLowerCase())) {
+      labelEl = `<span class="acstats-label flight-cell" data-hex="${key.toLowerCase()}" `
+        + `title="ICAO 24-bit hex — hover for the airframe (AirNav). ${seen}">${key.toUpperCase()}</span>`;
+    } else {
+      labelEl = `<span class="acstats-label flight-cell" data-cs="${key.toUpperCase()}" `
+        + `title="ADS-B callsign — hover for the route (adsbdb, free). ${seen}">${key.toUpperCase()}</span>`;
+    }
+    return `<div class="acstats-row" title="${seen}">`
+      + labelEl
+      + `<span class="acstats-track"><span class="acstats-bar" style="width:${pct}%"></span></span>`
+      + `<span class="acstats-val">${r.visits}</span></div>`;
+  }).join('');
+}
+
+async function pollUsable() {
+  try {
+    const res = await fetch(`/api/usable?minElevationDeg=${VIS_AMBER_DEG}&limit=${ACSTATS_TOP}`);
+    if (!res.ok) return;
+    const d = await res.json();
+    renderUsableBars('#usable-icao', d.byIcao, 'icao');
+    renderUsableBars('#usable-flight', d.byFlight, 'flight');
+    const el = $('#usable-tot');
+    if (el) {
+      el.textContent = `${d.n ?? 0} usable transit${(d.n ?? 0) === 1 ? '' : 's'} `
+        + `· elevation ≥ ${d.minElevationDeg ?? VIS_AMBER_DEG}°`;
+    }
   } catch { /* ignore */ }
 }
 
@@ -1344,9 +1442,11 @@ pollState();
 pollHistory();
 pollLearning();
 pollAcstats();
+pollUsable();
 pollRangestats();
 setInterval(pollState, STATE_INTERVAL_MS);
 setInterval(pollHistory, HISTORY_INTERVAL_MS);
 setInterval(pollLearning, LEARNING_INTERVAL_MS);
 setInterval(pollAcstats, LEARNING_INTERVAL_MS);
+setInterval(pollUsable, LEARNING_INTERVAL_MS);
 setInterval(pollRangestats, LEARNING_INTERVAL_MS);
