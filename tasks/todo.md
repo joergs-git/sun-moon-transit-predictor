@@ -249,3 +249,30 @@ Branch: feature/visibility-ampel-notify-gate
   pushover.minElevationDeg.
 
 Status: complete.
+
+# Dynamic/time-lapse FOV + header tidy-up (v0.16.0)
+
+Branch: feature/dynamic-fov-animation
+
+## Decisions (locked with user)
+- Phase 1 + 2. Adaptive /api/state cadence: idle 10s, fast 2s when
+  |ETA| < 180s, held through ±30s + 30s tail. Auto-pick = "best"
+  (imminent > visibility band > tightest sep > nearest ETA); click still
+  pins. Time-lapse "now" marker travels the predicted path on the
+  Sun/Moon sketch.
+- Status legend → collapsible <details>, default collapsed.
+- Header: ext links (GitHub/AstroBin/dump1090/AirNav) to the right edge;
+  "buy me a coffee" (https://buymeacoffee.com/joergsflow, user-confirmed)
+  next to the identity.
+
+## Results
+- app.js: POLL_IDLE/FAST consts, wantFastPoll()+scheduleNextPoll()
+  (replaced fixed setInterval), pickAutoEntry() rewritten to a
+  lexicographic score (visScore/cmpScore), renderFovSketch stamps nowMs.
+- sketch.js: buildSketchSvg draws an interpolated, pulsing "now" marker
+  along visiblePathPts (no nowMs → nothing; back-compat kept).
+- index.html/style.css: collapsible legend; header split into
+  .ext-links (right edge) + .header-controls; BMC link in .identity.
+- Tests +1 (now-marker), 165 green. README M47, version 0.16.0.
+
+Status: complete.

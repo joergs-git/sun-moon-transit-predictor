@@ -33,7 +33,22 @@ header {
 }
 
 .brand { display: flex; flex-direction: column; gap: 4px; }
-.header-right { display: flex; align-items: center; gap: 12px; }
+/* Right side stacks two right-aligned rows: the external links on top
+   (moved here to sit at the screen edge), the live controls below. */
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.header-controls { display: flex; align-items: center; gap: 12px; }
+.ext-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ext-links a { color: var(--accent); text-decoration: none; }
+.ext-links a:hover { text-decoration: underline; }
+.ext-links .sep { color: var(--line); }
 
 h1 { font-size: 18px; margin: 0; }
 
@@ -250,6 +265,19 @@ ul.legend {
   color: var(--muted);
 }
 ul.legend li { line-height: 1.6; }
+
+/* Collapsible status legend — default collapsed so it barely takes space.
+   When open, the inner ul.legend keeps its own bottom margin. */
+.legend-details { margin: 0 0 12px; font-size: 12px; }
+.legend-details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  list-style: revert;          /* keep the native disclosure triangle */
+  user-select: none;
+}
+.legend-details > summary:hover { color: var(--fg); }
+.legend-details[open] > summary { margin-bottom: 8px; }
+.legend-details ul.legend { margin-bottom: 0; }
 
 footer {
   margin-top: 24px;
