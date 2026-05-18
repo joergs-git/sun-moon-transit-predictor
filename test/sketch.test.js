@@ -120,6 +120,29 @@ describe('sketch renderer', () => {
     expect(wayOff).not.toContain('<animate');
   });
 
+  it('puts route + ETA/clock in the header (ETA only with a live nowMs)', () => {
+    const candidate = syntheticTransitCandidate();
+    const entry = {
+      body: 'Sun', icao: candidate.icao, flight: 'TST123', callsign: 'TST123',
+      route: { origin: { iata: 'BER' }, destination: { iata: 'LTN' } },
+      closestApproachAtMs: candidate.closestApproachAtMs,
+      closestApproachSepDeg: candidate.closestApproachSepDeg,
+      candidate,
+    };
+    const input = fromLifecycleEntry(entry);
+    expect(input.origin).toBe('BER');
+    expect(input.destination).toBe('LTN');
+    // No nowMs → header shows the clock only, no "min" ETA wording.
+    const noNow = buildSketchSvg(input);
+    expect(noNow).toContain('BER→LTN');
+    expect(noNow).not.toMatch(/\d+ min/);
+    // With a live nowMs → soft-red ETA + clock.
+    const live = buildSketchSvg({ ...input, nowMs: input.closestAtMs - 7 * 60_000 });
+    expect(live).toContain('BER→LTN');
+    expect(live).toContain('in 7 min');
+    expect(live).toContain('#ff8f8f');
+  });
+
   it('falls back gracefully when transitPath is missing (old history row)', () => {
     const candidate = syntheticTransitCandidate();
     // Simulate an old DB row: the payload still has aircraftAtClosest /
