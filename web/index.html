@@ -154,6 +154,7 @@
     <table id="tracking">
       <thead>
         <tr>
+          <th class="th-icon" title="Visibility traffic-light = aircraft elevation above the horizon at closest approach. 🔴 below 30° (barely usable — long hazy/turbulent slant path, horizon clouds), 🟡 30–45° (workable), 🟢 45°+ (ideal)."><span aria-hidden="true">🚦</span><span class="th-sub">vis</span></th>
           <th class="th-icon" title="Sun or Moon — which body this entry transits."><span aria-hidden="true">☀/🌙</span><span class="th-sub">body</span></th>
           <th title="Lifecycle stage: planned → radio → candidate → imminent → stale. Driven live by the tracker + predictor.">Status<span class="th-sub">lifecycle</span></th>
           <th title="Time until closest approach. Negative when the predicted moment has already passed.">ETA<span class="th-sub">until crossing</span></th>
@@ -167,7 +168,7 @@
           <th title="Origin → Destination IATA codes from the adsbdb.com route lookup.">Route<span class="th-sub">from → to</span></th>
         </tr>
       </thead>
-      <tbody><tr class="empty"><td colspan="11">Tracking list empty.</td></tr></tbody>
+      <tbody><tr class="empty"><td colspan="12">Tracking list empty.</td></tr></tbody>
     </table>
   </section>
 
@@ -184,6 +185,7 @@
     <table id="history">
       <thead>
         <tr>
+          <th class="th-icon" title="Visibility traffic-light = aircraft elevation above the horizon at closest approach. 🔴 below 30° (barely usable — long hazy/turbulent slant path, horizon clouds), 🟡 30–45° (workable), 🟢 45°+ (ideal)."><span aria-hidden="true">🚦</span><span class="th-sub">vis</span></th>
           <th class="th-icon" title="Sun or Moon — which body this entry transits."><span aria-hidden="true">☀/🌙</span><span class="th-sub">body</span></th>
           <th title="Predicted closest-approach time — the camera-ready moment for this transit.">Transit<span class="th-sub">crossing clock</span></th>
           <th title="Wall-clock time of the FIRST stage that fired for this transit. The recorded-vs-transit gap shows how much advance warning the pipeline gave.">Recorded<span class="th-sub">first detection</span></th>
@@ -200,7 +202,7 @@
           <th title="Origin → Destination IATA codes from the adsbdb.com route lookup.">Route<span class="th-sub">from → to</span></th>
         </tr>
       </thead>
-      <tbody><tr class="empty"><td colspan="14">Loading…</td></tr></tbody>
+      <tbody><tr class="empty"><td colspan="15">Loading…</td></tr></tbody>
     </table>
     <!-- History pager (v0.8.1). Page 1 = today + yesterday; older entries
          are split into fixed 50-row pages so the table stays short. Pure
@@ -230,6 +232,25 @@
         <div class="acstats-head">By flight (ADS-B callsign)
           <span class="acstats-sub" id="acstats-flight-tot">—</span></div>
         <div class="acstats-bars" id="acstats-flight"></div>
+      </div>
+    </div>
+
+    <h3 class="acstats-sub-h">Usable candidates <span class="acstats-sub" id="usable-tot">—</span></h3>
+    <p class="hint">
+      The subset that <b>actually transited</b> (imminent-confirmed) while
+      ≥&nbsp;30° above the horizon — high enough that a telescope/binocular
+      shot is realistic (below ~30° the long hazy, turbulent slant path and
+      horizon clouds usually spoil it). Best elevation and tightest sep are
+      in the hover.
+    </p>
+    <div class="acstats-grid">
+      <div class="acstats-col">
+        <div class="acstats-head">By airframe (ICAO hex)</div>
+        <div class="acstats-bars" id="usable-icao"></div>
+      </div>
+      <div class="acstats-col">
+        <div class="acstats-head">By flight (ADS-B callsign)</div>
+        <div class="acstats-bars" id="usable-flight"></div>
       </div>
     </div>
   </section>
@@ -317,6 +338,9 @@
           <label>
             Radio band °<input name="pushover.radioThresholdDeg" type="number" step="any" min="0.05">
             <small class="field-hint">Phone-only filter: buzz at the radio stage only if projected separation ≤ this (default 1°). The panel still shows the full Panel band.</small></label>
+          <label>
+            Min elevation °<input name="pushover.minElevationDeg" type="number" step="any" min="0" max="90">
+            <small class="field-hint">Phone-only: only buzz when the target is at least this far above the horizon at closest approach (default 30°; below that it's barely usable). 0 = off. The ISS is exempt. History/stats always record everything.</small></label>
         </fieldset>
 
         <fieldset>

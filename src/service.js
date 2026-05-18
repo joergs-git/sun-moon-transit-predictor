@@ -62,6 +62,13 @@ export const DEFAULT_CONFIG = {
     // panel, but the phone only buzzes for radio events whose projected
     // separation is at or below this much tighter threshold (default 1°).
     radioThresholdDeg: 1.0,
+    // Pushover-only elevation gate (v0.15.0). Below ~30° a target is barely
+    // usable visually (long hazy/turbulent slant path, horizon clouds), so
+    // by default the phone only buzzes when the aircraft is at least this
+    // many degrees above the horizon at closest approach. 0 disables the
+    // gate. The ISS is exempt (it has its own 15° visibility gate). History
+    // and all statistics still record everything regardless of this gate.
+    minElevationDeg: 30,
   },
   lifecycle: {
     plannedWindowMs: 3600_000,    // surface watchlist entries within ±1 h
@@ -261,6 +268,7 @@ export async function runService({
     },
     minStage: config.pushover.minStage ?? 'radio',
     radioThresholdDeg: config.pushover.radioThresholdDeg,
+    minElevationDeg: config.pushover.minElevationDeg,
     imminentWindowMs: config.lifecycle.imminentWindowMs,
     baseUrl: config.server.publicUrl || undefined,
   });
@@ -414,6 +422,7 @@ export async function runService({
         minStage: config.pushover.minStage,
         device: config.pushover.device ?? '',
         radioThresholdDeg: config.pushover.radioThresholdDeg,
+        minElevationDeg: config.pushover.minElevationDeg,
         tokenMasked: mask(config.pushover.token),
         userMasked:  mask(config.pushover.user),
         hasToken: Boolean(config.pushover.token),
@@ -511,6 +520,15 @@ export async function runService({
         config.pushover.radioThresholdDeg = v;
         notifier.radioThresholdDeg = v;
       }
+      if ('minElevationDeg' in p) {
+        // 0 disables the elevation gate; otherwise it is a 0–90° threshold.
+        const v = Number(p.minElevationDeg);
+        if (!Number.isFinite(v) || v < 0 || v > 90) {
+          throw new Error('pushover.minElevationDeg must be between 0 and 90 (0 = off)');
+        }
+        config.pushover.minElevationDeg = v;
+        notifier.minElevationDeg = v;
+      }
       // PushoverClient reads this.config on every send() call → in-place mutation
       // is enough; no client reconstruction needed.
       pushover.config = config.pushover;
@@ -519,6 +537,7 @@ export async function runService({
         minStage: config.pushover.minStage,
         device: config.pushover.device,
         radioThresholdDeg: config.pushover.radioThresholdDeg,
+        minElevationDeg: config.pushover.minElevationDeg,
         hasToken: Boolean(config.pushover.token),
         hasUser:  Boolean(config.pushover.user),
       };
