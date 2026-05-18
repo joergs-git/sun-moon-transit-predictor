@@ -625,6 +625,110 @@ export function buildMiniMapSvg(m) {
   );
 }
 
+// Visibility band hues — kept in lockstep with web/app.js (VIS_AMBER_DEG /
+// VIS_GREEN_DEG) and the .vis-* CSS so the side view, the row dot and the
+// notify gate all tell the same story.
+const SIDE_AMBER_DEG = 30;
+const SIDE_GREEN_DEG = 45;
+const SIDE_FLOOR_DEG = 20;            // physical "barely anything below this"
+const VIS_RED = '#ff5d5d';
+const VIS_AMBER = '#f0c83c';
+const VIS_GREEN = '#5fd07f';
+function sideBandColour(elDeg) {
+  if (elDeg >= SIDE_GREEN_DEG) return VIS_GREEN;
+  if (elDeg >= SIDE_AMBER_DEG) return VIS_AMBER;
+  return VIS_RED;
+}
+
+/**
+ * Vertical "side view" companion to the plan-view mini-map: the observer at
+ * the origin, the aircraft at its real slant range + height, and the
+ * line-of-sight wedge filled in the visibility colour for its elevation
+ * band (red < 30°, amber 30–45°, green ≥ 45°). The 20/30/45° reference
+ * rays are drawn in their band colours so the angle reads at a glance. The
+ * x and y axes share one scale, so the drawn angle IS the true elevation.
+ *
+ * @param {{ elevationDeg:number, rangeM:number, label?:string,
+ *           flight?:string, origin?:string, destination?:string }} m
+ */
+export function buildSideViewSvg(m) {
+  const el = m?.elevationDeg;
+  const slant = m?.rangeM;
+  if (!Number.isFinite(el) || el <= 0 || !Number.isFinite(slant) || slant <= 0) {
+    return '';
+  }
+  const W = 260;
+  const H = 150;
+  const margin = 22;
+  const ox = margin;                  // observer at bottom-left
+  const oy = H - margin;
+  const xmax = W - 6;
+  const ymin = margin;
+
+  const a = el * DEG;
+  const ground = slant * Math.cos(a); // horizontal distance, metres
+  const height = slant * Math.sin(a); // height above the observer plane, m
+  // One isotropic scale for both axes → the drawn angle equals el exactly.
+  const sX = ground > 0 ? (xmax - ox) / ground : Infinity;
+  const sY = height > 0 ? (oy - ymin) / height : Infinity;
+  let scale = Math.min(sX, sY);
+  if (!Number.isFinite(scale) || scale <= 0) scale = 1;
+  const acX = ox + ground * scale;
+  const acY = oy - height * scale;
+
+  // Where a ray at `deg` elevation leaves the plot rectangle.
+  const rayEnd = (deg) => {
+    const r = deg * DEG;
+    const dx = Math.cos(r);
+    const dy = Math.sin(r);
+    const tX = dx > 1e-6 ? (xmax - ox) / dx : Infinity;
+    const tY = dy > 1e-6 ? (oy - ymin) / dy : Infinity;
+    const t = Math.min(tX, tY);
+    return { x: ox + dx * t, y: oy - dy * t };
+  };
+  const guide = (deg, col) => {
+    const e = rayEnd(deg);
+    return `<line x1="${ox}" y1="${oy}" x2="${e.x.toFixed(1)}" y2="${e.y.toFixed(1)}" `
+      + `stroke="${col}" stroke-width="0.7" stroke-dasharray="2 3" stroke-opacity="0.65"/>`
+      + txt(e.x - 1, e.y - 3, `${deg}°`, { fill: col, size: LABEL_SIZE, anchor: 'end' });
+  };
+
+  const band = sideBandColour(el);
+  const altKm = (height / 1000).toFixed(height >= 1000 ? 0 : 1);
+  const slantKm = (slant / 1000).toFixed(1);
+
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">`
+    + `<rect x="0" y="0" width="${W}" height="${H}" fill="${COLOURS.fovFill}" stroke="${COLOURS.fovStroke}" stroke-width="1" rx="3"/>`
+    // Elevation wedge: the triangle under the line of sight, filled in the
+    // visibility colour for this elevation band → "how good is this" is
+    // instantly obvious without reading the number.
+    + `<polygon points="${ox},${oy} ${acX.toFixed(1)},${oy} ${acX.toFixed(1)},${acY.toFixed(1)}" `
+    + `fill="${band}" fill-opacity="0.18"/>`
+    // Reference rays at the floor / band edges, in their band colours.
+    + guide(SIDE_FLOOR_DEG, VIS_RED)
+    + guide(SIDE_AMBER_DEG, VIS_AMBER)
+    + guide(SIDE_GREEN_DEG, VIS_GREEN)
+    // Ground / horizon line.
+    + `<line x1="${ox}" y1="${oy}" x2="${xmax}" y2="${oy}" stroke="${COLOURS.axis}" stroke-width="0.8"/>`
+    + txt(6, 12, 'SIDE VIEW · elevation = visibility', { fill: COLOURS.label, size: LABEL_SIZE })
+    // Line of sight observer → aircraft + a vertical drop to the ground.
+    + `<line x1="${ox}" y1="${oy}" x2="${acX.toFixed(1)}" y2="${acY.toFixed(1)}" `
+    + `stroke="${band}" stroke-width="1.6"/>`
+    + `<line x1="${acX.toFixed(1)}" y1="${oy}" x2="${acX.toFixed(1)}" y2="${acY.toFixed(1)}" `
+    + `stroke="${COLOURS.axis}" stroke-width="0.6" stroke-dasharray="2 2" stroke-opacity="0.7"/>`
+    // Observer + aircraft markers.
+    + `<circle cx="${ox}" cy="${oy}" r="3" fill="${COLOURS.SunRim}"/>`
+    + txt(ox + 5, oy - 5, 'you', { fill: COLOURS.label, size: LABEL_SIZE })
+    + `<circle cx="${acX.toFixed(1)}" cy="${acY.toFixed(1)}" r="3.2" fill="${COLOURS.ac}" stroke="${COLOURS.acStroke}" stroke-width="0.5"/>`
+    + routeCaption(m, H)
+    + txt(W - 4, H - 6,
+      `${el.toFixed(0)}° · ${slantKm} km · alt ${altKm} km`,
+      { fill: band, size: LABEL_SIZE, anchor: 'end' })
+    + `</svg>`
+  );
+}
+
 // Live snapshot of the optical setup. Reflects setOptics() calls. Not frozen
 // so tests / debug code can see the current values, but external code should
 // treat it as read-only — use setOptics() to mutate. FOV_*_DEG remain as

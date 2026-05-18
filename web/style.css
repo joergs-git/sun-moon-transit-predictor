@@ -629,11 +629,41 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
   border-radius: 4px;
   font-size: 12px;
 }
-/* Combined box: LEFT = mini-map (radii), RIGHT = AirNav photo over data.
-   One panel; the two columns stretch to equal height so the right column
-   (photo + data) ends flush with the map. Empty columns collapse via
-   [hidden] so the other takes the full width. Kept compact so the FOV
-   sketch above stays the dominant element. */
+/* Top row: the dominant transit sketch + the compact AirNav box beside it
+   (~62 / 38). The AirNav column collapses when [hidden] so the sketch
+   takes the full width on its own (auto-FOV, nothing clicked). Wraps to
+   stacked on a very narrow pane. */
+.fov-top {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+.fov-top .fov-body {
+  flex: 1 1 60%;
+  min-width: 280px;
+  margin: 0;
+}
+.fov-top .fov-aux-right {
+  flex: 1 1 34%;
+  min-width: 220px;
+  margin: 0;
+  /* Standalone panel now (it left the old combined .fov-aux box), so it
+     carries its own chrome to read as a box beside the sketch. 11 px to
+     stay in lockstep with the SVG LABEL_SIZE / .fov-aux. */
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 11px;
+  overflow: auto;
+}
+.fov-top > [hidden] { display: none; }
+
+/* Lower box: LEFT = plan-view mini-map (radii), RIGHT = side view
+   (elevation profile). One panel; the two halves stretch to equal height.
+   Empty halves collapse via [hidden] so the other takes the full width.
+   Kept compact so the FOV sketch above stays the dominant element. */
 .fov-aux {
   margin-top: 8px;
   padding: 8px 10px;
@@ -648,7 +678,7 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
   gap: 10px;
   align-items: stretch;
 }
-.fov-aux-left  { flex: 1 1 50%; min-width: 0; }
+.fov-aux-cell  { flex: 1 1 50%; min-width: 0; }
 .fov-aux-right {
   flex: 1 1 50%;
   min-width: 0;
@@ -658,7 +688,7 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
 /* A hidden column collapses; the surviving flex item (flex-grow:1, now the
    only laid-out child) expands to the full box width on its own. */
 .fov-aux > [hidden] { display: none; }
-.fov-aux-left svg { display: block; width: 100%; height: auto; }
+.fov-aux-cell svg { display: block; width: 100%; height: auto; }
 .ac-photo {
   display: block;
   width: 100%;

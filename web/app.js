@@ -1,6 +1,6 @@
 import {
-  buildSketchSvg, buildMiniMapSvg, fromHistoryRow, fromLifecycleEntry,
-  setOptics, SKETCH_GEOMETRY,
+  buildSketchSvg, buildMiniMapSvg, buildSideViewSvg, fromHistoryRow,
+  fromLifecycleEntry, setOptics, SKETCH_GEOMETRY,
 } from './sketch.js';
 import { resolveAircraftType, designAgePhrase, klassLabel } from './aircraft-types.js';
 
@@ -829,6 +829,7 @@ function acMetaFromLifecycle(entry) {
     typeCode: a.typeCode ?? null, registration: a.registration ?? null,
     typeDesc: a.typeDesc ?? null, icao: entry.icao ?? a.icao ?? null,
     rangeM: entry?.candidate?.aircraftAtClosest?.rangeM ?? null,
+    elevationDeg: entry?.candidate?.aircraftAtClosest?.elevationDeg ?? null,
     isISS: entry.isISS === true || entry.icao === 'ISS',
     flight: entry.flight ?? entry.callsign ?? route?.flight ?? null,
     origin: route?.origin?.iata ?? route?.origin?.icao ?? null,
@@ -844,6 +845,7 @@ function acMetaFromHistory(row) {
     typeCode: a?.typeCode ?? null, registration: a?.registration ?? null,
     typeDesc: a?.typeDesc ?? null, icao: row?.icao ?? a?.icao ?? null,
     rangeM: row?.payload?.candidate?.aircraftAtClosest?.rangeM ?? row?.range_m ?? null,
+    elevationDeg: row?.payload?.candidate?.aircraftAtClosest?.elevationDeg ?? null,
     isISS: iss,
     flight: row?.flight ?? row?.callsign ?? route?.flight ?? null,
     origin: row?.origin ?? route?.origin?.iata ?? route?.origin?.icao ?? null,
@@ -854,29 +856,46 @@ function acMetaFromHistory(row) {
 
 const fovSpecs = $('#fov-specs');
 const fovMap = $('#fov-map');
+const fovSide = $('#fov-side');
 
 // Offline plan-view mini-map under the FOV. Shown when we have the
 // observer + the aircraft's lat/lon (live row, or a recorded History
 // payload). Hidden for the ISS or when geometry is missing.
 function renderFovMap(meta) {
-  if (!fovMap) return;
-  const ok = meta && !meta.isISS && lastObserver
+  if (!fovMap && !fovSide) return;
+  const label = meta?.registration ?? meta?.icao ?? '';
+  // Plan view needs the observer + the aircraft's lat/lon.
+  const mapOk = meta && !meta.isISS && lastObserver
     && Number.isFinite(meta.lat) && Number.isFinite(meta.lon)
     && Number.isFinite(lastObserver.latitudeDeg)
     && Number.isFinite(lastObserver.longitudeDeg);
-  if (!ok) { fovMap.innerHTML = ''; syncFovAux(); return; }
-  fovMap.innerHTML = buildMiniMapSvg({
-    obsLat: lastObserver.latitudeDeg,
-    obsLon: lastObserver.longitudeDeg,
-    acLat: meta.lat,
-    acLon: meta.lon,
-    trackDeg: meta.trackDeg ?? null,
-    rangeM: meta.rangeM ?? null,
-    label: meta.registration ?? meta.icao ?? '',
-    flight: meta.flight ?? null,
-    origin: meta.origin ?? null,
-    destination: meta.destination ?? null,
-  });
+  if (fovMap) {
+    fovMap.innerHTML = mapOk ? buildMiniMapSvg({
+      obsLat: lastObserver.latitudeDeg,
+      obsLon: lastObserver.longitudeDeg,
+      acLat: meta.lat,
+      acLon: meta.lon,
+      trackDeg: meta.trackDeg ?? null,
+      rangeM: meta.rangeM ?? null,
+      label,
+      flight: meta.flight ?? null,
+      origin: meta.origin ?? null,
+      destination: meta.destination ?? null,
+    }) : '';
+  }
+  // Side view only needs elevation + slant range (no lat/lon), so it can
+  // show even when the plan view can't. buildSideViewSvg returns '' when
+  // those are missing (e.g. ISS) → the half collapses via syncFovAux.
+  if (fovSide) {
+    fovSide.innerHTML = (meta && !meta.isISS) ? buildSideViewSvg({
+      elevationDeg: meta.elevationDeg ?? null,
+      rangeM: meta.rangeM ?? null,
+      label,
+      flight: meta.flight ?? null,
+      origin: meta.origin ?? null,
+      destination: meta.destination ?? null,
+    }) : '';
+  }
   syncFovAux();
 }
 
@@ -967,11 +986,16 @@ function acinfoHtml(info) {
 function syncFovAux() {
   const box = $('#fov-aux');
   if (!box) return;
+  // #fov-aux is now purely the two geometry maps (plan + side). The AirNav
+  // box lives in #fov-top beside the transit sketch and collapses on its
+  // own via the .fov-top > [hidden] rule.
   const mapHas = !!(fovMap && fovMap.innerHTML);
+  const sideHas = !!(fovSide && fovSide.innerHTML);
   const acHas = !!(fovAcinfo && fovAcinfo.innerHTML);
   if (fovMap) fovMap.hidden = !mapHas;
+  if (fovSide) fovSide.hidden = !sideHas;
   if (fovAcinfo) fovAcinfo.hidden = !acHas;
-  box.hidden = !(mapHas || acHas);
+  box.hidden = !(mapHas || sideHas);
 }
 async function renderFovAcinfo(meta) {
   if (!fovAcinfo) return;
