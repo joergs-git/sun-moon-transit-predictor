@@ -44,20 +44,25 @@ function fmtRangeM(m) {
   return `${(m / 1000).toFixed(1)} km`;
 }
 
-function fmtCountdown(ms) {
-  if (ms <= 0) return 'now';
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
-  const h = Math.floor(m / 60);
-  return `${h}h ${m % 60}m`;
+
+// Lead time worded for the title: "now" inside the imminent window, else
+// rounded to whole minutes ("in 1 minute" / "in 7 minutes"). Matches the
+// user-specified title format "<body> crosser - sep x.yz in x minutes".
+function fmtLeadMinutes(ms) {
+  if (ms <= 45_000) return 'now';
+  const mins = Math.round(ms / 60_000);
+  if (mins <= 0) return 'now';
+  return `in ${mins} minute${mins === 1 ? '' : 's'}`;
 }
 
-// Wall-clock time of the (predicted) closest approach — the "target time"
-// the user aims the camera at. Server-local timezone.
-function fmtClock(ms) {
-  return new Date(ms).toLocaleTimeString();
+// Visibility traffic-light for the message body — same 30/45° thresholds
+// as the web UI (.vis-* / VIS_*_DEG) and the pushover.minElevationDeg gate.
+function visTag(elDeg) {
+  if (typeof elDeg !== 'number' || !Number.isFinite(elDeg)) return null;
+  const e = elDeg.toFixed(0);
+  if (elDeg >= 45) return `🟢 ${e}° elevation (ideal)`;
+  if (elDeg >= 30) return `🟡 ${e}° elevation (workable)`;
+  return `🔴 ${e}° elevation (poor)`;
 }
 
 function buildPayload(stage, candidate, route, nowMs, baseUrl) {
@@ -69,44 +74,30 @@ function buildPayload(stage, candidate, route, nowMs, baseUrl) {
   const routeStr = origin && destination ? ` ${origin}→${destination}` : '';
 
   const tMs = candidate.closestApproachAtMs - nowMs;
-  const eta = fmtCountdown(tMs);
+  const lead = fmtLeadMinutes(tMs);
   const sep = candidate.closestApproachSepDeg.toFixed(2);
-  const dur = (candidate.durationMs / 1000).toFixed(1);
   const bodySym = candidate.body === 'Sun' ? 'Sun' : 'Moon';
 
-  // Title prefix per stage. 'imminent' gets the alarm prefix; 'candidate'
-  // is the tight-window match; 'radio' is the wide-net early warning. The
-  // ISS gets its own wording — it's a rare, planned event, not traffic.
-  let titlePrefix;
-  if (candidate.isISS) {
-    titlePrefix = stage === 'imminent'
-      ? `[!] 🛰 ISS ${bodySym} TRANSIT`
-      : `🛰 ISS ${bodySym} transit predicted`;
-  } else {
-    titlePrefix = stage === 'imminent'
-      ? `[!] ${bodySym} TRANSIT`
-      : stage === 'candidate'
-        ? `${bodySym} candidate`
-        : `${bodySym} approach`;
-  }
-  const clock = fmtClock(candidate.closestApproachAtMs);
-  const title = `${titlePrefix} ${flight} · sep ${sep}° · T-${eta}`;
-
-  // Lead with what the user actually asked for: "<Sun/Moon> crosser with
-  // X sep in Y from now", plus the target (closest-approach) wall-clock
-  // time and the flight number. Context (airframe/alt/speed/range) follows.
+  // Title carries everything the user wants up front: body, sep, lead time.
+  // No stage prefix — 'imminent' still stands out via priority:1. The ISS
+  // keeps its own wording (a rare, planned event, not traffic).
   const crosser = candidate.isISS
     ? `🛰 ISS ${bodySym} transit`
     : `${bodySym} crosser`;
-  const rangeM = candidate.aircraftAtClosest?.rangeM;
-  const rangeStr = fmtRangeM(rangeM);
+  const title = `${crosser} - sep ${sep}° ${lead}`;
+
+  // Body = only what is NOT already in the title: flight (+ route),
+  // airframe / altitude / speed / distance, the visibility traffic-light,
+  // and the tappable link (set as msg.url below — Pushover renders it as
+  // the notification's clickable URL).
+  const rangeStr = fmtRangeM(candidate.aircraftAtClosest?.rangeM);
   const lines = [
-    `${crosser} — sep ${sep}° in ${eta}, at ${clock}`,
-    `${flight}${routeStr}`,
+    `✈ ${flight}${routeStr}`,
     `${ac.icao.toUpperCase()} · ${fmtAlt(ac.altMmsl)} · ${fmtSpeedMs(ac.groundSpeedMs)}`
-      + (rangeStr ? ` · ${rangeStr}` : '') + ` · ${dur}s on disc`,
+      + (rangeStr ? ` · ${rangeStr}` : ''),
   ];
-  if (route?.airline?.name) lines.splice(1, 0, route.airline.name);
+  const vt = visTag(candidate.aircraftAtClosest?.elevationDeg);
+  if (vt) lines.push(vt);
 
   // Pushover renders `timestamp` as the moment the event happened; for the
   // earlier stages the closest approach is in the *future*, so omit it. On
@@ -123,7 +114,7 @@ function buildPayload(stage, candidate, route, nowMs, baseUrl) {
   }
   if (baseUrl) {
     msg.url = baseUrl;
-    msg.urlTitle = 'Sun-Moon Transit Predictor';
+    msg.urlTitle = 'Open predictor';
   }
   return msg;
 }
