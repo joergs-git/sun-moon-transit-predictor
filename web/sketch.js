@@ -102,6 +102,8 @@ function aircraftAngularDeg(meters, rangeM) {
  * @property {number|null} lengthM       - real length when the type is known
  * @property {number} [nowMs]            - live time → drives the "now" marker
  *                                         + the ETA in the header
+ * @property {number} [obsLat]           - observer latitude °, for the
+ *                                         parallactic celestial N/E rose
  * @property {Array<{tOffsetMs: number, aircraftAz: number, aircraftEl: number, bodyAz: number, bodyEl: number}>} transitPath
  */
 
@@ -313,6 +315,11 @@ function safeIata(s) {
   return typeof s === 'string'
     ? s.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4)
     : '';
+}
+// Nearest 8-point compass label for a bearing in degrees (from North).
+const COMPASS8 = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+function compass8(deg) {
+  return COMPASS8[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
 }
 function fmtAlt(m) {
   if (m == null) return '—';
@@ -539,6 +546,81 @@ export function buildSketchSvg(d) {
     txt(fovX + 4, fovY + 12, 'EL ↑', { fill: COLOURS.label, size: LABEL_SIZE }) +
     txt(fovX + fovPxW - 4, fovY + fovPxH - 4, 'AZ →', { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'end' });
 
+  // ---- Compass overlays (v0.17.0) ------------------------------------------
+  // (a) Horizon N/E/S/W at the FOV edges, derived purely from the body's
+  //     azimuth, so it is automatically right for BOTH hemispheres and any
+  //     sky position (no hemisphere switch): in this alt-az frame
+  //     screen-right is the bearing Az+90°, screen-down the bearing Az
+  //     (toward the horizon). This is the frame the aircraft's ground track
+  //     lives in — "enters from the E side".
+  // (b) Parallactic celestial N/E rose on the disc: the true sky North/East
+  //     from the observer latitude + body az/el via 3D ENU vectors (avoids
+  //     the parallactic-angle sign pitfalls). N up only at the meridian; it
+  //     visibly rotates off-meridian. The frame for sunspot/lunar maps.
+  // Both are the geometric/true-sky view (a star diagonal or a rotated
+  // camera would re-orient the real eyepiece — not modelled here).
+  let compass = '';
+  const Ab = d.bodyAt?.az;
+  if (Number.isFinite(Ab)) {
+    const edge = (bearing, x, y, anchor) =>
+      txt(x, y, compass8(bearing), { fill: COLOURS.label, size: LABEL_SIZE, anchor });
+    compass +=
+      edge(Ab, cx, fovY + fovPxH - 4, 'middle')             // down → horizon
+      + edge(Ab + 180, cx, fovY + 11, 'middle')             // up   → anti-horizon
+      + edge(Ab + 90, fovX + fovPxW - 4, cy + 4, 'end')     // right
+      + edge(Ab - 90, fovX + 4, cy + 4, 'start');           // left
+  }
+  const elB = d.bodyAt?.el;
+  if (Number.isFinite(Ab) && Number.isFinite(elB) && Number.isFinite(d.obsLat)) {
+    const A = Ab * DEG;
+    const h = elB * DEG;
+    const phi = d.obsLat * DEG;
+    const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+    const cross3 = (u, v) => [
+      u[1] * v[2] - u[2] * v[1],
+      u[2] * v[0] - u[0] * v[2],
+      u[0] * v[1] - u[1] * v[0],
+    ];
+    const norm = (v) => {
+      const n = Math.hypot(v[0], v[1], v[2]) || 1;
+      return [v[0] / n, v[1] / n, v[2] / n];
+    };
+    // ENU unit vectors: object O, zenith Z, celestial north pole P (az 0,
+    // alt = latitude — for the southern hemisphere φ<0 points toward the
+    // geometric NCP below the horizon, still the correct "increasing
+    // declination" direction).
+    const O = [Math.cos(h) * Math.sin(A), Math.cos(h) * Math.cos(A), Math.sin(h)];
+    const P = [0, Math.cos(phi), Math.sin(phi)];
+    const Z = [0, 0, 1];
+    // Orthonormal screen basis at O: Rs = +azimuth tangent (matches AZ →),
+    // Us = toward-zenith tangent (matches EL ↑).
+    const Rs = [Math.cos(A), -Math.sin(A), 0];
+    let Us = norm(cross3(O, Rs));
+    if (dot(Us, Z) < 0) Us = [-Us[0], -Us[1], -Us[2]];
+    // Celestial North tangent = pole projected into the tangent plane;
+    // East tangent = P × O (right-hand → increasing RA).
+    const proj = (v) => norm([
+      v[0] - dot(v, O) * O[0],
+      v[1] - dot(v, O) * O[1],
+      v[2] - dot(v, O) * O[2],
+    ]);
+    const Nt = proj(P);
+    const Et = norm(cross3(P, O));
+    const toScreen = (v, len) => ({
+      x: cx + dot(v, Rs) * len,
+      y: cy - dot(v, Us) * len,    // SVG y is inverted (up = −y)
+    });
+    const L = bodyR + 14;
+    const nP = toScreen(Nt, L);
+    const eP = toScreen(Et, L * 0.78);
+    const rose = '#7fd0ff';
+    compass +=
+      `<line x1="${cx}" y1="${cy}" x2="${nP.x.toFixed(1)}" y2="${nP.y.toFixed(1)}" stroke="${rose}" stroke-width="1.3"/>`
+      + txt(nP.x, nP.y - 2, 'N', { fill: rose, size: LABEL_SIZE, anchor: 'middle' })
+      + `<line x1="${cx}" y1="${cy}" x2="${eP.x.toFixed(1)}" y2="${eP.y.toFixed(1)}" stroke="${rose}" stroke-width="1" stroke-opacity="0.75"/>`
+      + txt(eP.x + 3, eP.y + 3, 'E', { fill: rose, size: LABEL_SIZE, anchor: 'middle' });
+  }
+
   // Two-line footer. Line 1 = live aircraft state (R/Alt/v), line 2 = the
   // optical rig (FOV/focal/sensor). Left-aligned on both rows so long
   // sensor names never collide with the range field — that was the overlap
@@ -606,6 +688,7 @@ export function buildSketchSvg(d) {
     acGroup +
     nowMarker +
     axisLabels +
+    compass +
     footer +
     `</svg>`
   );
