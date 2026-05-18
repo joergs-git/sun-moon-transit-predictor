@@ -536,6 +536,48 @@ export function buildSketchSvg(d) {
     txt(PAD, footYTop, footTop, { fill: COLOURS.label, size: LABEL_SIZE }) +
     txt(PAD, footYBot, footBot, { fill: COLOURS.label, size: LABEL_SIZE });
 
+  // Time-lapse "now" marker: where the aircraft sits on the predicted path
+  // *at the current moment*, interpolated along the visible samples by
+  // their tOffsetMs (0 = closest approach). Drawn only while the live time
+  // is inside the depicted window — before it enters / after it leaves
+  // there is no marker, so the static path + closest-approach silhouette
+  // stand alone. The pulse keeps it feeling alive between the 2 s refreshes.
+  let nowMarker = '';
+  if (Number.isFinite(d.nowMs) && Number.isFinite(d.closestAtMs)
+      && visiblePathPts.length >= 2) {
+    const tNow = d.nowMs - d.closestAtMs;
+    const first = visiblePathPts[0];
+    const lastP = visiblePathPts[visiblePathPts.length - 1];
+    const lo = Math.min(first.tOffsetMs, lastP.tOffsetMs);
+    const hi = Math.max(first.tOffsetMs, lastP.tOffsetMs);
+    if (tNow >= lo && tNow <= hi) {
+      let mx = null;
+      let my = null;
+      for (let i = 1; i < visiblePathPts.length; i++) {
+        const a = visiblePathPts[i - 1];
+        const b = visiblePathPts[i];
+        const t0 = Math.min(a.tOffsetMs, b.tOffsetMs);
+        const t1 = Math.max(a.tOffsetMs, b.tOffsetMs);
+        if (tNow >= t0 && tNow <= t1) {
+          const span = b.tOffsetMs - a.tOffsetMs;
+          const f = span === 0 ? 0 : (tNow - a.tOffsetMs) / span;
+          mx = a.x + (b.x - a.x) * f;
+          my = a.y + (b.y - a.y) * f;
+          break;
+        }
+      }
+      if (mx !== null) {
+        nowMarker =
+          `<circle cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" r="3.4" `
+          + `fill="#ffba70" stroke="#1b1f24" stroke-width="0.5">`
+          + `<animate attributeName="r" values="3.4;5.4;3.4" dur="1.4s" repeatCount="indefinite"/>`
+          + `<animate attributeName="opacity" values="1;0.45;1" dur="1.4s" repeatCount="indefinite"/>`
+          + `</circle>`
+          + txt(mx + 6, my - 5, 'now', { fill: '#ffba70', size: LABEL_SIZE });
+      }
+    }
+  }
+
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SVG_W} ${SVG_H}" width="${SVG_W}" height="${SVG_H}">` +
     header +
@@ -545,6 +587,7 @@ export function buildSketchSvg(d) {
     bodyDisc +
     pathSvg +
     acGroup +
+    nowMarker +
     axisLabels +
     footer +
     `</svg>`

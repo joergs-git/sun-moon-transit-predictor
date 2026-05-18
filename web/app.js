@@ -4,7 +4,16 @@ import {
 } from './sketch.js';
 import { resolveAircraftType, designAgePhrase, klassLabel } from './aircraft-types.js';
 
-const STATE_INTERVAL_MS = 2000;
+// Adaptive /api/state cadence (v0.16.0): a relaxed 10 s while nothing is
+// near, dropping to a 2 s "time-lapse" pace once the active transit's ETA
+// is within ~3 min, held through the ±30 s window and a short tail, then
+// back to idle. 2 s is the real data floor (the server polls dump1090 at
+// ~2 s), so faster buys nothing; 10 s while idle is *less* load than the
+// old fixed 2 s.
+const POLL_IDLE_MS = 10_000;
+const POLL_FAST_MS = 2_000;
+const POLL_FAST_ETA_MS = 180_000;   // |ETA| < 3 min → fast
+const POLL_FAST_TAIL_MS = 30_000;   // stay fast until 30 s past closest
 const HISTORY_INTERVAL_MS = 15000;
 const LEARNING_INTERVAL_MS = 60_000;
 // History pager (v0.8.1): page 0 = today + yesterday, older entries split
@@ -733,13 +742,43 @@ function isQualifyingLifecycle(entry) {
   return entryHasGeometry(entry);
 }
 
+// Visibility band of an entry (3=green ≥45°, 2=amber 30–45°, 1=red, 0=?) —
+// same thresholds as the row dot / side view / notify gate.
+function visScore(entry) {
+  const el = entry?.candidate?.aircraftAtClosest?.elevationDeg;
+  if (!Number.isFinite(el)) return 0;
+  if (el >= 45) return 3;
+  if (el >= 30) return 2;
+  return 1;
+}
+
+// Lexicographic compare of two numeric score tuples (higher wins).
+function cmpScore(a, b) {
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
+}
+
 function pickAutoEntry(lifecycle) {
-  // Pick the newest qualifying entry. Lifecycle order in /api/state is by
-  // urgency, not by firstSeenMs, so we do a single pass.
+  // "Best" candidate = most worth pointing a scope at right now (v0.16.0,
+  // user-chosen priority): imminent first, then best visibility band, then
+  // tightest separation, tiebreak nearest |ETA|. Replaces the old
+  // "newest firstSeenMs" rule.
   let best = null;
+  let bestScore = null;
   for (const e of lifecycle) {
     if (!isQualifyingLifecycle(e)) continue;
-    if (!best || (e.firstSeenMs ?? 0) > (best.firstSeenMs ?? 0)) best = e;
+    const score = [
+      e.status === 'imminent' ? 1 : 0,
+      visScore(e),
+      -(Number.isFinite(e.closestApproachSepDeg) ? e.closestApproachSepDeg : 99),
+      -(Number.isFinite(e.etaMs) ? Math.abs(e.etaMs) : 9e15),
+    ];
+    if (!best || cmpScore(score, bestScore) > 0) {
+      best = e;
+      bestScore = score;
+    }
   }
   return best;
 }
@@ -752,7 +791,9 @@ function renderFovEmpty(message) {
 }
 
 function renderFovSketch(input, { pinned, label }) {
-  fovBody.innerHTML = buildSketchSvg(input);
+  // Stamp the current time on every render so buildSketchSvg can place the
+  // moving "now" marker along the predicted path — the time-lapse feel.
+  fovBody.innerHTML = buildSketchSvg({ ...input, nowMs: Date.now() });
   fovMode.textContent = pinned ? 'pinned' : 'auto';
   fovMode.classList.toggle('pinned', pinned);
   fovMode.title = pinned
@@ -1447,13 +1488,32 @@ refreshFovPane();
 tickClock();
 setInterval(tickClock, 1000);
 
+// Fast cadence while any qualifying (or the pinned) transit is within the
+// ETA window and not long past — that's when the plan/side views and the
+// time-lapse marker should update like an animation.
+function wantFastPoll() {
+  for (const e of (lastLifecycle ?? [])) {
+    const relevant = isQualifyingLifecycle(e) || (pin && e.key === pin.key);
+    if (!relevant || !Number.isFinite(e.etaMs)) continue;
+    if (e.etaMs <= POLL_FAST_ETA_MS && e.etaMs > -POLL_FAST_TAIL_MS) return true;
+  }
+  return false;
+}
+let pollTimer = null;
+function scheduleNextPoll() {
+  const delay = wantFastPoll() ? POLL_FAST_MS : POLL_IDLE_MS;
+  pollTimer = setTimeout(async () => {
+    try { await pollState(); } finally { scheduleNextPoll(); }
+  }, delay);
+}
+
 pollState();
 pollHistory();
 pollLearning();
 pollAcstats();
 pollUsable();
 pollRangestats();
-setInterval(pollState, STATE_INTERVAL_MS);
+scheduleNextPoll();
 setInterval(pollHistory, HISTORY_INTERVAL_MS);
 setInterval(pollLearning, LEARNING_INTERVAL_MS);
 setInterval(pollAcstats, LEARNING_INTERVAL_MS);
