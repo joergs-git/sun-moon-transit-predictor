@@ -404,3 +404,88 @@ describe('HistoryStore — usableCandidates (elevation-gated real transits)', ()
     } finally { store.close(); }
   });
 });
+
+describe('HistoryStore — hourStats (best hours for usable hits)', () => {
+  // Deterministic, timezone-independent hour: derive the bin straight from
+  // closest_at_ms instead of the server's local clock.
+  const hourOf = (ms) => Math.floor(ms / 3600_000) % 24;
+
+  it('buckets imminent / sep<0.5 / elevation≥gate hits per body & hour', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      const nowMs = 2_000_000_000_000;
+      const at = nowMs - 1000;                         // inside the window
+      const rec = (stage, body, hour, sep, el, recordedAt = at) => {
+        const c = makeCandidate({ body, sepDeg: sep });
+        c.closestApproachAtMs = hour * 3600_000;       // hourOf → `hour`
+        c.aircraftAtClosest = { azimuthDeg: 180, elevationDeg: el, rangeM: 12000 };
+        store.recordEvent(stage, c, null, recordedAt);
+      };
+      // Counted.
+      rec('imminent', 'Sun',  9, 0.2, 50);
+      rec('imminent', 'Sun',  9, 0.1, 40);             // peak Sun = 09h (×2)
+      rec('imminent', 'Sun', 14, 0.3, 35);
+      rec('imminent', 'Moon', 22, 0.2, 60);
+      rec('imminent', 'Moon', 22, 0.4, 33);            // peak Moon = 22h (×2)
+      rec('imminent', 'Moon',  6, 0.2, 31);
+      // Excluded: low / wide / not confirmed / outside the window.
+      rec('imminent',  'Sun', 3, 0.2, 20);             // elevation < gate
+      rec('imminent',  'Sun', 4, 0.6, 80);             // sep ≥ 0.5
+      rec('candidate', 'Sun', 9, 0.1, 80);             // not imminent
+      rec('imminent',  'Sun', 9, 0.1, 80, nowMs - 2 * 24 * 3600_000); // old
+
+      const s = store.hourStats({
+        sepBelowDeg: 0.5, minElevationDeg: 30,
+        windowMs: 24 * 3600_000, nowMs, hourOf,
+      });
+
+      expect(s.n).toBe(6);
+      expect(s.perBody.Sun.length).toBe(24);
+      expect(s.perBody.Sun[9]).toBe(2);
+      expect(s.perBody.Sun[14]).toBe(1);
+      expect(s.perBody.Moon[22]).toBe(2);
+      expect(s.perBody.Moon[6]).toBe(1);
+      expect(s.perBody.Sun.reduce((a, b) => a + b, 0)).toBe(3);
+      expect(s.perBody.Moon.reduce((a, b) => a + b, 0)).toBe(3);
+      expect(s.total[9]).toBe(2);
+      expect(s.total[22]).toBe(2);
+      expect(s.peak.Sun).toEqual({ hour: 9, count: 2 });
+      expect(s.peak.Moon).toEqual({ hour: 22, count: 2 });
+      // Tie on the combined series (09h & 22h both 2) → earliest hour wins.
+      expect(s.peak.all).toEqual({ hour: 9, count: 2 });
+    } finally { store.close(); }
+  });
+
+  it('returns a zeroed 24-bin shape when nothing qualifies', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      const s = store.hourStats({ nowMs: 2_000_000_000_000, hourOf });
+      expect(s.n).toBe(0);
+      expect(s.perBody.Sun).toEqual(new Array(24).fill(0));
+      expect(s.perBody.Moon).toEqual(new Array(24).fill(0));
+      expect(s.total).toEqual(new Array(24).fill(0));
+      expect(s.peak).toEqual({ Sun: null, Moon: null, all: null });
+    } finally { store.close(); }
+  });
+
+  it('defaults to the server-local hour of closest_at_ms', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      const nowMs = 2_000_000_000_000;
+      // Two usable Sun hits at the same wall-clock hour (1 h apart in days).
+      const t1 = nowMs - 3 * 3600_000;
+      const t2 = t1 - 24 * 3600_000;
+      for (const t of [t1, t2]) {
+        const c = makeCandidate({ body: 'Sun', sepDeg: 0.2 });
+        c.closestApproachAtMs = t;
+        c.aircraftAtClosest = { azimuthDeg: 180, elevationDeg: 55, rangeM: 12000 };
+        store.recordEvent('imminent', c, null, nowMs - 1000);
+      }
+      const s = store.hourStats({ windowMs: 30 * 24 * 3600_000, nowMs });
+      const expectedHour = new Date(t1).getHours();     // == new Date(t2)
+      expect(s.n).toBe(2);
+      expect(s.perBody.Sun[expectedHour]).toBe(2);
+      expect(s.peak.Sun).toEqual({ hour: expectedHour, count: 2 });
+    } finally { store.close(); }
+  });
+});
