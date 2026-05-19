@@ -687,6 +687,63 @@ async function pollRangestats() {
   } catch { /* ignore */ }
 }
 
+// Best-hours stat: a 24-bin hour-of-day histogram of the usable hits
+// (imminent-confirmed, sep < 0.5°, elevation ≥ the gate), split per body
+// in observatory-local time. Reuses the acstats horizontal-bar markup; the
+// peak hour for the column is emphasised so the best window pops out.
+function renderHourBars(elId, counts, peak) {
+  const box = $(elId);
+  if (!box) return;
+  const arr = Array.isArray(counts) ? counts : [];
+  const sum = arr.reduce((a, b) => a + b, 0);
+  if (!sum) {
+    box.innerHTML = '<div class="acstats-empty">No usable hits recorded yet '
+      + 'for this body.</div>';
+    return;
+  }
+  const max = Math.max(...arr, 1);
+  box.innerHTML = arr.map((c, h) => {
+    const pct = c ? Math.max(3, Math.round((c / max) * 100)) : 0;
+    const label = `${String(h).padStart(2, '0')}h`;
+    const isPeak = peak && peak.count > 0 && peak.hour === h;
+    const cls = `acstats-row${isPeak ? ' acstats-row-peak' : ''}`;
+    const tip = `${c} usable hit${c === 1 ? '' : 's'} at ${label}${isPeak ? ' · peak' : ''}`;
+    return `<div class="${cls}" title="${tip}">`
+      + `<span class="acstats-label">${label}</span>`
+      + `<span class="acstats-track"><span class="acstats-bar" style="width:${pct}%"></span></span>`
+      + `<span class="acstats-val">${c}</span></div>`;
+  }).join('');
+}
+
+function fmtPeakHour(p) {
+  if (!p || !p.count) return '—';
+  return `${String(p.hour).padStart(2, '0')}h`;
+}
+
+async function pollHourstats() {
+  try {
+    const res = await fetch(`/api/hourstats?sepDeg=0.5&minElevationDeg=${VIS_AMBER_DEG}`);
+    if (!res.ok) return;
+    const d = await res.json();
+    const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+    set('#hs-sep', `${d.sepBelowDeg ?? 0.5}°`);
+    set('#hs-el', `${d.minElevationDeg ?? VIS_AMBER_DEG}°`);
+    set('#hs-n', String(d.n ?? 0));
+    const peak = d.peak ?? {};
+    set('#hs-peak-sun', fmtPeakHour(peak.Sun));
+    set('#hs-peak-moon', fmtPeakHour(peak.Moon));
+    set('#hs-peak-all', fmtPeakHour(peak.all));
+    const sunC = d.perBody?.Sun ?? [];
+    const moonC = d.perBody?.Moon ?? [];
+    const sunSum = sunC.reduce((a, b) => a + b, 0);
+    const moonSum = moonC.reduce((a, b) => a + b, 0);
+    set('#hs-sun-tot', `${sunSum} hit${sunSum === 1 ? '' : 's'}`);
+    set('#hs-moon-tot', `${moonSum} hit${moonSum === 1 ? '' : 's'}`);
+    renderHourBars('#hs-sun', sunC, peak.Sun);
+    renderHourBars('#hs-moon', moonC, peak.Moon);
+  } catch { /* ignore */ }
+}
+
 async function pollLearning() {
   try {
     const res = await fetch('/api/learning?windowDays=14');
@@ -1530,9 +1587,11 @@ pollLearning();
 pollAcstats();
 pollUsable();
 pollRangestats();
+pollHourstats();
 scheduleNextPoll();
 setInterval(pollHistory, HISTORY_INTERVAL_MS);
 setInterval(pollLearning, LEARNING_INTERVAL_MS);
 setInterval(pollAcstats, LEARNING_INTERVAL_MS);
 setInterval(pollUsable, LEARNING_INTERVAL_MS);
 setInterval(pollRangestats, LEARNING_INTERVAL_MS);
+setInterval(pollHourstats, LEARNING_INTERVAL_MS);

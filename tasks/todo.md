@@ -276,3 +276,49 @@ Branch: feature/dynamic-fov-animation
 - Tests +1 (now-marker), 165 green. README M47, version 0.16.0.
 
 Status: complete.
+
+---
+
+# Best-hours stat: when do the most usable hits occur (v0.18.0)
+
+Branch: feature/hourstats-best-times
+
+User ask: "mach eine weitere statistik zu welchen uhrzeiten die meisten
+nutzbaren treffer auftreten" — sep < 0.5°, split by Sun/Moon, elevation
+≥ 30°.
+
+## Design
+- Definition of "usable hit" = same as the Range-stats / Usable-candidates
+  cards: stage='imminent' (time-confirmed real transit), closest_sep_deg
+  < sepDeg (0.5°), elevation at closest ≥ minElevationDeg (30°, parsed from
+  payload_json.candidate.aircraftAtClosest.elevationDeg). ISS included
+  (consistent with rangeStats/usableCandidates — only episodes() drops ISS).
+- Hour bucket = hour-of-day of closest_at_ms in **server-local time** (the
+  Pi runs at the observatory → its wall clock IS the "time of day to
+  observe"). 24 bins, split per body.
+
+## Tasks
+- [x] store.hourStats() — 24-bin per-body histogram + peak hour
+- [x] GET /api/hourstats (sepDeg / minElevationDeg / windowDays)
+- [x] Frontend: new "Best hours" section (☀/🌙 columns reuse acstats bars)
+      + pollHourstats wired into the slow stats cadence
+- [x] Tests: store.hourStats ×3 + server route ×1
+- [x] README milestone M52 + /api/hourstats row; package.json 0.17.0 → 0.18.0
+- [x] node --check + npm test green
+
+## Results
+- store.hourStats(): imminent + sep<0.5° + elevation≥30° (parsed from
+  payload_json, ISS kept like rangeStats/usableCandidates) → 24-bin
+  per-body histogram + total + peak{Sun,Moon,all}. Hour of closest_at_ms
+  in server-local time (Pi = observatory clock); injectable `hourOf`
+  seam for deterministic tests.
+- GET /api/hourstats (sepDeg 0.05–5 / minElevationDeg 0–90 /
+  windowDays 1–3650), mirrors /api/rangestats + /api/usable.
+- Frontend: "Best hours" section after Range stats — peak figures
+  (Sun/Moon/both) + two acstats-bar columns (☀ 00h–23h / 🌙 00h–23h),
+  fullest bin emphasised (.acstats-row-peak). pollHourstats on the
+  60 s stats cadence.
+- Milestone numbered M52 (M48–M51 already used by v0.16.x–0.17.0).
+- Tests 165 → 171. Full suite green; node --check clean.
+
+Status: complete, awaiting commit/push/merge confirmation.

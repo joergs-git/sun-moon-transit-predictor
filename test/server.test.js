@@ -61,6 +61,19 @@ describe('HTTP server', () => {
     expect(body.events.length).toBe(0);
   });
 
+  it('serves /api/hourstats (zeroed 24-bin shape, params honoured)', async () => {
+    const res = await fetch(`${baseUrl}/api/hourstats?sepDeg=0.3&minElevationDeg=45`);
+    expect(res.ok).toBe(true);
+    const body = await res.json();
+    expect(body.sepBelowDeg).toBe(0.3);
+    expect(body.minElevationDeg).toBe(45);
+    expect(body.n).toBe(0);
+    expect(body.perBody.Sun.length).toBe(24);
+    expect(body.perBody.Moon.length).toBe(24);
+    expect(body.total).toEqual(new Array(24).fill(0));
+    expect(body.peak).toEqual({ Sun: null, Moon: null, all: null });
+  });
+
   it('serves the static index.html on /', async () => {
     const res = await fetch(`${baseUrl}/`);
     expect(res.ok).toBe(true);
