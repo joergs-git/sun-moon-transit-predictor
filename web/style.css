@@ -934,6 +934,14 @@ tr.empty td.no-bodies {
 }
 .acstats-empty { color: var(--muted); font-size: 12px; padding: 8px 0; }
 
+/* Best-hours: emphasise the fullest bin so the best window pops out. */
+.acstats-row-peak .acstats-label,
+.acstats-row-peak .acstats-val { font-weight: 700; color: var(--accent); }
+.acstats-row-peak .acstats-bar {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset, 0 0 6px rgba(240, 160, 32, 0.55);
+}
+
 /* Range-stats key figures (reuses .acstats-bars for the histogram). */
 .rangestats-grid {
   display: grid;

@@ -291,6 +291,36 @@
     <div class="acstats-bars" id="rs-hist"></div>
   </section>
 
+  <section id="hourstats-section">
+    <h2>Best hours</h2>
+    <p class="hint">
+      At which <b>times of day</b> do the <i>usable</i> hits actually
+      happen — a transit that passed within <span id="hs-sep">0.5°</span>
+      (imminent-confirmed, not just predicted) while the aircraft was
+      ≥&nbsp;<span id="hs-el">30°</span> above the horizon. 24 hourly bins,
+      split per body, in <b>observatory local time</b>. Retrospective over
+      <b>all</b> stored history.
+    </p>
+    <div class="rangestats-grid">
+      <div class="rs-fig"><span class="rs-num" id="hs-n">—</span><span class="rs-lbl">usable hits</span></div>
+      <div class="rs-fig"><span class="rs-num" id="hs-peak-sun">—</span><span class="rs-lbl">peak Sun hour</span></div>
+      <div class="rs-fig"><span class="rs-num" id="hs-peak-moon">—</span><span class="rs-lbl">peak Moon hour</span></div>
+      <div class="rs-fig"><span class="rs-num" id="hs-peak-all">—</span><span class="rs-lbl">peak hour (both)</span></div>
+    </div>
+    <div class="acstats-grid">
+      <div class="acstats-col">
+        <div class="acstats-head"><span class="body-Sun">☀</span> By Sun
+          <span class="acstats-sub" id="hs-sun-tot">—</span></div>
+        <div class="acstats-bars" id="hs-sun"></div>
+      </div>
+      <div class="acstats-col">
+        <div class="acstats-head"><span class="body-Moon">🌙</span> By Moon
+          <span class="acstats-sub" id="hs-moon-tot">—</span></div>
+        <div class="acstats-bars" id="hs-moon"></div>
+      </div>
+    </div>
+  </section>
+
   <footer>
     <span id="observer"></span>
   </footer>

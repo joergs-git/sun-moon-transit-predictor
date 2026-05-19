@@ -320,6 +320,84 @@ export class HistoryStore {
   }
 
   /**
+   * "When do the usable hits happen?" — a 24-bin hour-of-day histogram of
+   * the *usable* transits, split by body. A usable hit is the same thing the
+   * Range-stats and Usable-candidates cards count: a time-confirmed real
+   * transit (`stage = 'imminent'`) that actually passed inside
+   * `sepBelowDeg` (default 0.5°) AND whose aircraft was at least
+   * `minElevationDeg` above the horizon at closest approach (default 30°,
+   * the elevation below which the long hazy slant path usually spoils the
+   * shot — same gate as usableCandidates() and the Pushover notify gate).
+   *
+   * The hour is taken from `closest_at_ms` (the actual moment of the
+   * transit, i.e. when you'd point the scope) in the **server's local
+   * time** — this service runs on the Pi at the observatory, so its wall
+   * clock is exactly the "time of day" the user is asking about. Elevation
+   * is not a column (it lives in payload_json under
+   * candidate.aircraftAtClosest.elevationDeg), so it is parsed per row,
+   * mirroring usableCandidates(). ISS rows are kept, consistent with
+   * rangeStats()/usableCandidates() (only episodes() excludes the ISS).
+   *
+   * @param {{ sepBelowDeg?: number, minElevationDeg?: number,
+   *           windowMs?: number, nowMs?: number,
+   *           hourOf?: (ms:number)=>number }} [opts]
+   *   `hourOf` is an injection seam for deterministic tests; production
+   *   leaves it at the default (server-local hour).
+   * @returns {{
+   *   sepBelowDeg:number, minElevationDeg:number, n:number,
+   *   perBody:{ Sun:number[], Moon:number[] }, total:number[],
+   *   peak:{ Sun:{hour:number,count:number}|null,
+   *          Moon:{hour:number,count:number}|null,
+   *          all:{hour:number,count:number}|null },
+   * }}
+   */
+  hourStats({ sepBelowDeg = 0.5, minElevationDeg = 30,
+              windowMs = 3650 * 24 * 3600_000, nowMs = Date.now(),
+              hourOf = (ms) => new Date(ms).getHours() } = {}) {
+    const since = nowMs - windowMs;
+    const rows = this.db.prepare(
+      `SELECT closest_at_ms AS at, body, payload_json
+       FROM transit_history
+       WHERE stage = 'imminent'
+         AND closest_sep_deg IS NOT NULL AND closest_sep_deg < ?
+         AND recorded_at_ms >= ?`,
+    ).all(sepBelowDeg, since);
+
+    const zero24 = () => new Array(24).fill(0);
+    const perBody = { Sun: zero24(), Moon: zero24() };
+    const total = zero24();
+    let n = 0;
+    for (const r of rows) {
+      let el = null;
+      if (r.payload_json) {
+        try {
+          const p = JSON.parse(r.payload_json);
+          el = p?.candidate?.aircraftAtClosest?.elevationDeg ?? null;
+        } catch { /* unparseable payload → treat as unknown elevation */ }
+      }
+      if (!Number.isFinite(el) || el < minElevationDeg) continue;
+      const h = ((hourOf(r.at) % 24) + 24) % 24;     // clamp to 0..23
+      if (r.body === 'Sun' || r.body === 'Moon') perBody[r.body][h] += 1;
+      total[h] += 1;
+      n += 1;
+    }
+
+    // Peak hour = the fullest bin (earliest hour wins ties so the readout
+    // is stable). null when that series has no hits at all.
+    const peakOf = (arr) => {
+      let hour = -1, count = 0;
+      for (let i = 0; i < 24; i++) if (arr[i] > count) { count = arr[i]; hour = i; }
+      return hour < 0 ? null : { hour, count };
+    };
+
+    return {
+      sepBelowDeg, minElevationDeg, n,
+      perBody, total,
+      peak: { Sun: peakOf(perBody.Sun), Moon: peakOf(perBody.Moon), all: peakOf(total) },
+    };
+  }
+
+  /**
    * Persist a single schedule observation (e.g. from an OpenSky pull).
    * Idempotent on (source, flight, timestamp_ms).
    * @returns {boolean} true if a new row was inserted, false if it already existed
