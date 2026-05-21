@@ -16,9 +16,10 @@ const POLL_FAST_ETA_MS = 180_000;   // |ETA| < 3 min → fast
 const POLL_FAST_TAIL_MS = 30_000;   // stay fast until 30 s past closest
 const HISTORY_INTERVAL_MS = 15000;
 const LEARNING_INTERVAL_MS = 60_000;
-// History pager (v0.8.1): page 0 = today + yesterday, older entries split
-// into fixed-size pages. Fetch a wide window so the older pages have rows
-// without per-page API calls (server caps /api/history at 500).
+// History pager (v0.8.1, narrowed v0.21.1): page 0 = today only (was
+// today + yesterday — list grew too long); older entries split into
+// fixed-size pages. Fetch a wide window so older pages have rows without
+// per-page API calls (server caps /api/history at 500).
 const HISTORY_PAGE_SIZE = 50;
 const HISTORY_FETCH_LIMIT = 500;
 
@@ -31,7 +32,7 @@ let lastLifecycle = [];
 let lastHistory = [];
 let lastVersion = null;   // last server-reported version (for badge restore)
 let lastObserver = null;  // {latitudeDeg,longitudeDeg} — for the mini-map
-let historyPage = 0;   // 0 = today+yesterday; ≥1 = older, HISTORY_PAGE_SIZE/page
+let historyPage = 0;   // 0 = today; ≥1 = older, HISTORY_PAGE_SIZE/page
 
 function fmtCountdown(ms) {
   if (ms <= 0) return 'now';
@@ -329,12 +330,13 @@ function fmtLead(ms) {
   return `${h}h${r ? ` ${r}m` : ''}`;
 }
 
-// Midnight at the start of *yesterday* (local) — the inclusive lower bound
-// for what counts as "today + yesterday" on history page 1.
+// Midnight at the start of *today* (local) — the inclusive lower bound
+// for what counts as "today" on history page 1. Was "today + yesterday"
+// pre-v0.21.1; trimmed to today only so the on-screen list stays short.
 function recentCutoffMs() {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
-  return d.getTime() - 24 * 60 * 60 * 1000;
+  return d.getTime();
 }
 
 // Build one history row. `absIdx` is the index into `lastHistory` (NOT the
@@ -379,8 +381,8 @@ function historyTr(e, absIdx) {
   return tr;
 }
 
-// Paginated render. Page 0 shows everything from today + yesterday; older
-// episodes are chunked into HISTORY_PAGE_SIZE pages. Pure client-side over
+// Paginated render. Page 0 shows everything from today (local midnight on);
+// older episodes are chunked into HISTORY_PAGE_SIZE pages. Pure client-side over
 // the rows already fetched — navigating pages never hits the API, and the
 // 15 s poll keeps the current page (clamped if the data shrank).
 function renderHistory(events) {
@@ -410,7 +412,7 @@ function renderHistory(events) {
   let label;
   if (historyPage === 0) {
     slice = recent;
-    label = 'today + yesterday';
+    label = 'today';
   } else {
     const start = (historyPage - 1) * HISTORY_PAGE_SIZE;
     slice = older.slice(start, start + HISTORY_PAGE_SIZE);
@@ -419,7 +421,7 @@ function renderHistory(events) {
 
   if (slice.length === 0) {
     tbody.innerHTML =
-      '<tr class="empty"><td colspan="15">Nothing recorded today or yesterday yet — use “Older ▶”.</td></tr>';
+      '<tr class="empty"><td colspan="15">Nothing recorded today yet — use “Older ▶”.</td></tr>';
   } else {
     for (const [absIdx, e] of slice) tbody.appendChild(historyTr(e, absIdx));
   }
