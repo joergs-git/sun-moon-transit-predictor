@@ -27,6 +27,7 @@ import {
 } from './predictor.js';
 import { PushoverClient } from './pushover.js';
 import { createHttpServer } from './server.js';
+import { SharpCapTrigger } from './sharpcap.js';
 import { HistoryStore } from './store.js';
 import { findTransits } from './tracker.js';
 import { loadIssTle, predictIssTransits, nextIssVisiblePass } from './iss.js';
@@ -115,6 +116,27 @@ export const DEFAULT_CONFIG = {
     enabled: true,
     triggerPath: './data/update.request',
     debounceMs: 30_000,
+  },
+  // SharpCap live trigger (Windows-side capture). Sends a TCP packet to a
+  // long-running listener inside SharpCap (scripts/sharpcap/trigger_listener.py)
+  // the moment a transit becomes imminent — meant for the aircraft case where
+  // it can take ~30 s of warning to know a flight will actually cross the
+  // disc. The pre/postBufferS values frame the recording around closest
+  // approach: capture starts (closestApproach − preBufferS) and stops
+  // (closestApproach + postBufferS). Disabled by default; off-net failures
+  // are logged but never break the predictor service.
+  sharpcap: {
+    enabled: false,
+    host: '',
+    port: 9999,
+    token: '',
+    preBufferS: 5,
+    postBufferS: 15,
+    triggerOnStage: 'imminent',
+    minElevationDeg: 20,
+    bodies: ['Sun', 'Moon'],
+    dedupMs: 60_000,
+    connectTimeoutMs: 2000,
   },
   // ISS transits (offline SGP4 from a TLE file). Inactive until a TLE is
   // present at tlePath — fetch it opt-in with scripts/refresh-tle.js. The
@@ -210,6 +232,7 @@ function mergeConfig(user) {
     opensky:   { ...DEFAULT_CONFIG.opensky,   ...(user.opensky   ?? {}) },
     lifecycle: { ...DEFAULT_CONFIG.lifecycle, ...(user.lifecycle ?? {}) },
     optics:    { ...DEFAULT_CONFIG.optics,    ...(user.optics    ?? {}) },
+    sharpcap:  { ...DEFAULT_CONFIG.sharpcap,  ...(user.sharpcap  ?? {}) },
     lifecyclePersist: { ...DEFAULT_CONFIG.lifecyclePersist, ...(user.lifecyclePersist ?? {}) },
   };
 }
@@ -293,12 +316,26 @@ export async function runService({
   // or returns a soft miss.
   const freeAircraft = new AircraftLookup({ fetchImpl });
 
+  // SharpCap live capture trigger — fires on the configured stage (default
+  // 'imminent') independent of the Pushover gates, so even silenced-phone
+  // alerts still record the transit on the Windows-side telescope rig.
+  const sharpcap = new SharpCapTrigger(config.sharpcap, { logger });
+
   const notifier = new Notifier({
     pushover,
     routeLookup: (cs) => routeLookup.lookup(cs),
     onEvent: (evt) => {
       try { store.recordEvent(evt.stage, evt.candidate, evt.route, Date.now()); }
       catch (e) { logger.error?.('store record failed:', e); }
+      if (sharpcap.enabled) {
+        sharpcap.triggerFromEvent(evt).then((res) => {
+          if (res.sent) {
+            logger.info?.(`sharpcap: capture armed for ${evt.candidate?.icao}|${evt.candidate?.body} (${res.response?.captureId ?? ''})`);
+          } else if (res.error) {
+            logger.warn?.(`sharpcap trigger failed: ${res.error?.message ?? res.error}`);
+          }
+        }).catch((e) => logger.warn?.('sharpcap trigger threw:', e?.message ?? e));
+      }
     },
     minStage: config.pushover.minStage ?? 'radio',
     radioThresholdDeg: config.pushover.radioThresholdDeg,
@@ -1020,6 +1057,7 @@ export async function runService({
     state,
     httpServer,
     notifier,
+    sharpcap,
     store,
     config,
     /**
