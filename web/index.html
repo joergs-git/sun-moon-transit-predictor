@@ -221,9 +221,10 @@
       </thead>
       <tbody><tr class="empty"><td colspan="15">Loading…</td></tr></tbody>
     </table>
-    <!-- History pager (v0.8.1). Page 1 = today + yesterday; older entries
-         are split into fixed 50-row pages so the table stays short. Pure
-         client-side over the rows already fetched — no extra API calls. -->
+    <!-- History pager (v0.8.1, narrowed v0.21.1). Page 1 = today only;
+         older entries are split into fixed 50-row pages so the table
+         stays short. Pure client-side over the rows already fetched —
+         no extra API calls. -->
     <div id="history-pager" class="history-pager" hidden>
       <button type="button" class="btn pager-btn" id="hp-newer" title="Towards today">◀ Newer</button>
       <span class="pager-info" id="hp-info">—</span>
