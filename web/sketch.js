@@ -350,31 +350,16 @@ export function buildSketchSvg(d) {
   const innerW = SVG_W - 2 * PAD;
   const innerH = SVG_H - HEADER_H - FOOTER_H - 2 * PAD;
 
-  // Closest-approach offset of the aircraft from the body centre, in
-  // degrees (≈ sepDeg). Prefer the refined t=0 path sample; fall back to
-  // the aircraftAt/bodyAt deltas when there is no path.
-  const mid0 = (d.transitPath ?? []).find(p => p.tOffsetMs === 0);
-  const off0 = mid0
-    ? relOffsetDeg(mid0, refEl)
-    : {
-      dx: (d.aircraftAt.az - d.bodyAt.az) * Math.cos(refEl * DEG),
-      dy: d.aircraftAt.el - d.bodyAt.el,
-    };
-  const anchorRDeg = Math.hypot(off0.dx, off0.dy);
-
-  // Scale that fills the inner box at the true optical FOV.
-  const fitScale = Math.min(innerW / fovWDeg, innerH / fovHDeg);
-  // Auto zoom-out: when the closest approach falls outside the drawn FOV
-  // box, shrink the WHOLE sketch (FOV rect + disc + path) so the aircraft
-  // still fits — a true-to-scale feel of how far it was from the field of
-  // view. Otherwise keep the optical scale (the aircraft is in-frame).
-  const innerHalf = Math.min(innerW, innerH) / 2;
-  let pxPerDeg = fitScale;
-  let zoomedOut = false;
-  if (anchorRDeg * fitScale > innerHalf * 0.90) {
-    pxPerDeg = (innerHalf * 0.80) / Math.max(anchorRDeg, 1e-6);
-    zoomedOut = true;
-  }
+  // Scale that fills the inner box at the true optical FOV. As of v0.19.0
+  // this is the ONLY scale used — the auto zoom-out fallback was removed so
+  // the FOV rectangle always renders at its true on-sensor extent. The
+  // user's eye then immediately sees the disc-vs-sensor size relationship
+  // (at long focal lengths the disc overflows the FOV, with the overflow
+  // drawn as a dashed outline so "what's clipped" stays legible). The
+  // aircraft sits at its real angular offset from the body — if that puts
+  // it outside the FOV box, that is by definition what the user would see
+  // through the eyepiece and they'd physically slew the mount to catch it.
+  const pxPerDeg = Math.min(innerW / fovWDeg, innerH / fovHDeg);
 
   const fovPxW = fovWDeg * pxPerDeg;
   const fovPxH = fovHDeg * pxPerDeg;
@@ -497,12 +482,40 @@ export function buildSketchSvg(d) {
     `<line x1="${fovX}" y1="${cy}" x2="${fovX + fovPxW}" y2="${cy}" stroke="${COLOURS.axis}" stroke-width="0.5" stroke-dasharray="2 4"/>` +
     `<line x1="${cx}" y1="${fovY}" x2="${cx}" y2="${fovY + fovPxH}" stroke="${COLOURS.axis}" stroke-width="0.5" stroke-dasharray="2 4"/>`;
 
+  // Body disc rendering (v0.19.0):
+  //   - Dashed outline of the FULL true-size disc, drawn first. At long
+  //     focal lengths the disc is bigger than the FOV rectangle (often
+  //     bigger than the whole SVG) — the dashed arc that pokes out beyond
+  //     the FOV is how the user reads "this much of the Sun/Moon is
+  //     outside the sensor's frame and would be clipped".
+  //   - Solid gradient disc on top, clipped to the FOV rectangle via
+  //     <clipPath>. So inside the sensor frame we see the actual coloured
+  //     fill, outside it we see only the dashed contour — together that
+  //     reads as "you'd capture this slice, the rest is off-sensor".
+  // The clipPath ID is local to this SVG instance; SVGs in the same page
+  // don't collide because each buildSketchSvg call only emits one popup at
+  // a time. If that ever changes we'd suffix the id with a counter.
   const bodyDisc =
     `<defs><radialGradient id="bodyGrad" cx="35%" cy="35%" r="65%">` +
     `<stop offset="0%" stop-color="${bodyRim}" stop-opacity="0.95"/>` +
     `<stop offset="100%" stop-color="${bodyFill}" stop-opacity="1"/>` +
-    `</radialGradient></defs>` +
-    `<circle cx="${cx}" cy="${cy}" r="${bodyR}" fill="url(#bodyGrad)" stroke="${bodyRim}" stroke-width="0.5"/>`;
+    `</radialGradient>` +
+    `<clipPath id="fovClip">` +
+    `<rect x="${fovX}" y="${fovY}" width="${fovPxW}" height="${fovPxH}"/>` +
+    `</clipPath></defs>` +
+    // True-size disc outline (dashed) — visible everywhere, including
+    // beyond the FOV box, so the user can read the clipped extent.
+    `<circle cx="${cx}" cy="${cy}" r="${bodyR}" fill="none" ` +
+    `stroke="${bodyRim}" stroke-width="0.8" stroke-dasharray="3 3" ` +
+    `stroke-opacity="0.6"/>` +
+    // Solid disc, clipped to the FOV rectangle so only the on-sensor slice
+    // shows in colour. The stroke is kept for consistency with the old
+    // rendering — at short focal lengths it draws the disc rim cleanly,
+    // at long focal lengths the stroke falls outside the clip and is hidden.
+    `<g clip-path="url(#fovClip)">` +
+    `<circle cx="${cx}" cy="${cy}" r="${bodyR}" fill="url(#bodyGrad)" ` +
+    `stroke="${bodyRim}" stroke-width="0.5"/>` +
+    `</g>`;
 
   // Motion line + tick marks at each sample, arrowhead at the latest one.
   // Uses visiblePathPts so the polyline never connects through wild-distance
@@ -610,7 +623,12 @@ export function buildSketchSvg(d) {
       x: cx + dot(v, Rs) * len,
       y: cy - dot(v, Us) * len,    // SVG y is inverted (up = −y)
     });
-    const L = bodyR + 14;
+    // Anchor the rose just outside the disc rim — but at long focal lengths
+    // the disc overflows the FOV box (and the SVG), so clamp the radius to
+    // stay safely inside the FOV rectangle. Otherwise the N/E labels would
+    // sit hundreds of pixels off-canvas and be invisible.
+    const roseMax = Math.min(fovPxW, fovPxH) * 0.45;
+    const L = Math.min(bodyR + 14, roseMax);
     const nP = toScreen(Nt, L);
     const eP = toScreen(Et, L * 0.78);
     const rose = '#7fd0ff';
@@ -628,10 +646,10 @@ export function buildSketchSvg(d) {
   const footYBot = SVG_H - PAD + 2;
   const footYTop = footYBot - FOOTER_LINE_H;
   const footTop = `R ${fmtRange(d.aircraftAt.rangeM)} · Alt ${fmtAlt(d.altMmsl)} · v ${fmtSpeed(d.groundSpeedMs)}`;
-  // Zoom-out indicator folded into the optics footer line (where the FOV
-  // dims already live) instead of a separate, often-truncated header note.
-  const footBot = `${zoomedOut ? '⤢ zoomed out · ' : ''}`
-    + `FOV ${fovWDeg.toFixed(2)}° × ${fovHDeg.toFixed(2)}° · ${OPTICS.TELESCOPE_FOCAL_MM} mm · ${OPTICS.SENSOR_NAME}`;
+  // Auto zoom-out was removed in v0.19.0 — the FOV box is always rendered
+  // at the true optical scale, so no "zoomed out" badge is needed here.
+  const footBot =
+    `FOV ${fovWDeg.toFixed(2)}° × ${fovHDeg.toFixed(2)}° · ${OPTICS.TELESCOPE_FOCAL_MM} mm · ${OPTICS.SENSOR_NAME}`;
   const footer =
     txt(PAD, footYTop, footTop, { fill: COLOURS.label, size: LABEL_SIZE }) +
     txt(PAD, footYBot, footBot, { fill: COLOURS.label, size: LABEL_SIZE });
