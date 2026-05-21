@@ -350,29 +350,45 @@ export function buildSketchSvg(d) {
   const innerW = SVG_W - 2 * PAD;
   const innerH = SVG_H - HEADER_H - FOOTER_H - 2 * PAD;
 
-  // Scale that fills the inner box at the true optical FOV. As of v0.19.0
-  // this is the ONLY scale used — the auto zoom-out fallback was removed so
-  // the FOV rectangle always renders at its true on-sensor extent. The
-  // user's eye then immediately sees the disc-vs-sensor size relationship
-  // (at long focal lengths the disc overflows the FOV, with the overflow
-  // drawn as a dashed outline so "what's clipped" stays legible). The
-  // aircraft sits at its real angular offset from the body — if that puts
-  // it outside the FOV box, that is by definition what the user would see
-  // through the eyepiece and they'd physically slew the mount to catch it.
-  const pxPerDeg = Math.min(innerW / fovWDeg, innerH / fovHDeg);
-
-  const fovPxW = fovWDeg * pxPerDeg;
-  const fovPxH = fovHDeg * pxPerDeg;
-  const fovX = (SVG_W - fovPxW) / 2;
-  const fovY = HEADER_H + PAD + (innerH - fovPxH) / 2;
-  const cx = fovX + fovPxW / 2;
-  const cy = fovY + fovPxH / 2;
-
-  // Body disc.
+  // Body disc — sized first because the widget scale is built around it.
   const bodyDiameterDeg = BODY_DIAMETER_DEG[d.body] ?? 0.53;
-  const bodyR = (bodyDiameterDeg / 2) * pxPerDeg;
   const bodyFill = d.body === 'Sun' ? COLOURS.Sun : COLOURS.Moon;
   const bodyRim  = d.body === 'Sun' ? COLOURS.SunRim : COLOURS.MoonRim;
+
+  // Scale (v0.20.0): disc-centred, not FOV-centred. The Sun/Moon must ALWAYS
+  // be fully visible in the widget, with enough surrounding room to also
+  // show aircraft that pass close by the disc (≈ near-miss range). We fix
+  // the disc to roughly half the widget's smaller dimension and derive
+  // pxPerDeg from there — the sensor FOV rectangle and the aircraft are
+  // then drawn at the SAME pxPerDeg, so their proportions relative to the
+  // disc are physically accurate. At long focal lengths the FOV box ends
+  // up smaller than the disc (a dashed rectangle inside it = "this strip
+  // of the Sun lands on the sensor"); at short focal lengths the FOV box
+  // is bigger than the disc and may extend beyond the widget edge (the
+  // footer carries the exact angular dims so the truth is never lost).
+  // 0.5 of min(innerW, innerH) → disc occupies ≈ half the widget height,
+  // leaves room either side for aircraft at sep up to ≈ half the widget
+  // half-width in degrees before they fall off the canvas.
+  const widgetMinSide = Math.min(innerW, innerH);
+  const pxPerDeg = (widgetMinSide * 0.5) / bodyDiameterDeg;
+
+  // Disc sits at the widget centre; FOV rectangle is centred on the disc.
+  const cx = SVG_W / 2;
+  const cy = HEADER_H + PAD + innerH / 2;
+  const bodyR = (bodyDiameterDeg / 2) * pxPerDeg;
+  const fovPxW = fovWDeg * pxPerDeg;
+  const fovPxH = fovHDeg * pxPerDeg;
+  const fovX = cx - fovPxW / 2;
+  const fovY = cy - fovPxH / 2;
+
+  // Widget viewing-area bounds (the visible sketch rectangle). Crosshair,
+  // axis labels and horizon compass are anchored to THIS, not the FOV box —
+  // the FOV box has become a free-floating dashed overlay whose size varies
+  // with focal length and isn't a useful reference frame any more.
+  const widgetX = PAD;
+  const widgetY = HEADER_H + PAD;
+  const widgetW = innerW;
+  const widgetH = innerH;
 
   // Transit path: project each sample into relative-FOV coords. Body motion
   // is subtracted per-sample, so the line shows the path as it appears in a
@@ -472,50 +488,43 @@ export function buildSketchSvg(d) {
     `${txt(SVG_W - PAD, HEADER_H, `Sep ${fmtSepArcmin(d.sepDeg)}`, { fill: '#e6edf3', size: LABEL_SIZE, anchor: 'end' })}` +
     `${txt(PAD, HEADER_H + 13, sub, { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'start' })}`;
 
-  const fovRect =
-    `<rect x="${fovX}" y="${fovY}" width="${fovPxW}" height="${fovPxH}" ` +
+  // Widget background (v0.20.0): the dark backdrop is no longer the FOV
+  // box, it's the whole viewing area. The FOV rectangle has become a
+  // dashed overlay that floats inside (or partly outside) this backdrop
+  // depending on focal length. Without this dedicated background the disc
+  // would sit on the page colour wherever the FOV overlay doesn't reach.
+  const widgetBg =
+    `<rect x="${widgetX}" y="${widgetY}" width="${widgetW}" height="${widgetH}" ` +
     `fill="${COLOURS.fovFill}" stroke="${COLOURS.fovStroke}" stroke-width="1" rx="2"/>`;
 
-  // Axis crosshair through the body centre — subtle, helps eye lock to the
-  // disc when the aircraft passes off-centre.
-  const cross =
-    `<line x1="${fovX}" y1="${cy}" x2="${fovX + fovPxW}" y2="${cy}" stroke="${COLOURS.axis}" stroke-width="0.5" stroke-dasharray="2 4"/>` +
-    `<line x1="${cx}" y1="${fovY}" x2="${cx}" y2="${fovY + fovPxH}" stroke="${COLOURS.axis}" stroke-width="0.5" stroke-dasharray="2 4"/>`;
+  // Sensor FOV rectangle: dashed outline, no fill — sits ON TOP of the
+  // disc so the user sees which slice of the Sun/Moon their sensor will
+  // actually capture. Drawn after the disc to stay visible above it.
+  const fovRect =
+    `<rect x="${fovX}" y="${fovY}" width="${fovPxW}" height="${fovPxH}" ` +
+    `fill="none" stroke="${COLOURS.fovStroke}" stroke-width="1.2" ` +
+    `stroke-dasharray="6 4" rx="2"/>`;
 
-  // Body disc rendering (v0.19.0):
-  //   - Dashed outline of the FULL true-size disc, drawn first. At long
-  //     focal lengths the disc is bigger than the FOV rectangle (often
-  //     bigger than the whole SVG) — the dashed arc that pokes out beyond
-  //     the FOV is how the user reads "this much of the Sun/Moon is
-  //     outside the sensor's frame and would be clipped".
-  //   - Solid gradient disc on top, clipped to the FOV rectangle via
-  //     <clipPath>. So inside the sensor frame we see the actual coloured
-  //     fill, outside it we see only the dashed contour — together that
-  //     reads as "you'd capture this slice, the rest is off-sensor".
-  // The clipPath ID is local to this SVG instance; SVGs in the same page
-  // don't collide because each buildSketchSvg call only emits one popup at
-  // a time. If that ever changes we'd suffix the id with a counter.
+  // Axis crosshair through the body centre — subtle, helps eye lock to the
+  // disc when the aircraft passes off-centre. Spans the whole widget now
+  // (was spanning the FOV box; at long focal lengths the FOV is too small
+  // for the crosshair to be a useful reference).
+  const cross =
+    `<line x1="${widgetX}" y1="${cy}" x2="${widgetX + widgetW}" y2="${cy}" stroke="${COLOURS.axis}" stroke-width="0.5" stroke-dasharray="2 4"/>` +
+    `<line x1="${cx}" y1="${widgetY}" x2="${cx}" y2="${widgetY + widgetH}" stroke="${COLOURS.axis}" stroke-width="0.5" stroke-dasharray="2 4"/>`;
+
+  // Body disc (v0.20.0): always fully visible, full solid gradient fill —
+  // the disc is the primary reference object. The FOV-clipping that v0.19
+  // applied here is gone; "what the sensor captures" is now shown by the
+  // dashed FOV rectangle layered on top of the disc, not by hiding the
+  // off-sensor part of the disc.
   const bodyDisc =
     `<defs><radialGradient id="bodyGrad" cx="35%" cy="35%" r="65%">` +
     `<stop offset="0%" stop-color="${bodyRim}" stop-opacity="0.95"/>` +
     `<stop offset="100%" stop-color="${bodyFill}" stop-opacity="1"/>` +
-    `</radialGradient>` +
-    `<clipPath id="fovClip">` +
-    `<rect x="${fovX}" y="${fovY}" width="${fovPxW}" height="${fovPxH}"/>` +
-    `</clipPath></defs>` +
-    // True-size disc outline (dashed) — visible everywhere, including
-    // beyond the FOV box, so the user can read the clipped extent.
-    `<circle cx="${cx}" cy="${cy}" r="${bodyR}" fill="none" ` +
-    `stroke="${bodyRim}" stroke-width="0.8" stroke-dasharray="3 3" ` +
-    `stroke-opacity="0.6"/>` +
-    // Solid disc, clipped to the FOV rectangle so only the on-sensor slice
-    // shows in colour. The stroke is kept for consistency with the old
-    // rendering — at short focal lengths it draws the disc rim cleanly,
-    // at long focal lengths the stroke falls outside the clip and is hidden.
-    `<g clip-path="url(#fovClip)">` +
+    `</radialGradient></defs>` +
     `<circle cx="${cx}" cy="${cy}" r="${bodyR}" fill="url(#bodyGrad)" ` +
-    `stroke="${bodyRim}" stroke-width="0.5"/>` +
-    `</g>`;
+    `stroke="${bodyRim}" stroke-width="0.5"/>`;
 
   // Motion line + tick marks at each sample, arrowhead at the latest one.
   // Uses visiblePathPts so the polyline never connects through wild-distance
@@ -553,19 +562,22 @@ export function buildSketchSvg(d) {
     glyph +
     `</g>`;
 
-  // Axis labels (AZ on FOV bottom, EL on FOV left side). Helps users tell
-  // which way the disc would drift on a fixed altaz mount.
+  // Axis labels (AZ on bottom, EL on left side). Helps users tell which
+  // way the disc would drift on a fixed altaz mount. Anchored to the
+  // widget edges as of v0.20.0 — the FOV box is no longer the reference
+  // frame (it shrinks below a useful label-anchor size at long focal
+  // lengths and may extend beyond the widget at short focal lengths).
   const axisLabels =
-    txt(fovX + 4, fovY + 12, 'EL ↑', { fill: COLOURS.label, size: LABEL_SIZE }) +
-    txt(fovX + fovPxW - 4, fovY + fovPxH - 4, 'AZ →', { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'end' });
+    txt(widgetX + 4, widgetY + 12, 'EL ↑', { fill: COLOURS.label, size: LABEL_SIZE }) +
+    txt(widgetX + widgetW - 4, widgetY + widgetH - 4, 'AZ →', { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'end' });
 
-  // ---- Compass overlays (v0.17.0) ------------------------------------------
-  // (a) Horizon N/E/S/W at the FOV edges, derived purely from the body's
-  //     azimuth, so it is automatically right for BOTH hemispheres and any
-  //     sky position (no hemisphere switch): in this alt-az frame
-  //     screen-right is the bearing Az+90°, screen-down the bearing Az
-  //     (toward the horizon). This is the frame the aircraft's ground track
-  //     lives in — "enters from the E side".
+  // ---- Compass overlays (v0.17.0, anchors moved to widget edges in v0.20.0)-
+  // (a) Horizon N/E/S/W at the widget edges (was: FOV-box edges), derived
+  //     purely from the body's azimuth, so it is automatically right for
+  //     BOTH hemispheres and any sky position (no hemisphere switch): in
+  //     this alt-az frame screen-right is the bearing Az+90°, screen-down
+  //     the bearing Az (toward the horizon). This is the frame the
+  //     aircraft's ground track lives in — "enters from the E side".
   // (b) Parallactic celestial N/E rose on the disc: the true sky North/East
   //     from the observer latitude + body az/el via 3D ENU vectors (avoids
   //     the parallactic-angle sign pitfalls). N up only at the meridian; it
@@ -578,10 +590,10 @@ export function buildSketchSvg(d) {
     const edge = (bearing, x, y, anchor) =>
       txt(x, y, compass8(bearing), { fill: COLOURS.label, size: LABEL_SIZE, anchor });
     compass +=
-      edge(Ab, cx, fovY + fovPxH - 4, 'middle')             // down → horizon
-      + edge(Ab + 180, cx, fovY + 11, 'middle')             // up   → anti-horizon
-      + edge(Ab + 90, fovX + fovPxW - 4, cy + 4, 'end')     // right
-      + edge(Ab - 90, fovX + 4, cy + 4, 'start');           // left
+      edge(Ab, cx, widgetY + widgetH - 4, 'middle')           // down → horizon
+      + edge(Ab + 180, cx, widgetY + 11, 'middle')            // up   → anti-horizon
+      + edge(Ab + 90, widgetX + widgetW - 4, cy + 4, 'end')   // right
+      + edge(Ab - 90, widgetX + 4, cy + 4, 'start');          // left
   }
   const elB = d.bodyAt?.el;
   if (Number.isFinite(Ab) && Number.isFinite(elB) && Number.isFinite(d.obsLat)) {
@@ -623,12 +635,10 @@ export function buildSketchSvg(d) {
       x: cx + dot(v, Rs) * len,
       y: cy - dot(v, Us) * len,    // SVG y is inverted (up = −y)
     });
-    // Anchor the rose just outside the disc rim — but at long focal lengths
-    // the disc overflows the FOV box (and the SVG), so clamp the radius to
-    // stay safely inside the FOV rectangle. Otherwise the N/E labels would
-    // sit hundreds of pixels off-canvas and be invisible.
-    const roseMax = Math.min(fovPxW, fovPxH) * 0.45;
-    const L = Math.min(bodyR + 14, roseMax);
+    // Anchor the rose just outside the disc rim. The disc is now sized to
+    // fit comfortably inside the widget (v0.20.0), so bodyR + 14 keeps the
+    // N/E labels on-canvas without any further clamp.
+    const L = bodyR + 14;
     const nP = toScreen(Nt, L);
     const eP = toScreen(Et, L * 0.78);
     const rose = '#7fd0ff';
@@ -696,12 +706,17 @@ export function buildSketchSvg(d) {
     }
   }
 
+  // Z-order (back → front):
+  //   widget backdrop → crosshair → disc → dashed sensor FOV (on top of disc
+  //   so it stays legible against the bright fill) → motion path → aircraft
+  //   → "now" marker → axis & compass labels → footer.
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SVG_W} ${SVG_H}" width="${SVG_W}" height="${SVG_H}">` +
     header +
-    fovRect +
+    widgetBg +
     cross +
     bodyDisc +
+    fovRect +
     pathSvg +
     acGroup +
     nowMarker +
