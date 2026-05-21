@@ -174,6 +174,39 @@ function icaoCellInner(icao, iss) {
     + `${up}</a>`;
 }
 
+// Stats bar label (v0.20.1). Returns an <a> that
+//   - links to adsbexchange globe (ICAO hex or callsign — same lookup the
+//     History/Live tables use, so users get history/playback for the very
+//     airframe or flight they clicked in the stats panel)
+//   - keeps .flight-cell + data-hex / data-cs so the existing hover popover
+//     (AirNav photo / adsbdb route) still fires
+//   - degrades to a plain <span> when the value isn't a usable hex/callsign
+//     (e.g. a partial code) so we never link to junk.
+function statsLabelLink(key, kind, tooltip) {
+  const raw = String(key ?? '').trim();
+  if (!raw) return '<span class="acstats-label">—</span>';
+  const up = raw.toUpperCase();
+  const tip = tooltip ? ` ${tooltip}` : '';
+  if (kind === 'icao' && /^[0-9A-F]{6}$/.test(up)) {
+    const lo = up.toLowerCase();
+    return `<a class="acstats-label flight-cell hex-link" `
+      + `href="https://globe.adsbexchange.com/?icao=${lo}" `
+      + `target="_blank" rel="noopener noreferrer" data-hex="${lo}" `
+      + `title="ICAO ${up} → adsbexchange globe (history/playback). Hover for the airframe (AirNav).${tip}">`
+      + `${up}</a>`;
+  }
+  if (kind === 'flight' && /^[A-Z0-9]{2,10}$/.test(up)) {
+    return `<a class="acstats-label flight-cell hex-link" `
+      + `href="https://globe.adsbexchange.com/?callsign=${encodeURIComponent(up)}" `
+      + `target="_blank" rel="noopener noreferrer" data-cs="${up}" `
+      + `title="Callsign ${up} → adsbexchange globe (by callsign). Hover for the route (adsbdb, free).${tip}">`
+      + `${up}</a>`;
+  }
+  // Unusable key — render the value with the popover hooks but no link.
+  const attr = kind === 'icao' ? `data-hex="${up.toLowerCase()}"` : `data-cs="${up}"`;
+  return `<span class="acstats-label flight-cell" ${attr} title="${tip.trim()}">${up}</span>`;
+}
+
 function renderSky(state) {
   const tbody = $('#sky tbody');
   tbody.innerHTML = '';
@@ -567,16 +600,7 @@ function renderAcstatsBars(elId, rows, kind) {
   box.innerHTML = top.map((r) => {
     const pct = Math.max(3, Math.round((r.visits / max) * 100));
     const seen = `${r.visits} visit${r.visits === 1 ? '' : 's'} · first ${fmtDateTime(r.firstSeenMs)} · last ${fmtDateTime(r.lastSeenMs)}`;
-    const key = r.key || '?';
-    let labelEl;
-    if (kind === 'icao' && /^[0-9a-f]{6}$/.test(key.toLowerCase())) {
-      // Reuses the existing flight-number hover handler → AirNav popover.
-      labelEl = `<span class="acstats-label flight-cell" data-hex="${key.toLowerCase()}" `
-        + `title="ICAO 24-bit hex — hover for the airframe (AirNav)">${key.toUpperCase()}</span>`;
-    } else {
-      labelEl = `<span class="acstats-label flight-cell" data-cs="${key.toUpperCase()}" `
-        + `title="ADS-B callsign — hover for the route (adsbdb, free). ${seen}">${key.toUpperCase()}</span>`;
-    }
+    const labelEl = statsLabelLink(r.key || '?', kind, seen);
     return `<div class="acstats-row" title="${seen}">`
       + labelEl
       + `<span class="acstats-track"><span class="acstats-bar" style="width:${pct}%"></span></span>`
@@ -620,15 +644,7 @@ function renderUsableBars(elId, rows, kind) {
     const sp = Number.isFinite(r.minSepDeg) ? fmtSep(r.minSepDeg) : '—';
     const seen = `${r.visits} usable transit${r.visits === 1 ? '' : 's'} · `
       + `best elevation ${el} · tightest sep ${sp}`;
-    const key = r.key || '?';
-    let labelEl;
-    if (kind === 'icao' && /^[0-9a-f]{6}$/.test(key.toLowerCase())) {
-      labelEl = `<span class="acstats-label flight-cell" data-hex="${key.toLowerCase()}" `
-        + `title="ICAO 24-bit hex — hover for the airframe (AirNav). ${seen}">${key.toUpperCase()}</span>`;
-    } else {
-      labelEl = `<span class="acstats-label flight-cell" data-cs="${key.toUpperCase()}" `
-        + `title="ADS-B callsign — hover for the route (adsbdb, free). ${seen}">${key.toUpperCase()}</span>`;
-    }
+    const labelEl = statsLabelLink(r.key || '?', kind, seen);
     return `<div class="acstats-row" title="${seen}">`
       + labelEl
       + `<span class="acstats-track"><span class="acstats-bar" style="width:${pct}%"></span></span>`

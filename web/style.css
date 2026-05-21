@@ -912,6 +912,12 @@ tr.empty td.no-bodies {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* When an acstats label is also a link (v0.20.1: ICAO hex / callsign →
+   adsbexchange globe) keep the accent colour + a clear hover affordance,
+   otherwise .acstats-label above wins by source order and the label
+   reads as static text. */
+a.acstats-label.hex-link { color: var(--accent); text-decoration: none; }
+a.acstats-label.hex-link:hover { text-decoration: underline; }
 .acstats-track {
   height: 12px;
   background: rgba(139, 148, 158, 0.12);
