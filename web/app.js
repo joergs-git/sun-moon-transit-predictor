@@ -1089,10 +1089,17 @@ function acPhotoImg(info) {
 function acinfoHtml(info) {
   // Right column of the combined box: photo on top, data below it (the
   // data area scrolls if long so the column stays flush with the map).
-  return '<div class="spec-head">AirNav<span class="spec-klass">on-demand</span></div>'
+  // Source label (v0.21.0): the /api/acinfo proxy tags every response
+  // with `source: 'airnav' | 'adsbdb'` so the user can tell which feed
+  // is showing — AirNav is the paid, richer source; adsbdb is the free
+  // fallback (no token, no live route, smaller photo set).
+  const src = info?.source === 'adsbdb'
+    ? { head: 'adsbdb', klass: 'free', foot: 'adsbdb.com (free) · static airframe + photo · cached this session. AirNav inactive or out of credits.' }
+    : { head: 'AirNav', klass: 'on-demand', foot: 'AirNav On-Demand API · billed per call · cached this session.' };
+  return `<div class="spec-head">${src.head}<span class="spec-klass">${src.klass}</span></div>`
     + acPhotoImg(info)
     + `<div class="acinfo-data">${acinfoRows(info)}</div>`
-    + '<div class="spec-foot">AirNav On-Demand API · billed per call · cached this session.</div>';
+    + `<div class="spec-foot">${src.foot}</div>`;
 }
 // The combined box is visible only while a column has content; an empty
 // column collapses so the other takes the full width (e.g. auto-FOV =
@@ -1122,7 +1129,7 @@ async function renderFovAcinfo(meta) {
   // nothing (no flicker, no re-render; the fetch is cached anyway).
   if (fovAcinfo.dataset.hex === hex) return;
   fovAcinfo.dataset.hex = hex;
-  fovAcinfo.innerHTML = '<div class="spec-head">AirNav<span class="spec-klass">loading…</span></div>';
+  fovAcinfo.innerHTML = '<div class="spec-head">Airframe<span class="spec-klass">loading…</span></div>';
   syncFovAux();
   const info = await fetchAcInfo(hex);
   // A newer pin may have replaced this one while we awaited — bail if so.

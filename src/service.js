@@ -15,7 +15,7 @@ const PKG_VERSION = (() => {
 })();
 
 import { fetchAircraft } from './adsb.js';
-import { RouteLookup } from './adsbdb.js';
+import { RouteLookup, AircraftLookup } from './adsbdb.js';
 import { AirnavClient } from './airnav.js';
 import { bodyAzEl, isObservable } from './geometry.js';
 import { lifecycleArray, updateLifecycle } from './lifecycle.js';
@@ -283,6 +283,15 @@ export async function runService({
     });
   }
   let airnav = buildAirnav();
+
+  // v0.21.0: free fallback for the /api/acinfo proxy. adsbdb's hex endpoint
+  // gives registration, type, manufacturer, operator and a planespotters
+  // photo URL — covers the bulk of what AirNav delivers (no MSN / first
+  // flight / decommissioned status, no live flight info). Always available
+  // because it has no token + no billing; the proxy uses it as a graceful
+  // degradation when AirNav is disabled, missing a token, out of credits
+  // or returns a soft miss.
+  const freeAircraft = new AircraftLookup({ fetchImpl });
 
   const notifier = new Notifier({
     pushover,
@@ -708,9 +717,23 @@ export async function runService({
     getConfig: () => publicConfig(),
     updateConfig: applyConfigUpdate,
     requestUpdate,
-    // AirNav proxy: null when disabled/no token → /api/acinfo 404s and the
-    // UI degrades. The token never leaves the server.
-    requestAcInfo: (hex) => (airnav ? airnav.lookup(hex) : null),
+    // /api/acinfo proxy (v0.21.0 — two-tier source):
+    //   1. AirNav On-Demand if a token is configured AND the lookup yields
+    //      anything (richest payload: static airframe + live route + photos).
+    //   2. Free fallback via adsbdb hex endpoint (static airframe + photo,
+    //      no live flight info, no billing). Used when AirNav is disabled,
+    //      out of credits, or returns nothing for this hex.
+    // The token never leaves the server. The response carries a `source`
+    // field ('airnav' | 'adsbdb') so the frontend can label appropriately.
+    requestAcInfo: async (hex) => {
+      if (airnav) {
+        const info = await airnav.lookup(hex);
+        if (info) return { ...info, source: 'airnav' };
+      }
+      const aircraft = await freeAircraft.lookup(hex);
+      if (!aircraft) return null;
+      return { hex: String(hex).toLowerCase(), aircraft, live: null, source: 'adsbdb' };
+    },
     // Free callsign → route (adsbdb, no token, cached). Powers the
     // flight-number hover even when AirNav is off.
     requestRoute: (cs) => routeLookup.lookup(cs),
