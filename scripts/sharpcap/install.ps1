@@ -186,7 +186,8 @@ if ($Branch -ne "main") {
     Write-Step "Pinning bootstrap to branch '$Branch'"
     $content = Get-Content -Raw -Path $bootstrapPath
     $content = $content -replace 'BRANCH = "main"', ("BRANCH = `"" + $Branch + "`"")
-    Set-Content -Path $bootstrapPath -Value $content -Encoding UTF8
+    # No BOM (see the config write below for why).
+    [System.IO.File]::WriteAllText($bootstrapPath, $content, (New-Object System.Text.UTF8Encoding $false))
     Write-Ok "bootstrap will pull from '$Branch'"
 }
 
@@ -245,7 +246,12 @@ if ($pickDest) {
     if ($p) { $cfg["destDir"] = $p; Write-Ok "destination: $p" } else { Write-Warn2 "no folder picked; keeping '$($cfg['destDir'])'" }
 }
 
-($cfg | ConvertTo-Json -Depth 5) | Set-Content -Path $configPath -Encoding UTF8
+# Write UTF-8 WITHOUT a BOM. Windows PowerShell 5.1's `Set-Content -Encoding
+# UTF8` prepends a BOM, which the CPython embedded in SharpCap 4.x cannot
+# parse (json.load → "Expecting value: line 1 column 1 (char 0)"). .NET's
+# WriteAllText with UTF8Encoding($false) emits no BOM on every PS version.
+$cfgJson = $cfg | ConvertTo-Json -Depth 5
+[System.IO.File]::WriteAllText($configPath, $cfgJson, (New-Object System.Text.UTF8Encoding $false))
 Write-Ok ("transfer={0}  source='{1}'  dest='{2}'  move={3}" -f `
     $cfg["transferEnabled"], $cfg["sourceDir"], $cfg["destDir"], $cfg["move"])
 if (-not $cfg["transferEnabled"]) {

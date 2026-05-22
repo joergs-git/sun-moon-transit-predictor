@@ -305,7 +305,36 @@ initialisation is **UI-thread-affine**; the listener runs the capture on a
 background thread, so the direct `RunCapture()` couldn't build the writer.
 Fixed in **v0.21.8**: the listener now marshals `RunCapture()`/`StopCapture()`
 onto SharpCap's WPF dispatcher (the pre-roll/duration timing stays on the
-background thread, so the UI never freezes). **Restart SharpCap** to pull the
-updated listener, then trigger again — the log should show
+background thread, so the UI never freezes). The log should show
 `ui-marshal: using WPF Application.Current.Dispatcher` once, then
 `StopCapture done`.
+
+> Getting the fix requires the **bootstrap auto-download to actually work** —
+> see the next item.
+
+### `[bootstrap] download failed … ImportError: Cannot import name WebClient` (stuck on the cached listener)
+
+SharpCap 4.x embeds **CPython (Python.NET)**, not IronPython, and CPython has
+no `System.Net.WebClient` — so the bootstrap's GitHub download failed every
+time and silently fell back to the cached (old) listener. You'd see
+`[bootstrap] using cached listener …` on every start and never receive
+updates. Fixed in **v0.21.9**: the bootstrap now downloads via the CPython
+stdlib (`urllib`), keeping WebClient only as a fallback for the old IronPython
+hosts.
+
+Because the broken bootstrap can't fetch its own fix, **re-run `install.ps1`
+once** (PowerShell downloads the fixed bootstrap + a fresh cached listener
+directly). After that, restart SharpCap — the log should show
+`[bootstrap] downloaded latest listener from …` and auto-update works again.
+
+### `config: failed reading …\stp-sharpcap.config.json` / `Expecting value: line 1 column 1 (char 0)`
+
+The config file has a UTF-8 **BOM** (Windows PowerShell 5.1's
+`Set-Content -Encoding UTF8` writes one), which CPython's `json` rejects. The
+listener falls back to built-in defaults, so a simple test still works, but
+your saved port/token/transfer settings are ignored. Fixed in **v0.21.9**:
+the installer writes the config without a BOM, and both the bootstrap and the
+listener strip a leading BOM (and tolerate an empty file) when reading. Re-run
+`install.ps1` once to rewrite the file cleanly, or just delete it
+(`del "$env:LOCALAPPDATA\stp-sharpcap\stp-sharpcap.config.json"`) if you only
+need the defaults.

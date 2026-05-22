@@ -7,12 +7,13 @@
 # update step. If the download fails (offline, GitHub down) it falls back to
 # the last cached copy.
 #
-# This runs inside SharpCap's IronPython host, so it uses .NET (System.Net)
-# for the HTTPS download rather than urllib — IronPython's stdlib ssl support
-# is unreliable, but the .NET WebClient always works.
+# SharpCap 4.x embeds CPython (Python.NET); older SharpCap used IronPython.
+# The download tries the CPython stdlib (urllib + ssl, which works on 4.x)
+# first and falls back to .NET System.Net.WebClient (the only path that
+# worked on the old IronPython, whose ssl was unreliable).
 #
 # The matching trigger_listener.py needs no external Python or libraries: it
-# uses only the standard library, which SharpCap's IronPython provides.
+# uses only the standard library, present in both hosts.
 
 import os
 import sys
@@ -50,31 +51,61 @@ def _log(msg):
 
 
 def _download_latest():
-    """Return the latest listener source from GitHub, or None on failure."""
+    """Return the latest listener source from GitHub, or None on failure.
+
+    SharpCap 4.x embeds CPython (Python.NET), where the stdlib urllib + ssl
+    work fine — and .NET's `System.Net.WebClient` is NOT importable (that is
+    an IronPython-ism). Older SharpCap used IronPython, whose ssl is flaky but
+    which has WebClient. So try urllib first, fall back to WebClient."""
+    source = _download_urllib()
+    if source is None:
+        source = _download_webclient()
+    if not source:
+        return None
+    if "trigger_listener" not in source:
+        _log("download returned unexpected content; ignoring")
+        return None
+    try:
+        with open(CACHE_PATH, "w") as f:
+            f.write(source)
+    except Exception:
+        _log("warning: could not write cache file:\n" + traceback.format_exc())
+    _log("downloaded latest listener from {}".format(RAW_URL))
+    return source
+
+
+def _download_urllib():
+    """Stdlib download — the working path on SharpCap 4.x (CPython)."""
+    try:
+        try:
+            from urllib.request import urlopen, Request   # Python 3 / CPython
+        except ImportError:
+            from urllib2 import urlopen, Request           # very old Python 2
+        req = Request(RAW_URL, headers={"User-Agent": "stp-sharpcap-bootstrap"})
+        data = urlopen(req, timeout=15).read()
+        try:
+            return data.decode("utf-8")
+        except Exception:
+            return data
+    except Exception:
+        _log("urllib download failed:\n" + traceback.format_exc())
+        return None
+
+
+def _download_webclient():
+    """.NET WebClient fallback — only works on the old IronPython SharpCap."""
     try:
         import clr  # noqa: F401  (IronPython .NET bridge)
         from System.Net import WebClient, ServicePointManager
-        # Force TLS 1.2 (+1.3 when available); GitHub rejects older protocols.
-        # Numeric values avoid enum-name differences across .NET versions.
         try:
             ServicePointManager.SecurityProtocol = 3072 | 12288   # Tls12 | Tls13
         except Exception:
             ServicePointManager.SecurityProtocol = 3072           # Tls12
         wc = WebClient()
         wc.Headers.Add("User-Agent", "stp-sharpcap-bootstrap")
-        source = wc.DownloadString(RAW_URL)
-        if source and "trigger_listener" in source:
-            try:
-                with open(CACHE_PATH, "w") as f:
-                    f.write(source)
-            except Exception:
-                _log("warning: could not write cache file:\n" + traceback.format_exc())
-            _log("downloaded latest listener from {}".format(RAW_URL))
-            return source
-        _log("download returned unexpected content; ignoring")
-        return None
+        return wc.DownloadString(RAW_URL)
     except Exception:
-        _log("download failed:\n" + traceback.format_exc())
+        _log("webclient download failed:\n" + traceback.format_exc())
         return None
 
 
@@ -96,8 +127,17 @@ def _load_local_config():
     try:
         if os.path.exists(CONFIG_PATH):
             import json
-            with open(CONFIG_PATH) as f:
-                cfg = json.load(f)
+            # utf-8-sig strips a UTF-8 BOM — Windows PowerShell 5.1's
+            # `Set-Content -Encoding UTF8` prepends one, which plain json.load
+            # rejects with "Expecting value: line 1 column 1 (char 0)".
+            with open(CONFIG_PATH, "r") as f:
+                text = f.read()
+            if text[:1] == u"\ufeff":
+                text = text[1:]
+            if not text.strip():
+                _log("local config {} is empty; using defaults".format(CONFIG_PATH))
+                return None
+            cfg = json.loads(text)
             _log("loaded local config {}".format(CONFIG_PATH))
             return cfg
     except Exception:

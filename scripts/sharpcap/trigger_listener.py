@@ -18,8 +18,10 @@
 # - One capture at a time. A trigger arriving while a capture is in progress
 #   is rejected with "busy"; the predictor will dedupe and move on.
 # - The listener thread is daemonised so SharpCap shutdown does not hang.
-# - SharpCap's bundled Python is IronPython on Windows; this script uses only
-#   stdlib (socket, threading, json, time) so it runs unchanged there.
+# - SharpCap 4.x embeds CPython (Python.NET); older builds used IronPython.
+#   This script uses only stdlib (socket, threading, json, time) so it runs
+#   unchanged on both. The capture calls are marshalled onto the WPF UI
+#   thread (see _run_on_ui) because SharpCap's writer init is UI-affine.
 #
 # Configuration via environment-style globals at the top of the file
 # (override before pressing Run if you need to). Keep PORT and SHARED_TOKEN in
@@ -169,8 +171,17 @@ def _apply_local_config():
         for path in _candidate_config_paths():
             try:
                 if os.path.isfile(path):
-                    with open(path) as f:
-                        cfg = json.load(f)
+                    with open(path, "r") as f:
+                        text = f.read()
+                    # Strip a UTF-8 BOM (Windows PowerShell 5.1 Set-Content
+                    # -Encoding UTF8 writes one; json.loads then fails with
+                    # "Expecting value: line 1 column 1 (char 0)").
+                    if text[:1] == u"\ufeff":
+                        text = text[1:]
+                    if not text.strip():
+                        _log("config: {} is empty; skipping".format(path))
+                        continue
+                    cfg = json.loads(text)
                     _log("config: loaded {}".format(path))
                     break
             except Exception:
