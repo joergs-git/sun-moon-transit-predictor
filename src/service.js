@@ -147,6 +147,12 @@ export const DEFAULT_CONFIG = {
     // shot. Set lower to be stricter, or minElevationDeg=0 to never gate on
     // elevation.
     maxSepDeg: 0.5,
+    // Arming early means the predicted closest-approach time is less certain,
+    // so widen the recording window by leadDriftFrac × secondsToClosest on
+    // each side (capped at maxDriftS). At lead 50 s → ±15 s extra. Set
+    // leadDriftFrac:0 to disable and use only pre/postBufferS.
+    leadDriftFrac: 0.3,
+    maxDriftS: 30,
     // Send a Pushover when a capture is actually triggered (key params + ETA).
     notifyOnTrigger: true,
   },

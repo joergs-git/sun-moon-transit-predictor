@@ -24,6 +24,13 @@ const DEFAULT_DEDUP_MS = 60_000;    // suppress identical (icao|body) re-trigger
 // Tick-based arming (armForCandidate): "rather over-record than miss a shot".
 const DEFAULT_MAX_SEP_DEG = 0.5;    // arm any candidate projected within this sep
 const DEFAULT_MAX_PRE_ROLL_S = 85;  // keep pre-roll under the listener's 90 s cap
+// Arming early (to never miss a lost-tracking case) means the predicted
+// closest-approach TIME is less accurate the further out we are. Widen the
+// recording window symmetrically by leadDriftFrac × leadSeconds (capped) so a
+// drifting prediction still lands inside the clip. At lead 50 s, 0.3 → ±15 s
+// extra around the normal pre/post window.
+const DEFAULT_LEAD_DRIFT_FRAC = 0.3;
+const DEFAULT_MAX_DRIFT_S = 30;
 
 /**
  * @typedef {Object} SharpCapConfig
@@ -181,8 +188,15 @@ export class SharpCapTrigger {
     const last = this.lastTriggered.get(key);
     if (last != null && nowMs - last < dedupMs) return { sent: false, reason: 'deduped' };
 
-    const preRollS = Math.max(0, tToClosestS - preBufferS);
-    const durationS = Math.max(1, preBufferS + postBufferS);
+    // Widen the window by a drift margin that scales with how early we armed —
+    // the predicted closest-approach time gets less certain the further out we
+    // are, so an early arm records a proportionally longer clip to stay safe.
+    // Window = [closest − preBuffer − drift, closest + postBuffer + drift].
+    const driftFrac = Number.isFinite(this.config.leadDriftFrac) ? this.config.leadDriftFrac : DEFAULT_LEAD_DRIFT_FRAC;
+    const maxDriftS = Number.isFinite(this.config.maxDriftS) ? this.config.maxDriftS : DEFAULT_MAX_DRIFT_S;
+    const driftS = Math.min(Math.max(0, tToClosestS) * driftFrac, maxDriftS);
+    const preRollS = Math.max(0, tToClosestS - preBufferS - driftS);
+    const durationS = Math.max(1, preBufferS + postBufferS + 2 * driftS);
     const payload = { label: key, preRollS, durationS };
     if (this.config.token) payload.token = this.config.token;
 

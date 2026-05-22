@@ -266,6 +266,17 @@ away records **immediately** (pre-roll 0). A transient send error releases the
 dedup slot so the next tick retries. Net effect: as long as the aircraft is
 tracked on *any* tick in the ~95 s before closest approach, it records.
 
+**Drift margin (v0.23.1).** Arming early is great for not missing a
+lost-tracking case, but the predicted closest-approach *time* is less certain
+the further out you arm — and for a candidate that then goes *stale* (never
+confirmed) the real crossing can land just outside a tight ±preBuffer/postBuffer
+window (a sub-second transit through a ~0.3°×0.19° sensor leaves no margin).
+So the window is widened symmetrically by `leadDriftFrac × secondsToClosest`
+on each side, capped at `maxDriftS`. Defaults: `leadDriftFrac: 0.3`,
+`maxDriftS: 30` → arming 50 s out records ±25 s around the prediction instead
+of ±10 s. Set `leadDriftFrac: 0` to disable and use only the fixed buffers, or
+just raise `preBufferS`/`postBufferS` if you prefer a constant wide window.
+
 If a trigger does NOT fire, the service journal now says why
 (`sharpcap: arm skipped … too-low (el 22°, minEl 30°)` etc.) — check it with
 `journalctl -u stp.service -f | grep -i sharpcap` on the Pi.

@@ -219,7 +219,8 @@ describe('SharpCapTrigger', () => {
     it('arms a near candidate within the pre-roll window (one capture)', async () => {
       const { netImpl, created } = makeFakeNet({ replyLine: '{"ok":true,"captureId":"a-1"}\n' });
       const t = new SharpCapTrigger(
-        { enabled: true, host: 'pc', preBufferS: 10, postBufferS: 10 },
+        // leadDriftFrac 0 isolates the base pre/post window (drift tested below)
+        { enabled: true, host: 'pc', preBufferS: 10, postBufferS: 10, leadDriftFrac: 0 },
         { netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
       );
       const res = await t.armForCandidate(armCand({ closestApproachAtMs: NOW + 20_000 }), NOW);
@@ -227,6 +228,31 @@ describe('SharpCapTrigger', () => {
       const sent = JSON.parse(created[0].writes[0]);
       expect(sent.preRollS).toBeCloseTo(10, 3);   // 20 s out − 10 s pre-buffer
       expect(sent.durationS).toBeCloseTo(20, 3);
+    });
+
+    it('widens the window by a lead-scaled drift margin when armed early', async () => {
+      const { netImpl, created } = makeFakeNet({ replyLine: '{"ok":true}\n' });
+      const t = new SharpCapTrigger(
+        { enabled: true, host: 'pc', preBufferS: 10, postBufferS: 10, leadDriftFrac: 0.3, maxDriftS: 30 },
+        { netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+      );
+      // 50 s out → drift = min(50·0.3, 30) = 15 s.
+      await t.armForCandidate(armCand({ closestApproachAtMs: NOW + 50_000 }), NOW);
+      const sent = JSON.parse(created[0].writes[0]);
+      expect(sent.preRollS).toBeCloseTo(25, 3);   // 50 − 10 − 15
+      expect(sent.durationS).toBeCloseTo(50, 3);  // 10 + 10 + 2·15  → ±25 s window
+    });
+
+    it('caps the drift margin at maxDriftS', async () => {
+      const { netImpl, created } = makeFakeNet({ replyLine: '{"ok":true}\n' });
+      const t = new SharpCapTrigger(
+        { enabled: true, host: 'pc', preBufferS: 10, postBufferS: 10, leadDriftFrac: 0.3, maxDriftS: 20 },
+        { netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+      );
+      // 90 s out → uncapped drift 27 s, capped to 20.
+      await t.armForCandidate(armCand({ closestApproachAtMs: NOW + 90_000 }), NOW);
+      const sent = JSON.parse(created[0].writes[0]);
+      expect(sent.durationS).toBeCloseTo(60, 3);  // 10 + 10 + 2·20
     });
 
     it('records immediately (pre-roll 0) when the transit is seconds away', async () => {
