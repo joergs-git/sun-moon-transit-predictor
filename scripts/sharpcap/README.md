@@ -282,7 +282,9 @@ camera/scope. `enabled` is the master switch; a rig is active when it has a
 
 You can also manage rigs in the **web Settings panel** (v0.24.1): under
 *SharpCap capture trigger → Capture rigs* there's a "+ Add rig" list with
-name / host / port / body / pre / post per rig. Leave it empty to use the
+name / host / port / body / pre / post per rig — plus a per-rig **Test 2s**
+button (v0.24.2) that fires an immediate 2 s capture on that specific rig, so
+you can verify each scope's PC independently. Leave the list empty to use the
 single Host/Body fields above; add rigs to drive several scopes (the fields
 above then act as shared defaults). Per-rig `token` stays JSON-only.
 

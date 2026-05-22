@@ -1430,6 +1430,12 @@ function scRigRow(rig = {}) {
   body.innerHTML = '<option value="Sun">☀ Sun</option><option value="Moon">🌙 Moon</option>';
   const pre = field('rig-pre', 'pre s', 'number');
   const post = field('rig-post', 'post s', 'number');
+  const test = document.createElement('button');
+  test.type = 'button'; test.className = 'btn rig-test'; test.textContent = 'Test 2s';
+  test.title = 'Fire a 2 s test capture on this rig (no save needed; uses the saved token)';
+  const tmsg = document.createElement('span');
+  tmsg.className = 'field-hint rig-test-msg';
+  test.addEventListener('click', () => sharpcapTest(host.value, port.value, tmsg, test));
   const rm = document.createElement('button');
   rm.type = 'button'; rm.className = 'btn rig-remove'; rm.textContent = '✕'; rm.title = 'Remove this rig';
   rm.addEventListener('click', () => row.remove());
@@ -1440,7 +1446,7 @@ function scRigRow(rig = {}) {
   body.value = (Array.isArray(rig.bodies) ? rig.bodies[0] : rig.bodies) ?? 'Sun';
   pre.value = rig.preBufferS ?? '';
   post.value = rig.postBufferS ?? '';
-  for (const el of [name, host, port, body, pre, post, rm]) row.appendChild(el);
+  for (const el of [name, host, port, body, pre, post, test, rm, tmsg]) row.appendChild(el);
   return row;
 }
 function fillSharpcapTargets(targets) {
@@ -1574,38 +1580,38 @@ settingsForm.addEventListener('submit', async (ev) => {
 
 $('#settings-btn').addEventListener('click', openSettings);
 
-// SharpCap "Test trigger" — fires an immediate 2 s capture using the host/port
-// currently in the form (so you can test before saving). The saved token, if
-// any, is applied server-side.
+// SharpCap "Test trigger" — fires an immediate 2 s capture against the given
+// host/port (so you can test before saving). The saved token, if any, is
+// applied server-side. Shared by the single-rig button and each rig's own
+// Test button.
+async function sharpcapTest(host, portRaw, msgEl, btnEl) {
+  const port = (portRaw === '' || portRaw == null) ? undefined : Number(portRaw);
+  if (msgEl) { msgEl.textContent = 'triggering…'; msgEl.className = 'field-hint'; }
+  if (btnEl) btnEl.disabled = true;
+  try {
+    const res = await fetch('/api/sharpcap-test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ durationS: 2, host: (host || '').trim() || undefined, port }),
+    });
+    const body = await res.json();
+    if (!res.ok || !body.sent) throw new Error(body.error ?? body.reason ?? `HTTP ${res.status}`);
+    if (msgEl) { msgEl.textContent = `OK — ${body.response?.captureId ?? 'capture started'}`; msgEl.className = 'field-hint ok'; }
+  } catch (e) {
+    if (msgEl) { msgEl.textContent = `failed: ${e.message ?? e}`; msgEl.className = 'field-hint err'; }
+  } finally {
+    if (btnEl) btnEl.disabled = false;
+  }
+}
+
 const sharpcapTestBtn = $('#sharpcap-test-btn');
 const sharpcapTestMsg = $('#sharpcap-test-msg');
 if (sharpcapTestBtn) {
-  sharpcapTestBtn.addEventListener('click', async () => {
-    const host = settingsForm.elements['sharpcap.host']?.value?.trim() ?? '';
-    const portRaw = settingsForm.elements['sharpcap.port']?.value ?? '';
-    const port = portRaw === '' ? undefined : Number(portRaw);
-    sharpcapTestMsg.textContent = 'triggering…';
-    sharpcapTestMsg.className = 'field-hint';
-    sharpcapTestBtn.disabled = true;
-    try {
-      const res = await fetch('/api/sharpcap-test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ durationS: 2, host: host || undefined, port }),
-      });
-      const body = await res.json();
-      if (!res.ok || !body.sent) {
-        throw new Error(body.error ?? body.reason ?? `HTTP ${res.status}`);
-      }
-      sharpcapTestMsg.textContent = `OK — ${body.response?.captureId ?? 'capture started'}`;
-      sharpcapTestMsg.className = 'field-hint ok';
-    } catch (e) {
-      sharpcapTestMsg.textContent = `failed: ${e.message ?? e}`;
-      sharpcapTestMsg.className = 'field-hint err';
-    } finally {
-      sharpcapTestBtn.disabled = false;
-    }
-  });
+  sharpcapTestBtn.addEventListener('click', () => sharpcapTest(
+    settingsForm.elements['sharpcap.host']?.value ?? '',
+    settingsForm.elements['sharpcap.port']?.value ?? '',
+    sharpcapTestMsg, sharpcapTestBtn,
+  ));
 }
 // History pager: "Newer" steps towards today (page 0), "Older" further back.
 $('#hp-newer').addEventListener('click', () => gotoHistoryPage(-1));

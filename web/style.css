@@ -112,7 +112,9 @@ h2 { font-size: 14px; margin: 16px 0 8px; color: var(--accent); text-transform: 
 .sc-rig .rig-port { flex: 0 0 64px; width: 64px; }
 .sc-rig .rig-pre, .sc-rig .rig-post { flex: 0 0 60px; width: 60px; }
 .sc-rig .rig-body { flex: 0 0 auto; }
+.sc-rig .rig-test { flex: 0 0 auto; padding: 2px 8px; }
 .sc-rig .rig-remove { flex: 0 0 auto; padding: 2px 8px; }
+.sc-rig .rig-test-msg { flex: 1 0 100%; }   /* own line below the row */
 /* SharpCap trigger readout next to the clock — armed body + session count. */
 .sc-status {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
