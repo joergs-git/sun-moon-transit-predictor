@@ -375,13 +375,21 @@ def _resolve_ui():
 
 
 def _run_on_ui(func):
-    """Run func on SharpCap's UI thread when possible, else directly. Invoke is
-    synchronous and re-raises func's exception on this thread, so the caller's
-    try/except still sees RunCapture/StopCapture failures."""
+    """Run func on SharpCap's UI thread when possible, else directly, and
+    return its result. Invoke is synchronous and re-raises func's exception on
+    this thread, so the caller's try/except still sees capture failures. The
+    result is relayed through a closure because System.Action has no return
+    channel (using Func would require pinning the exact generic arity)."""
     _resolve_ui()
-    if _ui_dispatcher is not None and _ui_action is not None:
-        return _ui_dispatcher.Invoke(_ui_action(func))
-    return func()
+    if _ui_dispatcher is None or _ui_action is None:
+        return func()
+    box = {}
+
+    def _wrapper():
+        box["result"] = func()
+
+    _ui_dispatcher.Invoke(_ui_action(_wrapper))
+    return box.get("result")
 
 
 def _do_capture(label, pre_roll_s, duration_s):
@@ -403,7 +411,20 @@ def _do_capture(label, pre_roll_s, duration_s):
         # Snapshot the capture folder BEFORE recording so the post-capture diff
         # transfers only the file(s) this capture produces — never leftovers.
         pre_snapshot = _scan_capture_dir() if TRANSFER_ENABLED else {}
-        _log("capture {!r}: RunCapture (duration {:.2f}s)".format(label, duration_s))
+        # SharpCap builds the capture-file writer in PrepareToCapture(); calling
+        # RunCapture() without it fails with "No writer object when trying to
+        # initialize it" (confirmed in SharpCap 4.1's own console). Returns True
+        # when the writer is ready. Marshalled onto the UI thread like the rest.
+        _log("capture {!r}: PrepareToCapture + RunCapture (duration {:.2f}s)".format(label, duration_s))
+        try:
+            ready = _run_on_ui(cam.PrepareToCapture)
+        except Exception:
+            _log("capture {!r}: PrepareToCapture failed:\n{}".format(label, traceback.format_exc()))
+            return
+        if ready is False:
+            _log("capture {!r}: PrepareToCapture returned False (writer not ready); "
+                 "aborting. Check the capture format + folder in SharpCap.".format(label))
+            return
         try:
             _run_on_ui(cam.RunCapture)
         except Exception:

@@ -300,14 +300,17 @@ folder + format (*File → SharpCap Settings → General → Capture Folder*).
 ### `RunCapture failed: SystemError: No writer object when trying to initialize it`
 
 Camera selected, live view running, a *manual* capture works — but the
-scripted trigger throws this. SharpCap is a WPF app and its capture-writer
-initialisation is **UI-thread-affine**; the listener runs the capture on a
-background thread, so the direct `RunCapture()` couldn't build the writer.
-Fixed in **v0.21.8**: the listener now marshals `RunCapture()`/`StopCapture()`
-onto SharpCap's WPF dispatcher (the pre-roll/duration timing stays on the
-background thread, so the UI never freezes). The log should show
+scripted trigger (and even a bare `SharpCap.SelectedCamera.RunCapture()` in
+SharpCap's own console) throws this. The capture-file **writer is built by
+`PrepareToCapture()`**, which `RunCapture()` does not call itself — without it
+the writer object is null. Fixed in **v0.21.10**: the listener now calls
+`PrepareToCapture()` (must return `True`) immediately before `RunCapture()`.
+
+Separately, all capture calls are marshalled onto SharpCap's WPF dispatcher
+(v0.21.8) so they run on the UI thread — the pre-roll/duration timing stays on
+the background thread, so the UI never freezes. The log shows
 `ui-marshal: using WPF Application.Current.Dispatcher` once, then
-`StopCapture done`.
+`PrepareToCapture + RunCapture …` and finally `StopCapture done`.
 
 > Getting the fix requires the **bootstrap auto-download to actually work** —
 > see the next item.
