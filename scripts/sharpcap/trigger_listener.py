@@ -324,6 +324,55 @@ def _transfer_new_files(pre_snapshot, label):
             _log("transfer {!r}: failed for {}:\n{}".format(label, src, traceback.format_exc()))
 
 
+# SharpCap is a WPF .NET app and its capture-writer init is UI-thread-affine.
+# _do_capture runs on a background thread, so calling cam.RunCapture() /
+# StopCapture() directly there fails with "No writer object when trying to
+# initialize it" even though a manual (UI-thread) capture works fine. We
+# marshal just those two calls onto the WPF dispatcher; the timing (pre-roll
+# + duration sleeps) stays on the background thread so the UI never freezes.
+# Resolved once and cached. If no WPF dispatcher is available (older/non-WPF
+# host) we fall back to a direct call, so behaviour is never worse than before.
+_ui_dispatcher = None
+_ui_action = None
+_ui_resolved = False
+
+
+def _resolve_ui():
+    global _ui_dispatcher, _ui_action, _ui_resolved
+    if _ui_resolved:
+        return
+    _ui_resolved = True
+    try:
+        import clr  # noqa: F401  (IronPython .NET bridge)
+        try:
+            clr.AddReference("PresentationFramework")
+            clr.AddReference("WindowsBase")
+        except Exception:
+            pass   # often already loaded by the SharpCap host
+        from System.Windows import Application
+        from System import Action
+        app = Application.Current
+        if app is not None and app.Dispatcher is not None:
+            _ui_dispatcher = app.Dispatcher
+            _ui_action = Action
+            _log("ui-marshal: using WPF Application.Current.Dispatcher")
+        else:
+            _log("ui-marshal: no WPF Application.Current; capture calls run direct")
+    except Exception:
+        _log("ui-marshal: WPF dispatcher unavailable; capture calls run direct:\n"
+             + traceback.format_exc())
+
+
+def _run_on_ui(func):
+    """Run func on SharpCap's UI thread when possible, else directly. Invoke is
+    synchronous and re-raises func's exception on this thread, so the caller's
+    try/except still sees RunCapture/StopCapture failures."""
+    _resolve_ui()
+    if _ui_dispatcher is not None and _ui_action is not None:
+        return _ui_dispatcher.Invoke(_ui_action(func))
+    return func()
+
+
 def _do_capture(label, pre_roll_s, duration_s):
     """Wait pre_roll_s, then start a capture for duration_s. Runs in its own
     thread so the listener can keep accepting reject-only follow-ups."""
@@ -345,13 +394,13 @@ def _do_capture(label, pre_roll_s, duration_s):
         pre_snapshot = _scan_capture_dir() if TRANSFER_ENABLED else {}
         _log("capture {!r}: RunCapture (duration {:.2f}s)".format(label, duration_s))
         try:
-            cam.RunCapture()
+            _run_on_ui(cam.RunCapture)
         except Exception:
             _log("capture {!r}: RunCapture failed:\n{}".format(label, traceback.format_exc()))
             return
         time.sleep(duration_s)
         try:
-            cam.StopCapture()
+            _run_on_ui(cam.StopCapture)
             _log("capture {!r}: StopCapture done".format(label))
         except Exception:
             _log("capture {!r}: StopCapture failed:\n{}".format(label, traceback.format_exc()))
