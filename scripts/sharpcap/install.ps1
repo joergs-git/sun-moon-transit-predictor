@@ -59,8 +59,62 @@ param(
     [string[]]$Exts,             # extensions to transfer, e.g. .ser,.txt
     [int]$Port,                  # listener TCP port
     [string]$Token,              # shared secret (must match predictor's sharpcap.token)
-    [switch]$PickFolders         # pick source + destination via a folder dialog
+    [switch]$PickFolders,        # pick source + destination via a folder dialog
+    [switch]$Help                # print usage and exit
 )
+
+if ($Help) {
+@"
+sun-moon-transit-predictor — SharpCap trigger installer (install / start / update)
+
+USAGE
+  powershell -ExecutionPolicy Bypass -File install.ps1 [options]
+
+WHAT IT DOES
+  Downloads the latest listener from GitHub, sets up a bootstrap that pulls the
+  newest version on every SharpCap start (no versioning), and writes a local,
+  update-safe config for the watched folder + network destination. Re-running
+  doubles as the updater.
+
+OPTIONS
+  -Branch <name>        Git branch to pull from (default: main). Before the
+                        feature PR is merged: -Branch claude/sharpcap-windows-trigger-DHPcL
+  -InstallDir <path>    Install folder (default: %LOCALAPPDATA%\stp-sharpcap)
+  -StartSharpCap        Launch SharpCap after install
+  -InstallPython        Also install CPython via winget (NOT needed by the
+                        listener; only for the optional host-side test tooling)
+
+  Capture transfer to a network drive (machine-local, survives auto-update):
+  -EnableTransfer       Turn the post-capture .ser transfer on (pops folder
+                        pickers if -SourceDir/-DestDir are omitted)
+  -DisableTransfer      Turn it off
+  -SourceDir <path>     SharpCap capture folder to watch (subfolders included)
+  -DestDir <path>       Network destination (UNC \\server\share or mapped Z:\)
+  -PickFolders          Choose source + destination in a folder dialog
+  -Move | -Copy         Move (delete local) or copy (default)
+  -Exts .ser,.txt       Extensions to transfer (default: .ser)
+
+  Listener network:
+  -Port <n>             Listener TCP port (default 9999; match predictor)
+  -Token <secret>       Shared secret (match predictor's sharpcap.token)
+
+  -Help                 Show this help
+
+EXAMPLES
+  # First install, pick folders in a dialog, start SharpCap:
+  .\install.ps1 -EnableTransfer -StartSharpCap
+
+  # Explicit paths (before the PR is merged):
+  .\install.ps1 -Branch claude/sharpcap-windows-trigger-DHPcL ``
+                -EnableTransfer -SourceDir 'C:\SharpCap Captures' -DestDir '\\NAS\transits'
+
+  # Update later (just re-run; settings are preserved):
+  .\install.ps1
+
+For full docs: scripts/sharpcap/README.md   (or: Get-Help .\install.ps1 -Detailed)
+"@ | Write-Host
+    return
+}
 
 $ErrorActionPreference = "Stop"
 

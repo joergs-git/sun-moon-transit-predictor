@@ -203,4 +203,49 @@ describe('SharpCapTrigger', () => {
     expect(res.sent).toBe(false);
     expect(res.error.message).toMatch(/timeout/);
   });
+
+  describe('testTrigger', () => {
+    it('sends an immediate zero-pre-roll capture of the given duration', async () => {
+      const { netImpl, created } = makeFakeNet({ replyLine: '{"ok":true,"captureId":"t-1"}\n' });
+      const t = new SharpCapTrigger(
+        { enabled: true, host: 'pc' },
+        { netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+      );
+      const res = await t.testTrigger(2);
+      expect(res.sent).toBe(true);
+      const sent = JSON.parse(created[0].writes[0]);
+      expect(sent.label).toBe('manual-test');
+      expect(sent.preRollS).toBe(0);
+      expect(sent.durationS).toBe(2);
+    });
+
+    it('works even when the trigger is disabled (host is enough)', async () => {
+      const { netImpl } = makeFakeNet({ replyLine: '{"ok":true}\n' });
+      const t = new SharpCapTrigger(
+        { enabled: false, host: 'pc' },
+        { netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+      );
+      const res = await t.testTrigger();
+      expect(res.sent).toBe(true);
+    });
+
+    it('refuses when no host is configured', async () => {
+      const t = new SharpCapTrigger({ enabled: true, host: '' });
+      const res = await t.testTrigger();
+      expect(res.sent).toBe(false);
+      expect(res.reason).toBe('no-host');
+    });
+
+    it('defaults to a 2 s duration and includes the token', async () => {
+      const { netImpl, created } = makeFakeNet({ replyLine: '{"ok":true}\n' });
+      const t = new SharpCapTrigger(
+        { enabled: true, host: 'pc', token: 'sekret' },
+        { netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+      );
+      await t.testTrigger();
+      const sent = JSON.parse(created[0].writes[0]);
+      expect(sent.durationS).toBe(2);
+      expect(sent.token).toBe('sekret');
+    });
+  });
 });
