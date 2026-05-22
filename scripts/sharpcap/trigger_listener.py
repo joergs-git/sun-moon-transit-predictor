@@ -66,6 +66,21 @@ TRANSFER_RESCAN_S = 2.0            # if nothing new yet, wait this long and scan
 _state_lock = threading.Lock()
 _capture_active = False
 
+# Reject non-finite trigger numbers (NaN / +/-inf). float("nan") does NOT
+# raise, so a malformed packet like {"durationS": NaN} would otherwise slip
+# past the <= 0 and > MAX guards (every comparison with NaN is False) and
+# reach time.sleep(NaN) in _do_capture — which raises AFTER RunCapture() but
+# BEFORE StopCapture(), leaving the camera recording until manual stop.
+# Implemented without math.isfinite so it also runs on the older IronPython
+# bundled with some SharpCap builds: NaN is the only value not equal to
+# itself, and the explicit inf membership test catches the rest.
+_INF = float("inf")
+_NEG_INF = float("-inf")
+
+
+def _is_finite(x):
+    return x == x and x != _INF and x != _NEG_INF
+
 
 def _log(line):
     msg = "[{}] {}".format(time.strftime("%Y-%m-%dT%H:%M:%S"), line)
@@ -357,6 +372,10 @@ def _handle_conn(conn, addr):
             duration_s = 0.0
         label = str(req.get("label", "unlabeled"))
 
+        # Reject NaN/inf before any range check — see _is_finite above.
+        if not _is_finite(duration_s) or not _is_finite(pre_roll_s):
+            conn.sendall(b'{"ok": false, "error": "bad-number"}\n')
+            return
         if duration_s <= 0:
             conn.sendall(b'{"ok": false, "error": "bad-duration"}\n')
             return
