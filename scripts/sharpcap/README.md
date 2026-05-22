@@ -213,7 +213,14 @@ the form (no save needed). Changes hot-reload and persist to
 When the trigger is enabled, a small readout appears in the header next to the
 clock — `🎥 ☀ Sun · 3×` — showing the armed body and how many captures it has
 armed this session (resets on service restart). It is hidden entirely when the
-trigger is off.
+trigger is off. Rows in History & Live-Tracking whose transit had a capture
+armed get a **⚡ next to the traffic-light** (also a session marker).
+
+**Focused alerts:** while the trigger is enabled, aircraft Pushovers for the
+*other* disc are suppressed — if it's armed for the Sun you won't get Moon
+buzzes, and vice versa (you're pointed at the armed body, so the other is just
+noise). History and all stats still record both bodies; the ISS is exempt. Turn
+the trigger off and both bodies push as normal again.
 
 Or edit `config/service.json` directly:
 

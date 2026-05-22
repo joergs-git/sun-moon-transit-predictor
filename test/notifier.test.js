@@ -49,6 +49,35 @@ describe('Notifier', () => {
     expect(px.calls[0].title).toMatch(/^Sun crosser - sep \d+\.\d+° /);
   });
 
+  it('suppresses the Pushover for a body outside pushBodies but still records it', async () => {
+    const px = new FakePushover();
+    const recorded = [];
+    const n = new Notifier({ pushover: px, pushBodies: ['Sun'], onEvent: (e) => recorded.push(e) });
+    const moon = makeCandidate({ body: 'Moon', closestInMs: 90_000, level: 'candidate' });
+    const events = await n.tick([moon], 1_000_000_000_000);
+    // History record still happens (stats stay complete)…
+    expect(recorded.some((e) => e.candidate.body === 'Moon')).toBe(true);
+    // …but no phone buzz for the non-armed body.
+    expect(px.calls.length).toBe(0);
+    expect(events.length).toBe(0);
+  });
+
+  it('still pushes the allowed body when pushBodies is set', async () => {
+    const px = new FakePushover();
+    const n = new Notifier({ pushover: px, pushBodies: ['Sun'] });
+    const sun = makeCandidate({ body: 'Sun', closestInMs: 90_000, level: 'candidate' });
+    await n.tick([sun], 1_000_000_000_000);
+    expect(px.calls.length).toBe(1);
+  });
+
+  it('exempts the ISS from the pushBodies filter', async () => {
+    const px = new FakePushover();
+    const iss = { ...makeCandidate({ body: 'Moon', closestInMs: 90_000, level: 'candidate' }), isISS: true };
+    const n = new Notifier({ pushover: px, pushBodies: ['Sun'] });
+    await n.tick([iss], 1_000_000_000_000);
+    expect(px.calls.length).toBe(1);
+  });
+
   it('sends a radio notification first when first sighting is level=radio', async () => {
     const px = new FakePushover();
     const n = new Notifier({ pushover: px });

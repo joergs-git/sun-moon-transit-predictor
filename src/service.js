@@ -335,6 +335,12 @@ export async function runService({
   // Session-cumulative count of captures this trigger has armed (resets on
   // restart). Surfaced in state.sharpcap for the header status readout.
   let sharpcapArmedCount = 0;
+  // Recent armed episodes — {icao, body, closestAtMs, armedAtMs}, capped — so
+  // the UI can put a ⚡ next to the matching Live / History row. In-memory:
+  // resets on restart (a history row recorded before this run won't show the
+  // bolt). Capped to keep /api/state small.
+  const SHARPCAP_ARMED_MAX = 200;
+  const sharpcapArmedLog = [];
 
   // Short Pushover when a capture is armed: the key params + ETA to closest
   // approach + the −pre/+post recording window. Best-effort; never blocks.
@@ -373,6 +379,11 @@ export async function runService({
       sharpcap.armForCandidate(c, nowMs).then((res) => {
         if (res.sent) {
           sharpcapArmedCount += 1;
+          sharpcapArmedLog.push({
+            icao: c.icao ?? null, body: c.body,
+            closestAtMs: c.closestApproachAtMs, armedAtMs: Date.now(),
+          });
+          if (sharpcapArmedLog.length > SHARPCAP_ARMED_MAX) sharpcapArmedLog.shift();
           logger.info?.(`sharpcap: capture armed for ${who} (${res.response?.captureId ?? ''})`);
           notifySharpcapTrigger(c, res);
         } else if (res.error) {
@@ -1181,6 +1192,15 @@ export async function runService({
       snapshotLifecycle();
     }
 
+    // When the SharpCap trigger is armed for one disc, the other disc's
+    // aircraft Pushovers are just noise (you're pointed at the armed body),
+    // so suppress them. Disabled trigger → both bodies push as before. ISS is
+    // exempt (rare + valuable; handled by the notifier's isISS check).
+    notifier.pushBodies = (sharpcap.enabled && Array.isArray(config.sharpcap.bodies)
+      && config.sharpcap.bodies.length)
+      ? config.sharpcap.bodies
+      : null;
+
     try {
       // ISS rides the same notifier path as aircraft → Pushover the moment a
       // transit is predicted, plus the History row(s) via its onEvent hook.
@@ -1208,6 +1228,7 @@ export async function runService({
       enabled: sharpcap.enabled,
       body: scBodies.length === 1 ? scBodies[0] : scBodies.join('+'),
       armedCount: sharpcapArmedCount,
+      armed: sharpcapArmedLog.slice(),
     };
   }
 

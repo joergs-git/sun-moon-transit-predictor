@@ -129,15 +129,36 @@ function visInfo(elDeg) {
 }
 // One leftmost <td> for both tables. Neutral dot when elevation is unknown
 // (e.g. ISS visible-pass entries without an aircraftAtClosest sample).
-function visCell(elDeg) {
+// SharpCap-armed episodes from /api/state (set in pollState). Lets us put a
+// ⚡ next to a row whose transit had a capture armed. In-memory on the server
+// (resets on restart), so the bolt is a session indicator, not historical.
+let sharpcapArmedLog = [];
+const ARMED_TOL_MS = 120_000;   // match an episode within ±2 min of closest
+function isArmed(icao, body, closestMs) {
+  if (!icao || !Number.isFinite(closestMs) || !sharpcapArmedLog.length) return false;
+  const hex = String(icao).toLowerCase();
+  return sharpcapArmedLog.some((a) =>
+    String(a.icao ?? '').toLowerCase() === hex
+    && a.body === body
+    && Math.abs((a.closestAtMs ?? 0) - closestMs) <= ARMED_TOL_MS);
+}
+// Small ⚡ appended inside the vis cell when a capture was armed for this row.
+function armedBolt(armed) {
+  return armed
+    ? '<span class="armed-bolt" title="SharpCap capture armed for this transit this session.">⚡</span>'
+    : '';
+}
+
+function visCell(elDeg, armed = false) {
+  const bolt = armedBolt(armed);
   const v = visInfo(elDeg);
   if (!v) {
     return '<td class="td-icon vis-cell" title="elevation at closest approach unknown">'
-      + '<span class="vis-dot vis-unknown">·</span></td>';
+      + `<span class="vis-dot vis-unknown">·</span>${bolt}</td>`;
   }
   const t = `${elDeg.toFixed(0)}° elevation — visibility ${v.word} `
     + `(red <${VIS_AMBER_DEG}° · amber ${VIS_AMBER_DEG}–${VIS_GREEN_DEG}° · green ≥${VIS_GREEN_DEG}°)`;
-  return `<td class="td-icon vis-cell" title="${t}"><span class="vis-dot ${v.cls}">●</span></td>`;
+  return `<td class="td-icon vis-cell" title="${t}"><span class="vis-dot ${v.cls}">●</span>${bolt}</td>`;
 }
 
 // Unified row highlight (v0.15.0). GREEN only = a *real* Sun/Moon disc
@@ -280,7 +301,7 @@ function renderTracking(state) {
     const bodyIcon = e.body === 'Sun' ? '☀' : '🌙';
     const elDeg = e.candidate?.aircraftAtClosest?.elevationDeg;
     tr.innerHTML = `
-      ${visCell(elDeg)}
+      ${visCell(elDeg, isArmed(e.icao, e.body, e.closestApproachAtMs))}
       <td class="body-${e.body} td-icon" title="${e.body}">${bodyIcon}</td>
       <td><span class="status status-${e.status}" title="${meta.label}">${meta.icon} ${meta.label}</span></td>
       <td>${eta}</td>
@@ -360,7 +381,7 @@ function historyTr(e, absIdx) {
   const bodyIcon = e.body === 'Sun' ? '☀' : '🌙';
   const elDeg = e.payload?.candidate?.aircraftAtClosest?.elevationDeg;
   tr.innerHTML = `
-    ${visCell(elDeg)}
+    ${visCell(elDeg, isArmed(e.icao, e.body, e.closest_at_ms))}
     <td class="body-${e.body} td-icon" title="${e.body}">${bodyIcon}</td>
     <td class="stage-${e.stage}">${fmtDateTime(e.closest_at_ms)}</td>
     <td>${fmtDateTime(e.recorded_at_ms)}</td>
@@ -520,6 +541,9 @@ async function pollState() {
     const res = await fetch('/api/state');
     if (!res.ok) throw new Error(res.status);
     const state = await res.json();
+    // Refresh the armed-episode list BEFORE rendering the tables so the ⚡
+    // markers reflect the latest tick.
+    sharpcapArmedLog = Array.isArray(state.sharpcap?.armed) ? state.sharpcap.armed : [];
     renderSky(state);
     renderIssPass(state.iss);
     renderTracking(state);

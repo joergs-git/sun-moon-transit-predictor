@@ -99,6 +99,8 @@ h2 { font-size: 14px; margin: 16px 0 8px; color: var(--accent); text-transform: 
 .status { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); }
 .status.live { color: var(--ok); }
 .status.stale { color: var(--warn); }
+/* ⚡ next to the traffic-light when a SharpCap capture was armed for a row. */
+.armed-bolt { margin-left: 3px; font-size: 11px; filter: drop-shadow(0 0 2px var(--accent)); }
 /* SharpCap trigger readout next to the clock — armed body + session count. */
 .sc-status {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;

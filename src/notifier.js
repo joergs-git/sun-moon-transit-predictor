@@ -153,6 +153,11 @@ export class Notifier {
     this.radioThresholdDeg = opts.radioThresholdDeg ?? DEFAULT_RADIO_THRESHOLD_DEG;
     // 0 (or non-finite) disables the elevation gate entirely.
     this.minElevationDeg = opts.minElevationDeg ?? 0;
+    // Pushover-only body allow-list. null/empty = push for all bodies. When
+    // set (e.g. the SharpCap trigger is armed for one disc) only those bodies
+    // buzz the phone; the other disc still records to History/stats. ISS is
+    // exempt. Settable at runtime by the service.
+    this.pushBodies = opts.pushBodies ?? null;
     this.baseUrl = opts.baseUrl;
     /** @type {Map<string, { radioSent: boolean, candidateSent: boolean,
      *                       imminentSent: boolean, lastClosestMs: number }>} */
@@ -261,6 +266,14 @@ export class Notifier {
 
       // ---- Pushover dispatch: unchanged gating ----
       if (!sendStage) continue;
+      // Body allow-list (Pushover-only): when the SharpCap trigger is armed
+      // for one disc, the other disc's aircraft alerts are noise — suppress
+      // the phone buzz but keep the History record above. ISS is exempt.
+      if (!cand.isISS && Array.isArray(this.pushBodies) && this.pushBodies.length
+          && !this.pushBodies.includes(cand.body)) {
+        mark('Sent', sendStage);
+        continue;
+      }
       if (!this._stageAllowed(sendStage)) {
         // minStage opt-out: mark sent (and lower, by subsumption) so we
         // don't reconsider on the next tick.
