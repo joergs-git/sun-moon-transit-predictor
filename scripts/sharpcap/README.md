@@ -251,6 +251,34 @@ Or edit `config/service.json` directly:
 | `bodies`          | which disc to record — a one-element array, `["Sun"]` or `["Moon"]` (the Settings panel exposes this as a single-select; one scope tracks one disc at a time) |
 | `dedupMs`         | suppress identical `(icao, body)` re-triggers within this window              |
 | `notifyOnTrigger` | send a Pushover (flight, separation, ETA, −pre/+post window) when armed       |
+| `targets`         | **multi-rig** — array of per-telescope overrides (see below). Empty = single rig using the fields above |
+
+### Two (or more) telescopes — `targets` (v0.24.0)
+
+Drive different bodies on different rigs/PCs — e.g. an Hα solar scope for the
+Sun on one machine and a normal scope for the Moon on another. Each entry runs
+its **own SharpCap listener** on its own `host:port`, inherits the shared
+sharpcap knobs (sep / drift / elevation / cap / dedup / re-arm) and overrides
+just what differs. Routing is automatic: a Sun candidate arms only rigs whose
+`bodies` include `"Sun"`, a Moon candidate only Moon rigs — each with
+independent dedup + re-arm state. The header readout shows the union
+(`🎥 ☀🌙 · N×`) with a per-rig tooltip; the off-body Pushover suppression uses
+the union too (Sun-rig + Moon-rig → both push).
+
+```json
+"sharpcap": {
+  "enabled": true,
+  "maxSepDeg": 0.5, "leadDriftFrac": 0.5, "maxCaptureS": 115,
+  "targets": [
+    { "name": "Ha-Sun", "host": "192.168.1.99", "port": 9999, "bodies": ["Sun"],  "preBufferS": 8,  "postBufferS": 8 },
+    { "name": "Moon",    "host": "192.168.1.50", "port": 9999, "bodies": ["Moon"], "preBufferS": 12, "postBufferS": 12 }
+  ]
+}
+```
+
+Each PC runs the same listener install (`install.ps1`), just with its own
+camera/scope. `enabled` is the master switch; a rig is active when it has a
+`host`. Per-rig `token` is optional (falls back to the base token).
 
 ### How arming works (v0.21.11 — "never miss a transit")
 

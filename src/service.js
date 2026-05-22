@@ -166,6 +166,12 @@ export const DEFAULT_CONFIG = {
     reArmShiftS: 12,
     // Send a Pushover when a capture is actually triggered (key params + ETA).
     notifyOnTrigger: true,
+    // Multi-rig: leave empty for a single rig (host/port/bodies above). To
+    // drive two telescopes on two PCs, list them here — each overrides the
+    // base fields and is routed by its own `bodies`, e.g.
+    //   [ { "name":"Ha-Sun","host":"192.168.1.99","bodies":["Sun"] },
+    //     { "name":"Moon","host":"192.168.1.50","bodies":["Moon"] } ]
+    targets: [],
   },
   // ISS transits (offline SGP4 from a TLE file). Inactive until a TLE is
   // present at tlePath — fetch it opt-in with scripts/refresh-tle.js. The
@@ -345,32 +351,57 @@ export async function runService({
   // or returns a soft miss.
   const freeAircraft = new AircraftLookup({ fetchImpl });
 
-  // SharpCap live capture trigger — fires on the configured stage (default
-  // 'imminent') independent of the Pushover gates, so even silenced-phone
-  // alerts still record the transit on the Windows-side telescope rig.
-  const sharpcap = new SharpCapTrigger(config.sharpcap, { logger });
-  // Session-cumulative count of captures this trigger has armed (resets on
+  // SharpCap live capture trigger(s). One SharpCapTrigger per target rig so a
+  // multi-scope site can record different bodies on different PCs — e.g. an
+  // Hα solar scope (Sun) on one host and a normal scope (Moon) on another.
+  // Each target inherits the shared sharpcap knobs (sep/drift/elevation/…) and
+  // overrides host/port/bodies/buffers; routing is automatic via each
+  // trigger's body filter (a Sun candidate arms only Sun targets, etc.). No
+  // `targets` array → a single implicit target = the base config (back-compat).
+  function buildSharpcapTargets() {
+    const base = config.sharpcap;
+    const list = Array.isArray(base.targets) && base.targets.length ? base.targets : [base];
+    return list.map((t, i) => {
+      const merged = { ...base, ...t };
+      delete merged.targets;
+      return {
+        name: t.name ?? base.name ?? `rig-${i + 1}`,
+        trigger: new SharpCapTrigger(merged, { logger }),
+      };
+    });
+  }
+  let sharpcapTargets = buildSharpcapTargets();
+  const sharpcapAnyEnabled = () => sharpcapTargets.some((t) => t.trigger.enabled);
+  // Union of bodies across enabled rigs — drives both notifier.pushBodies and
+  // the header readout. If Sun is armed on rig A and Moon on rig B, both push.
+  const sharpcapArmedBodies = () => {
+    const s = new Set();
+    for (const { trigger } of sharpcapTargets) {
+      if (trigger.enabled) for (const b of (trigger.config.bodies ?? [])) s.add(b);
+    }
+    return Array.from(s);
+  };
+  // Session-cumulative count of captures armed across all rigs (resets on
   // restart). Surfaced in state.sharpcap for the header status readout.
   let sharpcapArmedCount = 0;
-  // Recent armed episodes — {icao, body, closestAtMs, armedAtMs}, capped — so
-  // the UI can put a ⚡ next to the matching Live / History row. In-memory:
-  // resets on restart (a history row recorded before this run won't show the
-  // bolt). Capped to keep /api/state small.
+  // Recent armed episodes — {icao, body, closestAtMs, armedAtMs, rig}, capped —
+  // so the UI can put a ⚡ next to the matching Live / History row. In-memory:
+  // resets on restart. Capped to keep /api/state small.
   const SHARPCAP_ARMED_MAX = 200;
   const sharpcapArmedLog = [];
 
   // Short Pushover when a capture is armed: the key params + ETA to closest
   // approach + the −pre/+post recording window. Best-effort; never blocks.
-  function notifySharpcapTrigger(candidate, res) {
-    if (config.sharpcap.notifyOnTrigger === false) return;
+  function notifySharpcapTrigger(candidate, res, rig, trigCfg) {
+    if (trigCfg.notifyOnTrigger === false) return;
     const flight = candidate.callsign ?? candidate.icao?.toUpperCase() ?? 'unknown';
     const etaS = Math.round((candidate.closestApproachAtMs - Date.now()) / 1000);
     const sep = Number.isFinite(candidate.closestApproachSepDeg)
       ? candidate.closestApproachSepDeg.toFixed(2) : '?';
-    const pre = config.sharpcap.preBufferS;
-    const post = config.sharpcap.postBufferS;
+    const pre = trigCfg.preBufferS;
+    const post = trigCfg.postBufferS;
     const msg = {
-      title: `🎥 SharpCap REC · ${candidate.body}`,
+      title: `🎥 SharpCap REC · ${rig} · ${candidate.body}`,
       message: [
         `✈ ${flight} · ${candidate.body} transit`,
         `sep ${sep}° · ETA ${etaS}s`,
@@ -383,39 +414,41 @@ export async function runService({
   }
 
   // Tick-based SharpCap arming — the "never miss a transit" path. Called every
-  // tick with the live candidate list; SharpCapTrigger.armForCandidate gates
-  // on body/sep/elevation/time + dedup, so each crossing arms exactly one
-  // capture as soon as the pre-roll fits the listener cap. Quiet reasons
-  // (too-early / too-wide / deduped / body-filtered) are NOT logged — they
-  // fire every tick for distant or off-band traffic; only real skips
-  // (too-low / too-late) and failures are surfaced so a miss is never silent.
+  // tick with the live candidate list, for every target rig. Each rig's
+  // armForCandidate gates on body/sep/elevation/time + dedup, so a Sun
+  // candidate arms only the Sun rig(s) and a Moon candidate only the Moon
+  // rig(s), each with independent dedup/re-arm state. Quiet reasons (too-early
+  // / too-wide / deduped / body-filtered) are not logged.
   function armSharpcapForCandidates(candidates, nowMs) {
-    if (!sharpcap.enabled) return;
+    if (!sharpcapAnyEnabled()) return;
     for (const c of candidates) {
       const who = `${c.icao ?? c.callsign ?? '?'}|${c.body}`;
-      sharpcap.armForCandidate(c, nowMs).then((res) => {
-        if (res.sent) {
-          // A re-arm replaces the same episode's pending capture — don't
-          // double-count it, just update the recorded closest time.
-          if (!res.reArmed) {
-            sharpcapArmedCount += 1;
-            sharpcapArmedLog.push({
-              icao: c.icao ?? null, body: c.body,
-              closestAtMs: c.closestApproachAtMs, armedAtMs: Date.now(),
-            });
-            if (sharpcapArmedLog.length > SHARPCAP_ARMED_MAX) sharpcapArmedLog.shift();
+      for (const { name, trigger } of sharpcapTargets) {
+        if (!trigger.enabled) continue;
+        trigger.armForCandidate(c, nowMs).then((res) => {
+          if (res.sent) {
+            // A re-arm replaces the same episode's pending capture — don't
+            // double-count it, just refresh the time on the listener.
+            if (!res.reArmed) {
+              sharpcapArmedCount += 1;
+              sharpcapArmedLog.push({
+                icao: c.icao ?? null, body: c.body,
+                closestAtMs: c.closestApproachAtMs, armedAtMs: Date.now(), rig: name,
+              });
+              if (sharpcapArmedLog.length > SHARPCAP_ARMED_MAX) sharpcapArmedLog.shift();
+            }
+            logger.info?.(`sharpcap[${name}]: capture ${res.reArmed ? 're-armed' : 'armed'} for ${who} (${res.response?.captureId ?? ''})`);
+            if (!res.reArmed) notifySharpcapTrigger(c, res, name, trigger.config);
+          } else if (res.error) {
+            logger.warn?.(`sharpcap[${name}] arm failed for ${who}: ${res.error?.message ?? res.error}`);
+          } else if (res.reason === 'too-low' || res.reason === 'too-late') {
+            logger.info?.(`sharpcap[${name}]: arm skipped for ${who}: ${res.reason}`
+              + (Number.isFinite(c.aircraftAtClosest?.elevationDeg)
+                ? ` (el ${c.aircraftAtClosest.elevationDeg.toFixed(0)}°, minEl ${trigger.config.minElevationDeg}°)`
+                : ''));
           }
-          logger.info?.(`sharpcap: capture ${res.reArmed ? 're-armed' : 'armed'} for ${who} (${res.response?.captureId ?? ''})`);
-          if (!res.reArmed) notifySharpcapTrigger(c, res);
-        } else if (res.error) {
-          logger.warn?.(`sharpcap arm failed for ${who}: ${res.error?.message ?? res.error}`);
-        } else if (res.reason === 'too-low' || res.reason === 'too-late') {
-          logger.info?.(`sharpcap: arm skipped for ${who}: ${res.reason}`
-            + (Number.isFinite(c.aircraftAtClosest?.elevationDeg)
-              ? ` (el ${c.aircraftAtClosest.elevationDeg.toFixed(0)}°, minEl ${config.sharpcap.minElevationDeg}°)`
-              : ''));
-        }
-      }).catch((e) => logger.warn?.('sharpcap arm threw:', e?.message ?? e));
+        }).catch((e) => logger.warn?.(`sharpcap[${name}] arm threw:`, e?.message ?? e));
+      }
     }
   }
 
@@ -614,6 +647,18 @@ export async function runService({
         notifyOnTrigger: config.sharpcap.notifyOnTrigger !== false,
         tokenMasked: mask(config.sharpcap.token),
         hasToken: Boolean(config.sharpcap.token),
+        // Multi-rig targets (tokens masked). Empty/absent → single-rig mode
+        // using the fields above.
+        targets: (config.sharpcap.targets ?? []).map((t) => ({
+          name: t.name ?? null,
+          host: t.host ?? '',
+          port: t.port ?? config.sharpcap.port,
+          bodies: t.bodies ?? config.sharpcap.bodies,
+          preBufferS: t.preBufferS ?? config.sharpcap.preBufferS,
+          postBufferS: t.postBufferS ?? config.sharpcap.postBufferS,
+          tokenMasked: mask(t.token),
+          hasToken: Boolean(t.token ?? config.sharpcap.token),
+        })),
       },
       _servicePath: configPaths.service ?? null,
     };
@@ -833,9 +878,31 @@ export async function runService({
       if (typeof s.token === 'string' && s.token && !s.token.startsWith('••••')) {
         config.sharpcap.token = s.token.trim();
       }
-      // SharpCapTrigger reads this.config on every call → in-place mutation
-      // hot-reloads it; no reconstruction needed.
-      sharpcap.config = config.sharpcap;
+      if ('targets' in s) {
+        // Multi-rig: an array of { name?, host, port?, bodies?, preBufferS?,
+        // postBufferS?, token?, … } overriding the base config per rig. Each
+        // entry is validated; an empty array clears multi-rig (back to single).
+        if (s.targets != null && !Array.isArray(s.targets)) {
+          throw new Error('sharpcap.targets must be an array');
+        }
+        const targets = (s.targets ?? []).map((t, i) => {
+          if (!t || typeof t !== 'object') throw new Error(`sharpcap.targets[${i}] must be an object`);
+          if (typeof t.host !== 'string' || !t.host.trim()) throw new Error(`sharpcap.targets[${i}].host is required`);
+          if ('port' in t) {
+            const v = Number(t.port);
+            if (!Number.isInteger(v) || v < 1 || v > 65535) throw new Error(`sharpcap.targets[${i}].port must be 1–65535`);
+          }
+          if ('bodies' in t) {
+            const raw = Array.isArray(t.bodies) ? t.bodies : [t.bodies];
+            if (!raw.every((b) => b === 'Sun' || b === 'Moon')) throw new Error(`sharpcap.targets[${i}].bodies must be Sun/Moon`);
+          }
+          return { ...t, host: t.host.trim() };
+        });
+        config.sharpcap.targets = targets;
+      }
+      // Rebuild the trigger set from the updated config (per-rig dedup/re-arm
+      // state resets, which is fine on a manual settings change).
+      sharpcapTargets = buildSharpcapTargets();
       applied.sharpcap = {
         enabled: config.sharpcap.enabled,
         host: config.sharpcap.host,
@@ -846,6 +913,10 @@ export async function runService({
         minElevationDeg: config.sharpcap.minElevationDeg,
         maxSepDeg: config.sharpcap.maxSepDeg,
         bodies: config.sharpcap.bodies,
+        targets: (config.sharpcap.targets ?? []).map((t) => ({
+          name: t.name ?? null, host: t.host, port: t.port ?? config.sharpcap.port,
+          bodies: t.bodies ?? config.sharpcap.bodies, hasToken: Boolean(t.token ?? config.sharpcap.token),
+        })),
         notifyOnTrigger: config.sharpcap.notifyOnTrigger,
         hasToken: Boolean(config.sharpcap.token),
       };
@@ -962,7 +1033,10 @@ export async function runService({
         }, { logger });
         return tmp.testTrigger(durationS);
       }
-      return sharpcap.testTrigger(durationS);
+      // No explicit host → test the first configured rig that has one.
+      const first = sharpcapTargets.find((t) => t.trigger.config.host);
+      if (!first) return { sent: false, reason: 'no-host', error: new Error('no sharpcap host configured') };
+      return first.trigger.testTrigger(durationS);
     },
   });
   if (httpServer) await httpServer.start();
@@ -1213,14 +1287,12 @@ export async function runService({
       snapshotLifecycle();
     }
 
-    // When the SharpCap trigger is armed for one disc, the other disc's
-    // aircraft Pushovers are just noise (you're pointed at the armed body),
-    // so suppress them. Disabled trigger → both bodies push as before. ISS is
-    // exempt (rare + valuable; handled by the notifier's isISS check).
-    notifier.pushBodies = (sharpcap.enabled && Array.isArray(config.sharpcap.bodies)
-      && config.sharpcap.bodies.length)
-      ? config.sharpcap.bodies
-      : null;
+    // When the SharpCap trigger is armed, the other (un-armed) disc's aircraft
+    // Pushovers are just noise — suppress them. The allow-list is the UNION of
+    // bodies across all enabled rigs: Sun-rig + Moon-rig → both push; only a
+    // Sun rig → Moon stays quiet. Trigger off → null = both push. ISS exempt.
+    const scBodies = sharpcapArmedBodies();
+    notifier.pushBodies = scBodies.length ? scBodies : null;
 
     try {
       // ISS rides the same notifier path as aircraft → Pushover the moment a
@@ -1242,14 +1314,16 @@ export async function runService({
       nowMs,
     );
 
-    // Header status readout: is the trigger live, for which body, and how
-    // many captures has it armed this session.
-    const scBodies = Array.isArray(config.sharpcap.bodies) ? config.sharpcap.bodies : [];
+    // Header status readout: are any rigs live, for which bodies, how many
+    // captures armed this session, and a per-rig breakdown for the tooltip.
     state.sharpcap = {
-      enabled: sharpcap.enabled,
-      body: scBodies.length === 1 ? scBodies[0] : scBodies.join('+'),
+      enabled: sharpcapAnyEnabled(),
+      body: scBodies.join('+'),
       armedCount: sharpcapArmedCount,
       armed: sharpcapArmedLog.slice(),
+      targets: sharpcapTargets
+        .filter((t) => t.trigger.enabled)
+        .map((t) => ({ name: t.name, body: (t.trigger.config.bodies ?? []).join('+') })),
     };
   }
 
@@ -1275,7 +1349,7 @@ export async function runService({
     state,
     httpServer,
     notifier,
-    sharpcap,
+    get sharpcapTargets() { return sharpcapTargets; },
     store,
     config,
     /**

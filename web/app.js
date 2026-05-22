@@ -831,12 +831,19 @@ function renderSharpcapStatus(sc) {
   const el = $('#sharpcap-status');
   if (!el) return;
   if (!sc || !sc.enabled) { el.hidden = true; return; }
-  const icon = sc.body === 'Sun' ? '☀' : sc.body === 'Moon' ? '🌙' : '◐';
+  // body may be a single value or a union like "Sun+Moon" (multi-rig).
+  const bodyIcon = (b) => (b === 'Sun' ? '☀' : b === 'Moon' ? '🌙' : '◐');
+  const bodies = String(sc.body || '').split('+').filter(Boolean);
+  const icons = bodies.map(bodyIcon).join('') || '◐';
   const n = sc.armedCount ?? 0;
   el.hidden = false;
-  el.textContent = `🎥 ${icon} ${sc.body || '—'} · ${n}×`;
+  el.textContent = `🎥 ${icons} · ${n}×`;
+  // Per-rig breakdown in the tooltip when multiple targets are configured.
+  const rigs = Array.isArray(sc.targets) && sc.targets.length
+    ? '\n' + sc.targets.map((t) => `· ${t.name}: ${t.body}`).join('\n')
+    : '';
   el.title = `SharpCap capture trigger armed for ${sc.body || '—'}. `
-    + `${n} capture${n === 1 ? '' : 's'} armed this session (resets on service restart).`;
+    + `${n} capture${n === 1 ? '' : 's'} armed this session (resets on service restart).${rigs}`;
 }
 
 // ---- FOV preview pane --------------------------------------------------------

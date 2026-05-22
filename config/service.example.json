@@ -92,6 +92,7 @@
     "bodies": ["Sun"],
     "dedupMs": 60000,
     "connectTimeoutMs": 2000,
-    "notifyOnTrigger": true
+    "notifyOnTrigger": true,
+    "targets": []
   }
 }
