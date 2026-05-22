@@ -84,12 +84,13 @@
     "host": "",
     "port": 9999,
     "token": "",
-    "preBufferS": 5,
-    "postBufferS": 15,
+    "preBufferS": 10,
+    "postBufferS": 10,
     "triggerOnStage": "imminent",
     "minElevationDeg": 20,
     "bodies": ["Sun", "Moon"],
     "dedupMs": 60000,
-    "connectTimeoutMs": 2000
+    "connectTimeoutMs": 2000,
+    "notifyOnTrigger": true
   }
 }

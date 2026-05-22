@@ -120,6 +120,24 @@ export class SharpCapTrigger {
   }
 
   /**
+   * Fire an immediate, short test capture (no pre-roll), bypassing the
+   * stage/body/elevation/dedup gates. Used by the Settings "Test trigger"
+   * button to verify connectivity to the Windows host. Requires only that a
+   * host is configured — works even when `enabled` is still false so you can
+   * test before switching the feature on.
+   * @param {number} [durationS]
+   * @returns {Promise<{ sent: boolean, response?: any, error?: any, reason?: string }>}
+   */
+  async testTrigger(durationS = 2) {
+    if (!this.config?.host) {
+      return { sent: false, reason: 'no-host', error: new Error('sharpcap.host is not set') };
+    }
+    const payload = { label: 'manual-test', preRollS: 0, durationS: Math.max(1, Number(durationS) || 2) };
+    if (this.config.token) payload.token = this.config.token;
+    return this._sendPayload(payload);
+  }
+
+  /**
    * Low-level: send one JSON payload and read one JSON reply. Internal — use
    * triggerFromEvent() for the real flow.
    * @param {object} payload

@@ -83,12 +83,14 @@ async function readJsonBody(req, maxBytes = 64 * 1024) {
  *   updateConfig?: (patch: object) => Promise<{ ok: boolean, applied: object, warnings?: string[] }>,
  *   requestUpdate?: () => Promise<{ ok: boolean, pending?: boolean, message?: string }>,
  *   requestAcInfo?: (hex: string) => Promise<object|null>,
+ *   requestSharpcapTest?: (opts: { durationS?: number, host?: string, port?: number }) => Promise<{ sent: boolean, response?: object, reason?: string, error?: any }>,
  * }} opts
  */
 export function createHttpServer(opts) {
   const {
     port, host = '0.0.0.0', getState, store, webRoot,
     getConfig, updateConfig, requestUpdate, requestAcInfo, requestRoute,
+    requestSharpcapTest,
   } = opts;
 
   const server = createServer(async (req, res) => {
@@ -242,6 +244,32 @@ export function createHttpServer(opts) {
           aggregates: result.aggregates,
           recent: result.episodes.slice(0, 20),
         });
+      }
+      if (url.pathname === '/api/sharpcap-test' && req.method === 'POST') {
+        // Settings "Test trigger" → fire an immediate short capture on the
+        // Windows SharpCap host. Requires a JSON body (so a cross-site form
+        // can't drive-by trigger it without a CORS preflight this server
+        // ignores). Optional host/port test the form values before saving.
+        if (!requestSharpcapTest) return jsonResponse(res, 404, { error: 'sharpcap test api disabled' });
+        let body;
+        try { body = await readJsonBody(req); }
+        catch (e) { return jsonResponse(res, 400, { error: `bad json: ${e.message}` }); }
+        try {
+          const result = await requestSharpcapTest({
+            durationS: body?.durationS,
+            host: body?.host,
+            port: body?.port,
+          });
+          const status = result?.sent ? 200 : 502;
+          return jsonResponse(res, status, {
+            sent: Boolean(result?.sent),
+            response: result?.response ?? null,
+            reason: result?.reason ?? null,
+            error: result?.error ? String(result.error?.message ?? result.error) : null,
+          });
+        } catch (e) {
+          return jsonResponse(res, 500, { error: String(e?.message ?? e) });
+        }
       }
       if (url.pathname === '/api/health') {
         return jsonResponse(res, 200, { ok: true, time: new Date().toISOString() });

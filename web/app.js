@@ -1455,6 +1455,40 @@ settingsForm.addEventListener('submit', async (ev) => {
 });
 
 $('#settings-btn').addEventListener('click', openSettings);
+
+// SharpCap "Test trigger" — fires an immediate 2 s capture using the host/port
+// currently in the form (so you can test before saving). The saved token, if
+// any, is applied server-side.
+const sharpcapTestBtn = $('#sharpcap-test-btn');
+const sharpcapTestMsg = $('#sharpcap-test-msg');
+if (sharpcapTestBtn) {
+  sharpcapTestBtn.addEventListener('click', async () => {
+    const host = settingsForm.elements['sharpcap.host']?.value?.trim() ?? '';
+    const portRaw = settingsForm.elements['sharpcap.port']?.value ?? '';
+    const port = portRaw === '' ? undefined : Number(portRaw);
+    sharpcapTestMsg.textContent = 'triggering…';
+    sharpcapTestMsg.className = 'field-hint';
+    sharpcapTestBtn.disabled = true;
+    try {
+      const res = await fetch('/api/sharpcap-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ durationS: 2, host: host || undefined, port }),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.sent) {
+        throw new Error(body.error ?? body.reason ?? `HTTP ${res.status}`);
+      }
+      sharpcapTestMsg.textContent = `OK — ${body.response?.captureId ?? 'capture started'}`;
+      sharpcapTestMsg.className = 'field-hint ok';
+    } catch (e) {
+      sharpcapTestMsg.textContent = `failed: ${e.message ?? e}`;
+      sharpcapTestMsg.className = 'field-hint err';
+    } finally {
+      sharpcapTestBtn.disabled = false;
+    }
+  });
+}
 // History pager: "Newer" steps towards today (page 0), "Older" further back.
 $('#hp-newer').addEventListener('click', () => gotoHistoryPage(-1));
 $('#hp-older').addEventListener('click', () => gotoHistoryPage(+1));

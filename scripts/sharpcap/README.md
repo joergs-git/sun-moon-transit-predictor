@@ -59,6 +59,7 @@ Switches:
 |                   | runs in SharpCap's IronPython); only for the optional host-side `nc`   |
 |                   | test tooling                                                           |
 | `-InstallDir <p>` | override the install folder                                            |
+| `-Help`           | print full usage and exit (also `Get-Help .\install.ps1 -Detailed`)    |
 
 ### Defining the folders (do this once)
 
@@ -193,7 +194,15 @@ How it guarantees correctness:
 
 ## Configure (predictor side)
 
-In `config/service.json`:
+**Easiest: the web Settings panel.** Open the predictor UI → ⚙ Settings →
+*SharpCap capture trigger*. There you can toggle it on/off, set the Windows
+host + port, the pre-/post-roll (default −10 s / +10 s around the predicted
+transit), the minimum elevation, the "push on trigger" toggle, and hit
+**Test trigger (2 s)** to fire an immediate test capture against the host in
+the form (no save needed). Changes hot-reload and persist to
+`config/service.json`.
+
+Or edit `config/service.json` directly:
 
 ```json
 "sharpcap": {
@@ -201,25 +210,27 @@ In `config/service.json`:
   "host": "192.168.1.42",
   "port": 9999,
   "token": "",
-  "preBufferS": 5,
-  "postBufferS": 15,
+  "preBufferS": 10,
+  "postBufferS": 10,
   "triggerOnStage": "imminent",
   "minElevationDeg": 20,
   "bodies": ["Sun", "Moon"],
   "dedupMs": 60000,
-  "connectTimeoutMs": 2000
+  "connectTimeoutMs": 2000,
+  "notifyOnTrigger": true
 }
 ```
 
 | Key               | What it does                                                                  |
 |-------------------|-------------------------------------------------------------------------------|
 | `host`            | Windows PC running SharpCap                                                   |
-| `preBufferS`      | recording starts this many seconds *before* closest approach                  |
-| `postBufferS`     | recording stops this many seconds *after* closest approach                    |
+| `preBufferS`      | recording starts this many seconds *before* closest approach (default 10)     |
+| `postBufferS`     | recording stops this many seconds *after* closest approach (default 10)       |
 | `triggerOnStage`  | fire on `imminent` (default ±30 s window), `candidate`, or `radio`            |
 | `minElevationDeg` | skip when target is below this — telescope can't see anyway                   |
 | `bodies`          | which body to record (`Sun`, `Moon`, or both)                                 |
 | `dedupMs`         | suppress identical `(icao, body)` re-triggers within this window              |
+| `notifyOnTrigger` | send a Pushover (flight, separation, ETA, −pre/+post window) when armed       |
 
 ## Wire-format
 

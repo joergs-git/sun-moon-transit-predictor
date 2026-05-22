@@ -433,6 +433,30 @@
             <small class="field-hint">On-Demand API v2 base. Change only if AirNav moves the host.</small></label>
         </fieldset>
 
+        <fieldset>
+          <legend>SharpCap capture trigger</legend>
+          <label class="checkbox-row">
+            <input name="sharpcap.enabled" type="checkbox"> Enabled
+            <small class="field-hint">When an imminent transit is detected, tell a SharpCap listener on a Windows PC to start recording. See scripts/sharpcap/ for the Windows-side install.</small></label>
+          <label>Windows host<input name="sharpcap.host" type="text" autocomplete="off" spellcheck="false" placeholder="192.168.1.42 or sharpcap-pc">
+            <small class="field-hint">IP address or hostname of the PC running SharpCap with the trigger listener.</small></label>
+          <label>Port<input name="sharpcap.port" type="number" step="1" min="1" max="65535" placeholder="9999">
+            <small class="field-hint">Listener TCP port (default 9999). Must match the Windows config.</small></label>
+          <label>Pre-roll (s)<input name="sharpcap.preBufferS" type="number" step="any" min="0">
+            <small class="field-hint">Start recording this many seconds <b>before</b> the predicted transit. Default 10.</small></label>
+          <label>Post-roll (s)<input name="sharpcap.postBufferS" type="number" step="any" min="0">
+            <small class="field-hint">Keep recording this many seconds <b>after</b> the predicted transit. Default 10.</small></label>
+          <label>Min elevation °<input name="sharpcap.minElevationDeg" type="number" step="any" min="0" max="90">
+            <small class="field-hint">Don't trigger when the target is below this (telescope can't see it). 0 = off.</small></label>
+          <label class="checkbox-row">
+            <input name="sharpcap.notifyOnTrigger" type="checkbox"> Push on trigger
+            <small class="field-hint">Send a Pushover with flight, separation, ETA and the −pre/+post window whenever a capture is armed.</small></label>
+          <div class="checkbox-row">
+            <button type="button" id="sharpcap-test-btn" class="btn">Test trigger (2 s)</button>
+            <small id="sharpcap-test-msg" class="field-hint">Fires an immediate 2 s capture using the host/port above (no save needed).</small>
+          </div>
+        </fieldset>
+
         </div><!-- /.settings-fields -->
 
         <div class="settings-actions">
