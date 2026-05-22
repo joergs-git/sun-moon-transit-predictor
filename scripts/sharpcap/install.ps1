@@ -45,7 +45,20 @@ param(
     [string]$Branch = "main",
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "stp-sharpcap"),
     [switch]$InstallPython,
-    [switch]$StartSharpCap
+    [switch]$StartSharpCap,
+
+    # --- Machine-local listener settings (written to stp-sharpcap.config.json,
+    #     which survives the auto-update). Only the parameters you pass are
+    #     changed; re-running without them keeps the existing values. ---
+    [string]$SourceDir,          # SharpCap capture folder to watch (subfolders included)
+    [string]$DestDir,            # network destination, UNC or mapped drive
+    [switch]$EnableTransfer,     # turn the post-capture transfer on
+    [switch]$DisableTransfer,    # turn it off
+    [switch]$Move,               # move instead of copy
+    [switch]$Copy,               # copy instead of move (default)
+    [string[]]$Exts,             # extensions to transfer, e.g. .ser,.txt
+    [int]$Port,                  # listener TCP port
+    [string]$Token               # shared secret (must match predictor's sharpcap.token)
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,6 +106,53 @@ if ($Branch -ne "main") {
     $content = $content -replace 'BRANCH = "main"', ("BRANCH = `"" + $Branch + "`"")
     Set-Content -Path $bootstrapPath -Value $content -Encoding UTF8
     Write-Ok "bootstrap will pull from '$Branch'"
+}
+
+# ---------------------------------------------------------------------------
+# 2b. Machine-local config (folders to watch + network destination). Merged
+#     so re-running as an updater never wipes paths you set earlier.
+# ---------------------------------------------------------------------------
+$configPath = Join-Path $InstallDir "stp-sharpcap.config.json"
+Write-Step "Local config: $configPath"
+
+# Start from the existing file (so unspecified settings are preserved), or an
+# ordered template with sane defaults if this is a first install.
+$cfg = [ordered]@{}
+if (Test-Path $configPath) {
+    try {
+        $existing = Get-Content -Raw -Path $configPath | ConvertFrom-Json
+        foreach ($p in $existing.PSObject.Properties) { $cfg[$p.Name] = $p.Value }
+        Write-Ok "merging into existing config"
+    } catch {
+        Write-Warn2 "existing config unreadable; rewriting from template"
+    }
+}
+function Set-Default($k, $v) { if (-not $cfg.Contains($k)) { $cfg[$k] = $v } }
+Set-Default "port" 9999
+Set-Default "token" ""
+Set-Default "transferEnabled" $false
+Set-Default "sourceDir" "C:\SharpCap Captures"
+Set-Default "destDir" "\\NAS\transits"
+Set-Default "move" $false
+Set-Default "exts" @(".ser")
+
+# Apply only the parameters the user actually passed.
+if ($PSBoundParameters.ContainsKey("Port"))    { $cfg["port"] = $Port }
+if ($PSBoundParameters.ContainsKey("Token"))   { $cfg["token"] = $Token }
+if ($SourceDir)       { $cfg["sourceDir"] = $SourceDir }
+if ($DestDir)         { $cfg["destDir"] = $DestDir }
+if ($EnableTransfer)  { $cfg["transferEnabled"] = $true }
+if ($DisableTransfer) { $cfg["transferEnabled"] = $false }
+if ($Move)            { $cfg["move"] = $true }
+if ($Copy)            { $cfg["move"] = $false }
+if ($Exts)            { $cfg["exts"] = $Exts }
+
+($cfg | ConvertTo-Json -Depth 5) | Set-Content -Path $configPath -Encoding UTF8
+Write-Ok ("transfer={0}  source='{1}'  dest='{2}'  move={3}" -f `
+    $cfg["transferEnabled"], $cfg["sourceDir"], $cfg["destDir"], $cfg["move"])
+if (-not $cfg["transferEnabled"]) {
+    Write-Warn2 "Transfer is OFF. Enable + set folders e.g.:"
+    Write-Warn2 "  .\install.ps1 -EnableTransfer -SourceDir 'C:\SharpCap Captures' -DestDir '\\NAS\transits'"
 }
 
 # ---------------------------------------------------------------------------

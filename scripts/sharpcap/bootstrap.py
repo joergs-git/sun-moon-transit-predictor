@@ -36,6 +36,7 @@ def _bootstrap_dir():
 
 
 CACHE_PATH = os.path.join(_bootstrap_dir(), "trigger_listener.cached.py")
+CONFIG_PATH = os.path.join(_bootstrap_dir(), "stp-sharpcap.config.json")
 
 
 def _log(msg):
@@ -88,6 +89,22 @@ def _load_cached():
     return None
 
 
+def _load_local_config():
+    """Machine-local settings (which folder to watch, network destination,
+    port, token). Kept separate from the listener body so it survives the
+    auto-update — the listener is re-pulled from GitHub, this file is not."""
+    try:
+        if os.path.exists(CONFIG_PATH):
+            import json
+            with open(CONFIG_PATH) as f:
+                cfg = json.load(f)
+            _log("loaded local config {}".format(CONFIG_PATH))
+            return cfg
+    except Exception:
+        _log("reading local config failed:\n" + traceback.format_exc())
+    return None
+
+
 def _run():
     source = _download_latest() or _load_cached()
     if not source:
@@ -97,6 +114,10 @@ def _run():
     # Execute in this script's globals so the SharpCap host object (injected by
     # SharpCap into the startup script's namespace) is visible to the listener.
     ns = globals()
+    cfg = _load_local_config()
+    if cfg is not None:
+        # The listener applies this over its built-in defaults at startup.
+        ns["STP_LOCAL_CONFIG"] = cfg
     try:
         exec(compile(source, "trigger_listener.py", "exec"), ns)
     except Exception:
