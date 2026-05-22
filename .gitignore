@@ -13,3 +13,7 @@ dist/
 data/
 config/observer.json
 config/service.json
+
+# Python bytecode
+__pycache__/
+*.pyc

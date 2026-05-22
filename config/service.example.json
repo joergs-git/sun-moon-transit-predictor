@@ -78,5 +78,19 @@
     "enabled": true,
     "triggerPath": "./data/update.request",
     "debounceMs": 30000
+  },
+  "sharpcap": {
+    "enabled": false,
+    "host": "",
+    "port": 9999,
+    "token": "",
+    "preBufferS": 10,
+    "postBufferS": 10,
+    "triggerOnStage": "imminent",
+    "minElevationDeg": 20,
+    "bodies": ["Sun", "Moon"],
+    "dedupMs": 60000,
+    "connectTimeoutMs": 2000,
+    "notifyOnTrigger": true
   }
 }

@@ -27,6 +27,7 @@ import {
 } from './predictor.js';
 import { PushoverClient } from './pushover.js';
 import { createHttpServer } from './server.js';
+import { SharpCapTrigger } from './sharpcap.js';
 import { HistoryStore } from './store.js';
 import { findTransits } from './tracker.js';
 import { loadIssTle, predictIssTransits, nextIssVisiblePass } from './iss.js';
@@ -115,6 +116,32 @@ export const DEFAULT_CONFIG = {
     enabled: true,
     triggerPath: './data/update.request',
     debounceMs: 30_000,
+  },
+  // SharpCap live trigger (Windows-side capture). Sends a TCP packet to a
+  // long-running listener inside SharpCap (scripts/sharpcap/trigger_listener.py)
+  // the moment a transit becomes imminent — meant for the aircraft case where
+  // it can take ~30 s of warning to know a flight will actually cross the
+  // disc. The pre/postBufferS values frame the recording around closest
+  // approach: capture starts (closestApproach − preBufferS) and stops
+  // (closestApproach + postBufferS). Disabled by default; off-net failures
+  // are logged but never break the predictor service.
+  sharpcap: {
+    enabled: false,
+    host: '',
+    port: 9999,
+    token: '',
+    // Recording window straddles the predicted closest approach: start
+    // preBufferS before it, stop postBufferS after it (so the default −10/+10
+    // gives a 20 s clip centred on the transit). Editable from Settings.
+    preBufferS: 10,
+    postBufferS: 10,
+    triggerOnStage: 'imminent',
+    minElevationDeg: 20,
+    bodies: ['Sun', 'Moon'],
+    dedupMs: 60_000,
+    connectTimeoutMs: 2000,
+    // Send a Pushover when a capture is actually triggered (key params + ETA).
+    notifyOnTrigger: true,
   },
   // ISS transits (offline SGP4 from a TLE file). Inactive until a TLE is
   // present at tlePath — fetch it opt-in with scripts/refresh-tle.js. The
@@ -210,6 +237,7 @@ function mergeConfig(user) {
     opensky:   { ...DEFAULT_CONFIG.opensky,   ...(user.opensky   ?? {}) },
     lifecycle: { ...DEFAULT_CONFIG.lifecycle, ...(user.lifecycle ?? {}) },
     optics:    { ...DEFAULT_CONFIG.optics,    ...(user.optics    ?? {}) },
+    sharpcap:  { ...DEFAULT_CONFIG.sharpcap,  ...(user.sharpcap  ?? {}) },
     lifecyclePersist: { ...DEFAULT_CONFIG.lifecyclePersist, ...(user.lifecyclePersist ?? {}) },
   };
 }
@@ -293,12 +321,50 @@ export async function runService({
   // or returns a soft miss.
   const freeAircraft = new AircraftLookup({ fetchImpl });
 
+  // SharpCap live capture trigger — fires on the configured stage (default
+  // 'imminent') independent of the Pushover gates, so even silenced-phone
+  // alerts still record the transit on the Windows-side telescope rig.
+  const sharpcap = new SharpCapTrigger(config.sharpcap, { logger });
+
+  // Short Pushover when a capture is armed: the key params + ETA to closest
+  // approach + the −pre/+post recording window. Best-effort; never blocks.
+  function notifySharpcapTrigger(candidate, res) {
+    if (config.sharpcap.notifyOnTrigger === false) return;
+    const flight = candidate.callsign ?? candidate.icao?.toUpperCase() ?? 'unknown';
+    const etaS = Math.round((candidate.closestApproachAtMs - Date.now()) / 1000);
+    const sep = Number.isFinite(candidate.closestApproachSepDeg)
+      ? candidate.closestApproachSepDeg.toFixed(2) : '?';
+    const pre = config.sharpcap.preBufferS;
+    const post = config.sharpcap.postBufferS;
+    const msg = {
+      title: `🎥 SharpCap REC · ${candidate.body}`,
+      message: [
+        `✈ ${flight} · ${candidate.body} transit`,
+        `sep ${sep}° · ETA ${etaS}s`,
+        `capture −${pre}s/+${post}s`
+          + (res.response?.captureId ? ` · ${res.response.captureId}` : ''),
+      ].join('\n'),
+      priority: 0,
+    };
+    pushover.send(msg).catch((e) => logger.warn?.('sharpcap push failed:', e?.message ?? e));
+  }
+
   const notifier = new Notifier({
     pushover,
     routeLookup: (cs) => routeLookup.lookup(cs),
     onEvent: (evt) => {
       try { store.recordEvent(evt.stage, evt.candidate, evt.route, Date.now()); }
       catch (e) { logger.error?.('store record failed:', e); }
+      if (sharpcap.enabled) {
+        sharpcap.triggerFromEvent(evt).then((res) => {
+          if (res.sent) {
+            logger.info?.(`sharpcap: capture armed for ${evt.candidate?.icao}|${evt.candidate?.body} (${res.response?.captureId ?? ''})`);
+            notifySharpcapTrigger(evt.candidate, res);
+          } else if (res.error) {
+            logger.warn?.(`sharpcap trigger failed: ${res.error?.message ?? res.error}`);
+          }
+        }).catch((e) => logger.warn?.('sharpcap trigger threw:', e?.message ?? e));
+      }
     },
     minStage: config.pushover.minStage ?? 'radio',
     radioThresholdDeg: config.pushover.radioThresholdDeg,
@@ -470,6 +536,18 @@ export async function runService({
       },
       optics: { ...config.optics },
       tracker: { ...config.tracker },
+      sharpcap: {
+        enabled: config.sharpcap.enabled,
+        host: config.sharpcap.host ?? '',
+        port: config.sharpcap.port,
+        preBufferS: config.sharpcap.preBufferS,
+        postBufferS: config.sharpcap.postBufferS,
+        triggerOnStage: config.sharpcap.triggerOnStage,
+        minElevationDeg: config.sharpcap.minElevationDeg,
+        notifyOnTrigger: config.sharpcap.notifyOnTrigger !== false,
+        tokenMasked: mask(config.sharpcap.token),
+        hasToken: Boolean(config.sharpcap.token),
+      },
       _servicePath: configPaths.service ?? null,
     };
   }
@@ -643,6 +721,54 @@ export async function runService({
       };
     }
 
+    if (patch.sharpcap && typeof patch.sharpcap === 'object') {
+      const s = patch.sharpcap;
+      if (typeof s.enabled === 'boolean') config.sharpcap.enabled = s.enabled;
+      if (typeof s.host === 'string') config.sharpcap.host = s.host.trim();
+      if ('port' in s) {
+        const v = Number(s.port);
+        if (!Number.isInteger(v) || v < 1 || v > 65535) throw new Error('sharpcap.port must be an integer 1–65535');
+        config.sharpcap.port = v;
+      }
+      if ('preBufferS' in s) {
+        const v = Number(s.preBufferS);
+        if (!Number.isFinite(v) || v < 0) throw new Error('sharpcap.preBufferS must be ≥ 0');
+        config.sharpcap.preBufferS = v;
+      }
+      if ('postBufferS' in s) {
+        const v = Number(s.postBufferS);
+        if (!Number.isFinite(v) || v < 0) throw new Error('sharpcap.postBufferS must be ≥ 0');
+        config.sharpcap.postBufferS = v;
+      }
+      if ('minElevationDeg' in s) {
+        const v = Number(s.minElevationDeg);
+        if (!Number.isFinite(v) || v < 0 || v > 90) throw new Error('sharpcap.minElevationDeg must be between 0 and 90 (0 = off)');
+        config.sharpcap.minElevationDeg = v;
+      }
+      if (typeof s.triggerOnStage === 'string'
+          && ['radio', 'candidate', 'imminent'].includes(s.triggerOnStage)) {
+        config.sharpcap.triggerOnStage = s.triggerOnStage;
+      }
+      if (typeof s.notifyOnTrigger === 'boolean') config.sharpcap.notifyOnTrigger = s.notifyOnTrigger;
+      if (typeof s.token === 'string' && s.token && !s.token.startsWith('••••')) {
+        config.sharpcap.token = s.token.trim();
+      }
+      // SharpCapTrigger reads this.config on every call → in-place mutation
+      // hot-reloads it; no reconstruction needed.
+      sharpcap.config = config.sharpcap;
+      applied.sharpcap = {
+        enabled: config.sharpcap.enabled,
+        host: config.sharpcap.host,
+        port: config.sharpcap.port,
+        preBufferS: config.sharpcap.preBufferS,
+        postBufferS: config.sharpcap.postBufferS,
+        triggerOnStage: config.sharpcap.triggerOnStage,
+        minElevationDeg: config.sharpcap.minElevationDeg,
+        notifyOnTrigger: config.sharpcap.notifyOnTrigger,
+        hasToken: Boolean(config.sharpcap.token),
+      };
+    }
+
     // Persist the service-level changes (pushover, optics, tracker, airnav)
     // back to service.json. observer.json is written separately above.
     if (configPaths.service) {
@@ -659,6 +785,7 @@ export async function runService({
           pushover:      { ...(existing.pushover ?? {}), ...config.pushover },
           optics:        { ...(existing.optics   ?? {}), ...config.optics },
           airnav:        { ...(existing.airnav   ?? {}), ...config.airnav },
+          sharpcap:      { ...(existing.sharpcap ?? {}), ...config.sharpcap },
         };
         await fsp.writeFile(configPaths.service, JSON.stringify(merged, null, 2), 'utf8');
       } catch (e) {
@@ -737,6 +864,24 @@ export async function runService({
     // Free callsign → route (adsbdb, no token, cached). Powers the
     // flight-number hover even when AirNav is off.
     requestRoute: (cs) => routeLookup.lookup(cs),
+    // Settings "Test trigger" button → fire an immediate 2 s capture. Optional
+    // host/port let the user test before saving the form; otherwise the live
+    // config is used. The token always comes from the saved config (the form
+    // only ever sends the masked placeholder).
+    requestSharpcapTest: async (opts = {}) => {
+      const durationS = Number(opts.durationS) || 2;
+      const host = typeof opts.host === 'string' ? opts.host.trim() : '';
+      if (host) {
+        const tmp = new SharpCapTrigger({
+          ...config.sharpcap,
+          enabled: true,
+          host,
+          port: Number(opts.port) || config.sharpcap.port,
+        }, { logger });
+        return tmp.testTrigger(durationS);
+      }
+      return sharpcap.testTrigger(durationS);
+    },
   });
   if (httpServer) await httpServer.start();
 
@@ -1020,6 +1165,7 @@ export async function runService({
     state,
     httpServer,
     notifier,
+    sharpcap,
     store,
     config,
     /**
