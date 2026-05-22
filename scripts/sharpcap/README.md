@@ -23,17 +23,24 @@ listener from GitHub, sets up a bootstrap that **always pulls the newest
 version on every SharpCap start** (no versioning), and tells you the one-time
 SharpCap wiring step.
 
-In PowerShell on the Windows PC:
+In **Windows PowerShell** on the Windows PC (the listener now lives on
+`main`, so no `-Branch` needed):
 
 ```powershell
-# until the feature PR is merged, pass the feature branch:
-powershell -ExecutionPolicy Bypass -File install.ps1 -Branch claude/sharpcap-windows-trigger-DHPcL
-
-# after merge to main, simply:
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-You can fetch and run it in one line:
+> **"…kann nicht geladen werden, da die Ausführung von Skripts ... deaktiviert
+> ist" / "running scripts is disabled on this system"?** That is the default
+> execution policy blocking a double-clicked or directly-invoked `.ps1`. Do
+> **not** run `C:\...\install.ps1` on its own — always go through
+> `powershell -ExecutionPolicy Bypass -File <path>` as shown above, which
+> bypasses the policy for that one run only (and also clears the
+> downloaded-file "Mark of the Web" block). If you prefer a persistent
+> setting instead, run once:
+> `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+You can fetch and run it in one line (no `-Branch` needed — pulls from `main`):
 
 ```powershell
 $u="https://raw.githubusercontent.com/joergs-git/sun-moon-transit-predictor/main/scripts/sharpcap/install.ps1"; iwr $u -OutFile "$env:TEMP\stp-install.ps1"; powershell -ExecutionPolicy Bypass -File "$env:TEMP\stp-install.ps1"

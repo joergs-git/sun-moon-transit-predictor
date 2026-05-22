@@ -19,8 +19,8 @@
     README); it is off by default.
 
 .PARAMETER Branch
-    Git branch to pull from. Default: main. Until the feature PR is merged,
-    pass -Branch claude/sharpcap-windows-trigger-DHPcL.
+    Git branch to pull from. Default: main (where the listener lives). Only
+    override this if you are testing an unmerged feature branch.
 
 .PARAMETER InstallDir
     Where to place the files. Default: %LOCALAPPDATA%\stp-sharpcap.
@@ -36,7 +36,7 @@
     powershell -ExecutionPolicy Bypass -File install.ps1
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File install.ps1 -Branch claude/sharpcap-windows-trigger-DHPcL -StartSharpCap
+    powershell -ExecutionPolicy Bypass -File install.ps1 -StartSharpCap
 #>
 [CmdletBinding()]
 param(
@@ -77,8 +77,8 @@ WHAT IT DOES
   doubles as the updater.
 
 OPTIONS
-  -Branch <name>        Git branch to pull from (default: main). Before the
-                        feature PR is merged: -Branch claude/sharpcap-windows-trigger-DHPcL
+  -Branch <name>        Git branch to pull from (default: main; override only
+                        to test an unmerged feature branch)
   -InstallDir <path>    Install folder (default: %LOCALAPPDATA%\stp-sharpcap)
   -StartSharpCap        Launch SharpCap after install
   -InstallPython        Also install CPython via winget (NOT needed by the
@@ -104,9 +104,9 @@ EXAMPLES
   # First install, pick folders in a dialog, start SharpCap:
   .\install.ps1 -EnableTransfer -StartSharpCap
 
-  # Explicit paths (before the PR is merged):
-  .\install.ps1 -Branch claude/sharpcap-windows-trigger-DHPcL ``
-                -EnableTransfer -SourceDir 'C:\SharpCap Captures' -DestDir '\\NAS\transits'
+  # Explicit paths:
+  .\install.ps1 -EnableTransfer ``
+                -SourceDir 'C:\SharpCap Captures' -DestDir '\\NAS\transits'
 
   # Update later (just re-run; settings are preserved):
   .\install.ps1
