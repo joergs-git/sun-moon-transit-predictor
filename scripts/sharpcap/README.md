@@ -204,10 +204,16 @@ How it guarantees correctness:
 **Easiest: the web Settings panel.** Open the predictor UI → ⚙ Settings →
 *SharpCap capture trigger*. There you can toggle it on/off, set the Windows
 host + port, the pre-/post-roll (default −10 s / +10 s around the predicted
-transit), the minimum elevation, the "push on trigger" toggle, and hit
+transit), the minimum elevation, the **trigger body** (Sun *or* Moon — one
+scope can only track one disc at a time), the "push on trigger" toggle, and hit
 **Test trigger (2 s)** to fire an immediate test capture against the host in
 the form (no save needed). Changes hot-reload and persist to
 `config/service.json`.
+
+When the trigger is enabled, a small readout appears in the header next to the
+clock — `🎥 ☀ Sun · 3×` — showing the armed body and how many captures it has
+armed this session (resets on service restart). It is hidden entirely when the
+trigger is off.
 
 Or edit `config/service.json` directly:
 
@@ -221,7 +227,7 @@ Or edit `config/service.json` directly:
   "postBufferS": 10,
   "minElevationDeg": 20,
   "maxSepDeg": 0.5,
-  "bodies": ["Sun", "Moon"],
+  "bodies": ["Sun"],
   "dedupMs": 60000,
   "connectTimeoutMs": 2000,
   "notifyOnTrigger": true
@@ -235,7 +241,7 @@ Or edit `config/service.json` directly:
 | `postBufferS`     | recording stops this many seconds *after* closest approach (default 10)       |
 | `minElevationDeg` | skip when target is below this (telescope can't see it). **0 = never gate on elevation** — set this if you'd rather record everything. |
 | `maxSepDeg`       | arm any candidate projected within this separation (default 0.5° — generous, "rather over-record than miss"). Lower to be stricter. |
-| `bodies`          | which body to record (`Sun`, `Moon`, or both)                                 |
+| `bodies`          | which disc to record — a one-element array, `["Sun"]` or `["Moon"]` (the Settings panel exposes this as a single-select; one scope tracks one disc at a time) |
 | `dedupMs`         | suppress identical `(icao, body)` re-triggers within this window              |
 | `notifyOnTrigger` | send a Pushover (flight, separation, ETA, −pre/+post window) when armed       |
 

@@ -332,6 +332,9 @@ export async function runService({
   // 'imminent') independent of the Pushover gates, so even silenced-phone
   // alerts still record the transit on the Windows-side telescope rig.
   const sharpcap = new SharpCapTrigger(config.sharpcap, { logger });
+  // Session-cumulative count of captures this trigger has armed (resets on
+  // restart). Surfaced in state.sharpcap for the header status readout.
+  let sharpcapArmedCount = 0;
 
   // Short Pushover when a capture is armed: the key params + ETA to closest
   // approach + the −pre/+post recording window. Best-effort; never blocks.
@@ -369,6 +372,7 @@ export async function runService({
       const who = `${c.icao ?? c.callsign ?? '?'}|${c.body}`;
       sharpcap.armForCandidate(c, nowMs).then((res) => {
         if (res.sent) {
+          sharpcapArmedCount += 1;
           logger.info?.(`sharpcap: capture armed for ${who} (${res.response?.captureId ?? ''})`);
           notifySharpcapTrigger(c, res);
         } else if (res.error) {
@@ -574,6 +578,7 @@ export async function runService({
         triggerOnStage: config.sharpcap.triggerOnStage,
         minElevationDeg: config.sharpcap.minElevationDeg,
         maxSepDeg: config.sharpcap.maxSepDeg,
+        bodies: config.sharpcap.bodies,
         notifyOnTrigger: config.sharpcap.notifyOnTrigger !== false,
         tokenMasked: mask(config.sharpcap.token),
         hasToken: Boolean(config.sharpcap.token),
@@ -780,6 +785,14 @@ export async function runService({
         if (!Number.isFinite(v) || v <= 0 || v > 5) throw new Error('sharpcap.maxSepDeg must be > 0 and ≤ 5');
         config.sharpcap.maxSepDeg = v;
       }
+      if ('bodies' in s) {
+        // Single-body selection from the UI ('Sun' | 'Moon'); a one scope can
+        // only track one disc at a time. Accept an array or a bare string.
+        const raw = Array.isArray(s.bodies) ? s.bodies : [s.bodies];
+        const allowed = raw.filter((b) => b === 'Sun' || b === 'Moon');
+        if (!allowed.length) throw new Error('sharpcap.bodies must contain "Sun" or "Moon"');
+        config.sharpcap.bodies = allowed;
+      }
       if (typeof s.triggerOnStage === 'string'
           && ['radio', 'candidate', 'imminent'].includes(s.triggerOnStage)) {
         config.sharpcap.triggerOnStage = s.triggerOnStage;
@@ -800,6 +813,7 @@ export async function runService({
         triggerOnStage: config.sharpcap.triggerOnStage,
         minElevationDeg: config.sharpcap.minElevationDeg,
         maxSepDeg: config.sharpcap.maxSepDeg,
+        bodies: config.sharpcap.bodies,
         notifyOnTrigger: config.sharpcap.notifyOnTrigger,
         hasToken: Boolean(config.sharpcap.token),
       };
@@ -1186,6 +1200,15 @@ export async function runService({
       issForLifecycle.length ? enriched.concat(issForLifecycle) : enriched,
       nowMs,
     );
+
+    // Header status readout: is the trigger live, for which body, and how
+    // many captures has it armed this session.
+    const scBodies = Array.isArray(config.sharpcap.bodies) ? config.sharpcap.bodies : [];
+    state.sharpcap = {
+      enabled: sharpcap.enabled,
+      body: scBodies.length === 1 ? scBodies[0] : scBodies.join('+'),
+      armedCount: sharpcapArmedCount,
+    };
   }
 
   // If schedule augmentation is enabled, pull rows from schedule_observations

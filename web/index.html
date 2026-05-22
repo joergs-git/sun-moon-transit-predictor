@@ -30,6 +30,7 @@
       </div>
       <div class="header-controls">
         <time id="clock" class="clock" title="Local wall-clock time, ticking once per second.">--:--:--</time>
+        <div id="sharpcap-status" class="sc-status" hidden title="SharpCap capture trigger: armed body and how many captures it has armed this session (resets on service restart)."></div>
         <div id="status" class="status" title="Service liveness. Shows seconds since the last successful tick and the number of aircraft currently tracked by dump1090.">connecting…</div>
         <button id="settings-btn" type="button" class="btn" title="Edit Pushover credentials, observer location and optical setup (focal length + sensor).">⚙ Settings</button>
       </div>
@@ -448,6 +449,12 @@
             <small class="field-hint">Keep recording this many seconds <b>after</b> the predicted transit. Default 10.</small></label>
           <label>Min elevation °<input name="sharpcap.minElevationDeg" type="number" step="any" min="0" max="90">
             <small class="field-hint">Don't trigger when the target is below this (telescope can't see it). 0 = off.</small></label>
+          <label>Trigger body
+            <select name="sharpcap.body">
+              <option value="Sun">☀ Sun</option>
+              <option value="Moon">🌙 Moon</option>
+            </select>
+            <small class="field-hint">Which disc to record. One scope can only track one at a time, so this is Sun <b>or</b> Moon — not both.</small></label>
           <label class="checkbox-row">
             <input name="sharpcap.notifyOnTrigger" type="checkbox"> Push on trigger
             <small class="field-hint">Send a Pushover with flight, separation, ETA and the −pre/+post window whenever a capture is armed.</small></label>

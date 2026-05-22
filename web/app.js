@@ -539,6 +539,7 @@ async function pollState() {
     const age = Math.round((Date.now() - state.lastUpdateMs) / 1000);
     status.textContent = `live · ${age}s ago · ${state.aircraftCount ?? 0} aircraft`;
     status.className = age > 10 ? 'status stale' : 'status live';
+    renderSharpcapStatus(state.sharpcap);
     if (state.version) lastVersion = state.version;
     // renderUpdateStatus authoritatively owns the badge for every state
     // (incl. restoring the version on idle/stuck). Old servers without the
@@ -797,6 +798,21 @@ async function pollLearning() {
 function tickClock() {
   const now = new Date();
   $('#clock').textContent = now.toLocaleTimeString();
+}
+
+// Header SharpCap trigger readout next to the clock: armed body + how many
+// captures it has armed this session. Hidden entirely when the trigger is
+// off, so it never adds noise for users who don't run SharpCap.
+function renderSharpcapStatus(sc) {
+  const el = $('#sharpcap-status');
+  if (!el) return;
+  if (!sc || !sc.enabled) { el.hidden = true; return; }
+  const icon = sc.body === 'Sun' ? '☀' : sc.body === 'Moon' ? '🌙' : '◐';
+  const n = sc.armedCount ?? 0;
+  el.hidden = false;
+  el.textContent = `🎥 ${icon} ${sc.body || '—'} · ${n}×`;
+  el.title = `SharpCap capture trigger armed for ${sc.body || '—'}. `
+    + `${n} capture${n === 1 ? '' : 's'} armed this session (resets on service restart).`;
 }
 
 // ---- FOV preview pane --------------------------------------------------------
@@ -1384,6 +1400,9 @@ function fillSettingsForm(cfg) {
     if (el.name === 'pushover.token') v = cfg.pushover?.tokenMasked ?? '';
     if (el.name === 'pushover.user')  v = cfg.pushover?.userMasked  ?? '';
     if (el.name === 'airnav.token')   v = cfg.airnav?.tokenMasked   ?? '';
+    // The trigger body is stored as a one-element array (bodies) but shown as
+    // a single-select; derive the selected value from bodies[0].
+    if (el.name === 'sharpcap.body')  v = cfg.sharpcap?.bodies?.[0] ?? 'Sun';
     if (el.type === 'checkbox') el.checked = Boolean(v);
     else if (v == null) el.value = '';
     else el.value = v;
@@ -1429,6 +1448,11 @@ settingsForm.addEventListener('submit', async (ev) => {
       if ((el.name === 'pushover.token' || el.name === 'pushover.user'
            || el.name === 'airnav.token')
           && typeof value === 'string' && value.startsWith('••••')) continue;
+    }
+    // Single-select trigger body → the canonical one-element bodies array.
+    if (el.name === 'sharpcap.body') {
+      setNested(patch, 'sharpcap.bodies', [value]);
+      continue;
     }
     setNested(patch, el.name, value);
   }
