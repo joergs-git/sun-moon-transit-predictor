@@ -154,6 +154,10 @@ export const DEFAULT_CONFIG = {
     // leadDriftFrac:0 to disable and use only pre/postBufferS.
     leadDriftFrac: 0.5,
     maxDriftS: 45,
+    // Hard ceiling on total clip length (s) so preBuffer+postBuffer+drift can
+    // never exceed the listener's MAX_DURATION_S (120) and get rejected as
+    // over-limit. Keep below the listener's cap.
+    maxCaptureS: 115,
     // Send a Pushover when a capture is actually triggered (key params + ETA).
     notifyOnTrigger: true,
   },

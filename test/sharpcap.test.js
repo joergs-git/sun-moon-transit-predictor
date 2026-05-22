@@ -278,6 +278,19 @@ describe('SharpCapTrigger', () => {
       expect(created.length).toBe(0);
     });
 
+    it('never lets buffers + drift exceed the listener safety cap', async () => {
+      const { netImpl, created } = makeFakeNet({ replyLine: '{"ok":true}\n' });
+      const t = new SharpCapTrigger(
+        // 20/20 + full drift would be 130 s — must be clamped under maxCaptureS.
+        { enabled: true, host: 'pc', preBufferS: 20, postBufferS: 20,
+          leadDriftFrac: 0.5, maxDriftS: 45, maxCaptureS: 115 },
+        { netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+      );
+      await t.armForCandidate(armCand({ closestApproachAtMs: NOW + 90_000 }), NOW);
+      const sent = JSON.parse(created[0].writes[0]);
+      expect(sent.durationS).toBeLessThanOrEqual(115);
+    });
+
     it('skips a candidate wider than maxSepDeg', async () => {
       const t = new SharpCapTrigger({ enabled: true, host: 'pc', maxSepDeg: 0.5 });
       const res = await t.armForCandidate(armCand({ closestApproachSepDeg: 1.2 }), NOW);

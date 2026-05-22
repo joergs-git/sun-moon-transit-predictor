@@ -33,6 +33,9 @@ const DEFAULT_MAX_PRE_ROLL_S = 85;  // keep pre-roll under the listener's 90 s c
 // the normal pre/post window; at lead 80 s the cap (45 s) holds it to ±55 s.
 const DEFAULT_LEAD_DRIFT_FRAC = 0.5;
 const DEFAULT_MAX_DRIFT_S = 45;
+// Keep the total clip safely under the listener's MAX_DURATION_S (120 s) so a
+// generous preBuffer+postBuffer+drift combo is never rejected as 'over-limit'.
+const DEFAULT_MAX_CAPTURE_S = 115;
 
 /**
  * @typedef {Object} SharpCapConfig
@@ -196,9 +199,14 @@ export class SharpCapTrigger {
     // Window = [closest − preBuffer − drift, closest + postBuffer + drift].
     const driftFrac = Number.isFinite(this.config.leadDriftFrac) ? this.config.leadDriftFrac : DEFAULT_LEAD_DRIFT_FRAC;
     const maxDriftS = Number.isFinite(this.config.maxDriftS) ? this.config.maxDriftS : DEFAULT_MAX_DRIFT_S;
-    const driftS = Math.min(Math.max(0, tToClosestS) * driftFrac, maxDriftS);
+    const maxCaptureS = Number.isFinite(this.config.maxCaptureS) ? this.config.maxCaptureS : DEFAULT_MAX_CAPTURE_S;
+    let driftS = Math.min(Math.max(0, tToClosestS) * driftFrac, maxDriftS);
+    // Trim the drift so preBuffer+postBuffer+2·drift never exceeds the
+    // listener's safety cap — keeps the window centred and never 'over-limit'.
+    const driftRoom = Math.max(0, (maxCaptureS - preBufferS - postBufferS) / 2);
+    driftS = Math.min(driftS, driftRoom);
     const preRollS = Math.max(0, tToClosestS - preBufferS - driftS);
-    const durationS = Math.max(1, preBufferS + postBufferS + 2 * driftS);
+    const durationS = Math.max(1, Math.min(preBufferS + postBufferS + 2 * driftS, maxCaptureS));
     const payload = { label: key, preRollS, durationS };
     if (this.config.token) payload.token = this.config.token;
 
