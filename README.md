@@ -23,7 +23,19 @@ T-minus alert once live ADS-B has nailed down the transit time.
                               notifier  → 3-stage Pushover (radio→candidate→imminent)
                               store     → SQLite history
                               server    → /api/* + web UI on :8081
+                              sharpcap  → optional live capture trigger (Windows) ─┐
+                                                                                    ▼
+                                                              [SharpCap PC] RunCapture()
+                                                              records the transit, optional
+                                                              auto-copy of the .ser to a NAS
 ```
+
+The optional **SharpCap capture trigger** closes the loop from prediction to
+imaging: when a transit goes *imminent*, the service fires a TCP trigger to a
+listener running inside SharpCap on a Windows capture PC, which starts a
+recording framed around the predicted closest approach (configurable pre/post
+roll) and can auto-copy the resulting `.ser` to a network drive. Off by
+default; see **[SharpCap capture trigger](#sharpcap-capture-trigger-optional)**.
 
 ## How the prediction works
 
@@ -292,6 +304,7 @@ load picks up wherever it left off, including the restored tracking list.
 | M29 (v0.10.7) | Install fixes from on-Pi testing: manual path now installs `git` first (absent on Pi OS Lite); FlightAware repo package bumped `1.2 → 1.3` (the 1.2 URL 404s) in the README + `bootstrap-pi5.sh`, with a version-drift note | done |
 | M30 (v0.10.8) | Docs: `rbfeeder`/AirNav-RadarBox sharing-key sidenote + MLAT explainer in the ADS-B section (independent of the predictor; same WGS84 location) | done |
 | M31 (v0.10.9) | ISS transits only push/log within `iss.notifyWithinMs` (default 72 h) — far-future SGP4 is noise that flips with each daily TLE, so this kills phantom-transit Pushover spam + "surprise" stat pollution; Sky-now still previews the soonest, flagged "tentative". README "Good to know" facts: ISS prediction reliability + observer coordinate/elevation pitfalls | done |
+| M58 (v0.21.0–v0.21.5) | **SharpCap live capture trigger** (Windows-side) + hardening + docs. When a transit goes `imminent` the service fires a TCP trigger (`src/sharpcap.js`) to a listener running inside SharpCap (`scripts/sharpcap/trigger_listener.py`), which records a clip framed around the predicted closest approach (configurable pre/post-roll) and can auto-copy the `.ser` to a NAS. Web **Settings → SharpCap capture trigger** with a "Test trigger (2 s)" button; PowerShell installer + always-latest bootstrap; IronPython-only (no separate Python). Hardening since the merge: reject non-finite trigger durations before arming capture (NaN slipped past the `<=0`/`>MAX` guards → endless recording), separator-aware static-path boundary (path-traversal via URL-encoded slashes), auto-update discards npm-regenerated lockfile churn before the ff-only pull, installer points at `main` + execution-policy note. Documented in the main README (Overview, optional hardware, dedicated section) and the detailed `scripts/sharpcap/README.md` | done |
 | M57 (v0.21.1) | **History page 1 = today only** (was today + yesterday). The combined list grew too long on busy days; trimming the recent-cutoff from "yesterday 00:00" to "today 00:00" keeps page 1 compact while yesterday's rows are still one click away via "Older ▶". One-line `recentCutoffMs` change, plus label/comment sweeps in `web/app.js` + `web/index.html` | done |
 | M56 (v0.21.0) | **Free fallback for the airframe info box (adsbdb)**: when the AirNav token is missing, disabled, or out of credits, `/api/acinfo` no longer 404s — it transparently falls back to the free **adsbdb /v0/aircraft/&lt;hex&gt;** endpoint (no token, no billing). Coverage of the AirNav payload's *static* half: registration, ICAO type, manufacturer + model (composed into `typeDescription`), operator + operator ICAO code, and a planespotters photo URL. Live flight info (origin/destination, scheduled times) stays AirNav-only — but the route popover still resolves callsigns via the existing adsbdb route endpoint. Response carries a new `source` field (`'airnav' \| 'adsbdb'`) that the frontend uses to relabel the box header (`AirNav · on-demand` vs `adsbdb · free`) and footer with an honest provenance line. AirNav is still used first whenever it's configured and answers; the free path is pure graceful degradation. New `AircraftLookup` class in `src/adsbdb.js` (mirrors the existing `RouteLookup` patterns: TTL cache, AbortController timeout, normalised to AirNav's `normalizeAircraft` shape so the frontend doesn't branch on source) | done |
 | M55 (v0.20.1) | **Clickable stats labels — ICAO hex + callsign → adsbexchange globe**: the ICAO hex and ADS-B callsign labels in the "Aircraft stats" and "Usable candidates" panels are now real links (matching the History/Live table pattern from v0.16.3). Click → opens `globe.adsbexchange.com` for that hex (`?icao=…`) or callsign (`?callsign=…`) in a new tab — instant history/playback for any airframe or flight in the stats. Hover still fires the AirNav photo / adsbdb route popover (data-hex / data-cs preserved). Falls back to a plain span for partial / unusable values. New `statsLabelLink()` helper de-duplicates the two stats renderers; CSS keeps the accent colour on the link variant | done |
@@ -347,6 +360,7 @@ is the host computer it runs on.
 | **Active cooling case** (Argon ONE V3, Pi 5 official cooler, etc.) | The Pi 5 throttles under sustained load; the tracker tick is light but if you co-host other services you'll want active cooling. |
 | **External USB-C SSD** | Move `data/history.db` and `data/lifecycle.json` off the SD card by symlinking the `data/` directory. Massively extends SD-card life for multi-year deployments. |
 | **Pushover account** ([pushover.net](https://pushover.net)) | Phone notifications for the three transit stages. The pipeline runs fine without it (`pushover.enabled=false`), but you'll only see transits in the web UI. |
+| **Windows PC running [SharpCap](https://www.sharpcap.co.uk/)** + camera | Only if you want the predictor to *automatically start a capture* the moment a transit goes imminent (too tight a window — often < 30 s — for SharpCap's own Sequencer). Runs a tiny listener inside SharpCap's IronPython; the Pi triggers it over TCP. See **[SharpCap capture trigger](#sharpcap-capture-trigger-optional)**. Off by default. |
 
 ### Required software (installed by `scripts/install-pi5.sh`)
 
@@ -1316,6 +1330,38 @@ your local ADS-B history remains the ground truth for transit timing.
 Don't enable OpenSky if you only fly low priority on accuracy and want
 fewer false-positive watchlist entries.
 
+## SharpCap capture trigger (optional)
+
+Closes the loop from *prediction* to *imaging*. An aircraft transit gives you
+seconds, not minutes, of warning — far too tight to arm SharpCap's own
+Sequencer by hand. Instead the predictor pushes a trigger to a small listener
+running **inside SharpCap** the moment a transit goes `imminent`, and SharpCap
+records a clip framed around the predicted closest approach.
+
+```
+predictor (Pi/Linux)                     Windows capture PC
+────────────────────                     ─────────────────────────────────────
+notifier emits 'imminent'  ── TCP :9999 ▶ trigger_listener.py (in SharpCap)
+src/sharpcap.js sends one JSON line       RunCapture() after preRoll,
+                                          StopCapture() after the window,
+                                          optional auto-copy of the .ser → NAS
+```
+
+- **Predictor side:** ⚙ **Settings → SharpCap capture trigger** — toggle on,
+  set the Windows host + port, the pre-/post-roll (default −10 s / +10 s around
+  the transit), the minimum elevation and a "push on trigger" option, then hit
+  **Test trigger (2 s)**. Hot-reloads and persists to `config/service.json`
+  (`sharpcap` block). Off by default.
+- **Windows side:** a one-shot PowerShell installer sets up a bootstrap that
+  pulls the latest listener from GitHub on every SharpCap launch, plus an
+  optional post-capture copy/move of the `.ser` to a network drive. The
+  listener is IronPython-only (it calls `SharpCap.SelectedCamera`), so it needs
+  **no separate Python install**.
+
+Full Windows install, the one-time SharpCap startup-script wiring, the
+machine-local folder config, the wire-format and a hand-test recipe live in
+**[`scripts/sharpcap/README.md`](scripts/sharpcap/README.md)**.
+
 ## Web UI
 
 `http://<host>:8081/` ships a single-page UI with two panels:
@@ -1479,8 +1525,9 @@ from the notifier — happy to add that as a config switch if useful.
 │   ├── tracker.js                extrapolation + transit detection (sub-step refined)
 │   ├── pushover.js               Pushover REST client
 │   ├── notifier.js               3-stage dispatch (radio/candidate/imminent) + dedup
-│   ├── adsbdb.js                 callsign → route, in-memory TTL cache
+│   ├── adsbdb.js                 callsign → route + hex → airframe, in-memory TTL cache
 │   ├── airnav.js                 AirNav On-Demand API v2 client (server-side, cached)
+│   ├── sharpcap.js               imminent-transit → SharpCap TCP capture trigger (opt-in)
 │   ├── sgp4.js                   dependency-free SGP4 (ISS), TLE parse, TEME→ECEF
 │   ├── iss.js                    offline ISS transit + visible-pass prediction
 │   ├── store.js                  SQLite history (node:sqlite) + episode stats
@@ -1503,7 +1550,8 @@ from the notifier — happy to add that as a config switch if useful.
 │   ├── auto-update.sh            git pull → npm install → restart, with config backup
 │   ├── refresh-schedule.js       OpenSky daily fetcher (M10, opt-in)
 │   ├── refresh-tle.js            ISS TLE fetcher (Celestrak, opt-in / stp-tle.timer)
-│   └── test-push.js              one-shot Pushover sanity check
+│   ├── test-push.js              one-shot Pushover sanity check
+│   └── sharpcap/                 Windows SharpCap trigger: listener, bootstrap, PS installer, README
 ├── systemd/
 │   ├── stp.service               main service unit template
 │   ├── stp-update.service        auto-update oneshot template
