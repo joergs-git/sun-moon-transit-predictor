@@ -25,12 +25,14 @@ const DEFAULT_DEDUP_MS = 60_000;    // suppress identical (icao|body) re-trigger
 const DEFAULT_MAX_SEP_DEG = 0.5;    // arm any candidate projected within this sep
 const DEFAULT_MAX_PRE_ROLL_S = 85;  // keep pre-roll under the listener's 90 s cap
 // Arming early (to never miss a lost-tracking case) means the predicted
-// closest-approach TIME is less accurate the further out we are. Widen the
+// closest-approach TIME is less accurate the further out we are — for a
+// candidate that then goes stale the estimate can drift 30 s+. Widen the
 // recording window symmetrically by leadDriftFrac × leadSeconds (capped) so a
-// drifting prediction still lands inside the clip. At lead 50 s, 0.3 → ±15 s
-// extra around the normal pre/post window.
-const DEFAULT_LEAD_DRIFT_FRAC = 0.3;
-const DEFAULT_MAX_DRIFT_S = 30;
+// drifting prediction still lands inside the clip. Generous on purpose
+// ("rather over-record than miss"): at lead 50 s, 0.5 → ±25 s extra around
+// the normal pre/post window; at lead 80 s the cap (45 s) holds it to ±55 s.
+const DEFAULT_LEAD_DRIFT_FRAC = 0.5;
+const DEFAULT_MAX_DRIFT_S = 45;
 
 /**
  * @typedef {Object} SharpCapConfig
