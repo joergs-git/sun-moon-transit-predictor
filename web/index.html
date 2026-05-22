@@ -462,6 +462,13 @@
             <button type="button" id="sharpcap-test-btn" class="btn">Test trigger (2 s)</button>
             <small id="sharpcap-test-msg" class="field-hint">Fires an immediate 2 s capture using the host/port above (no save needed).</small>
           </div>
+
+          <div class="sc-rigs-block">
+            <div class="sc-rigs-head">Capture rigs (multiple telescopes)</div>
+            <small class="field-hint">Leave empty to use the single Host/Body above. Add a rig per telescope to drive several at once — each is routed by its own body (a Sun transit fires only Sun rigs, etc.). The fields above then act as shared defaults. Per-rig token: set in <code>service.json</code>.</small>
+            <div id="sharpcap-targets" class="sc-rigs"></div>
+            <button type="button" id="sharpcap-add-rig" class="btn">+ Add rig</button>
+          </div>
         </fieldset>
 
         </div><!-- /.settings-fields -->

@@ -101,6 +101,18 @@ h2 { font-size: 14px; margin: 16px 0 8px; color: var(--accent); text-transform: 
 .status.stale { color: var(--warn); }
 /* ⚡ next to the traffic-light when a SharpCap capture was armed for a row. */
 .armed-bolt { margin-left: 3px; font-size: 11px; filter: drop-shadow(0 0 2px var(--accent)); }
+
+/* SharpCap multi-rig editor in Settings. */
+.sc-rigs-block { margin-top: 10px; }
+.sc-rigs-head { font-weight: 600; margin-bottom: 4px; }
+.sc-rigs { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.sc-rig { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.sc-rig .rig-name { flex: 1 1 90px; min-width: 80px; }
+.sc-rig .rig-host { flex: 2 1 130px; min-width: 110px; }
+.sc-rig .rig-port { flex: 0 0 64px; width: 64px; }
+.sc-rig .rig-pre, .sc-rig .rig-post { flex: 0 0 60px; width: 60px; }
+.sc-rig .rig-body { flex: 0 0 auto; }
+.sc-rig .rig-remove { flex: 0 0 auto; padding: 2px 8px; }
 /* SharpCap trigger readout next to the clock — armed body + session count. */
 .sc-status {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;

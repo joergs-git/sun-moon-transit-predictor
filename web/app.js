@@ -1407,6 +1407,65 @@ const settingsModal = $('#settings-modal');
 const settingsForm = $('#settings-form');
 const settingsMsg = $('#settings-msg');
 
+// ---- SharpCap multi-rig editor ----------------------------------------------
+// A dynamic list of capture rigs in the Settings panel. These inputs carry NO
+// `name` attribute, so the generic form (de)serialiser skips them — they're
+// handled explicitly in fillSettingsForm/submit and collected into
+// sharpcap.targets[]. Empty list → single-rig mode (the Host/Body fields).
+const scTargetsBox = $('#sharpcap-targets');
+function scRigRow(rig = {}) {
+  const row = document.createElement('div');
+  row.className = 'sc-rig';
+  const field = (cls, ph, type) => {
+    const i = document.createElement('input');
+    i.className = cls; i.placeholder = ph;
+    if (type) { i.type = type; if (type === 'number') { i.step = 'any'; i.min = '0'; } }
+    return i;
+  };
+  const name = field('rig-name', 'name');
+  const host = field('rig-host', 'host / IP');
+  const port = field('rig-port', 'port', 'number'); port.min = '1'; port.max = '65535';
+  const body = document.createElement('select');
+  body.className = 'rig-body';
+  body.innerHTML = '<option value="Sun">☀ Sun</option><option value="Moon">🌙 Moon</option>';
+  const pre = field('rig-pre', 'pre s', 'number');
+  const post = field('rig-post', 'post s', 'number');
+  const rm = document.createElement('button');
+  rm.type = 'button'; rm.className = 'btn rig-remove'; rm.textContent = '✕'; rm.title = 'Remove this rig';
+  rm.addEventListener('click', () => row.remove());
+  // Set values via properties (no innerHTML interpolation → no escaping issues).
+  name.value = rig.name ?? '';
+  host.value = rig.host ?? '';
+  port.value = rig.port ?? '';
+  body.value = (Array.isArray(rig.bodies) ? rig.bodies[0] : rig.bodies) ?? 'Sun';
+  pre.value = rig.preBufferS ?? '';
+  post.value = rig.postBufferS ?? '';
+  for (const el of [name, host, port, body, pre, post, rm]) row.appendChild(el);
+  return row;
+}
+function fillSharpcapTargets(targets) {
+  if (!scTargetsBox) return;
+  scTargetsBox.innerHTML = '';
+  for (const t of (Array.isArray(targets) ? targets : [])) scTargetsBox.appendChild(scRigRow(t));
+}
+function collectSharpcapTargets() {
+  if (!scTargetsBox) return [];
+  return [...scTargetsBox.querySelectorAll('.sc-rig')].map((row) => {
+    const v = (sel) => row.querySelector(sel)?.value ?? '';
+    const host = v('.rig-host').trim();
+    if (!host) return null;            // skip blank rows
+    const rig = { host, bodies: [v('.rig-body')] };
+    const name = v('.rig-name').trim(); if (name) rig.name = name;
+    const port = v('.rig-port'); if (port !== '') rig.port = Number(port);
+    const pre = v('.rig-pre');  if (pre !== '')  rig.preBufferS = Number(pre);
+    const post = v('.rig-post'); if (post !== '') rig.postBufferS = Number(post);
+    return rig;
+  }).filter(Boolean);
+}
+if ($('#sharpcap-add-rig')) {
+  $('#sharpcap-add-rig').addEventListener('click', () => scTargetsBox?.appendChild(scRigRow()));
+}
+
 function setNested(obj, dottedKey, value) {
   const parts = dottedKey.split('.');
   let cur = obj;
@@ -1438,6 +1497,8 @@ function fillSettingsForm(cfg) {
     else if (v == null) el.value = '';
     else el.value = v;
   }
+  // Dynamic multi-rig list (not part of the named-element loop).
+  fillSharpcapTargets(cfg.sharpcap?.targets);
 }
 
 async function openSettings() {
@@ -1487,6 +1548,8 @@ settingsForm.addEventListener('submit', async (ev) => {
     }
     setNested(patch, el.name, value);
   }
+  // Multi-rig list → sharpcap.targets (empty array = single-rig mode).
+  setNested(patch, 'sharpcap.targets', collectSharpcapTargets());
   settingsMsg.textContent = 'saving…';
   settingsMsg.className = 'settings-msg';
   try {
