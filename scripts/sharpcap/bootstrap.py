@@ -118,6 +118,10 @@ def _run():
     if cfg is not None:
         # The listener applies this over its built-in defaults at startup.
         ns["STP_LOCAL_CONFIG"] = cfg
+    # Make the listener log to the SAME file as the bootstrap, in the install
+    # dir (always writable) — its own default is a CWD-relative name that
+    # silently fails to write under a Program Files SharpCap install.
+    ns["STP_LOG_PATH"] = os.path.join(_bootstrap_dir(), "sharpcap_trigger.log")
     try:
         exec(compile(source, "trigger_listener.py", "exec"), ns)
     except Exception:

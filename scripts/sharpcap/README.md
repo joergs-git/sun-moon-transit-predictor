@@ -268,3 +268,31 @@ echo '{"label":"manual-test|Sun","preRollS":0,"durationS":3}' | nc <windows-ip> 
 
 You should see SharpCap kick off a 3 s capture immediately, and `nc` should
 print the JSON reply with `"ok": true`.
+
+## Troubleshooting: "OK" but no recording
+
+The listener replies `{"ok": true, "captureId": …}` the instant it **accepts**
+the trigger — the actual `RunCapture()` runs in a background thread *after*
+the reply. So a green "OK" / a `captureId` only means *the trigger arrived*,
+**not** that a clip was recorded. The capture thread can still abort silently,
+almost always because **no camera is selected / live preview isn't running**
+in SharpCap (the listener needs `SharpCap.SelectedCamera`).
+
+Where to look:
+
+- **SharpCap scripting console** — every log line is also `print()`ed there,
+  so it shows regardless of any file issue. After `accept from … 'manual-test'`
+  you'll see the outcome: `SelectedCamera is None, aborting`,
+  `RunCapture failed: …`, or `StopCapture done` (it actually recorded — check
+  the capture folder).
+- **Log file** — `%LOCALAPPDATA%\stp-sharpcap\sharpcap_trigger.log` (paste that
+  into the Explorer address bar). The bootstrap and the listener both write
+  here. Note: a manually-installed listener (no bootstrap) defaults to the
+  same `%LOCALAPPDATA%\stp-sharpcap\` path too; only if `LOCALAPPDATA` is
+  unset does it fall back to a CWD-relative `sharpcap_trigger.log` (which under
+  a Program Files SharpCap install is admin-only and silently un-writable —
+  this was fixed in v0.21.7; older copies logged to SharpCap's working dir).
+
+Fix: select the camera in SharpCap and start the live preview, then trigger
+again. If `StopCapture done` appears but you see no file, check the capture
+folder + format (*File → SharpCap Settings → General → Capture Folder*).

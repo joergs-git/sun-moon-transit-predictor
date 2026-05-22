@@ -36,7 +36,29 @@ import traceback
 PORT = 9999
 BIND = "0.0.0.0"               # set to "127.0.0.1" to restrict to localhost
 SHARED_TOKEN = ""              # set to a string to require token == this
-LOG_PATH = "sharpcap_trigger.log"   # next to SharpCap.exe; comment out to disable
+
+
+def _default_log_path():
+    """Resolve a deterministic, writable log path.
+
+    A bare relative name lands in SharpCap.exe's current working directory —
+    for a Program Files install that is admin-only, so the write fails
+    silently (see _log's except: pass) and the log appears to vanish. So:
+      1. STP_LOG_PATH injected by bootstrap.py (the install dir, writable).
+      2. %LOCALAPPDATA%\\stp-sharpcap\\sharpcap_trigger.log (manual installs).
+      3. the bare relative name as a last resort.
+    Set LOG_PATH = "" after this to disable file logging (print() still goes
+    to the SharpCap scripting console regardless)."""
+    injected = globals().get("STP_LOG_PATH")
+    if isinstance(injected, str) and injected:
+        return injected
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        return os.path.join(local, "stp-sharpcap", "sharpcap_trigger.log")
+    return "sharpcap_trigger.log"
+
+
+LOG_PATH = _default_log_path()
 
 # Maximum allowed values — guard against a buggy client asking for an hour-long
 # capture or a half-hour pre-roll that would block subsequent triggers.
@@ -84,9 +106,12 @@ def _is_finite(x):
 
 def _log(line):
     msg = "[{}] {}".format(time.strftime("%Y-%m-%dT%H:%M:%S"), line)
-    print(msg)
+    print(msg)   # always goes to SharpCap's scripting console
     if LOG_PATH:
         try:
+            d = os.path.dirname(LOG_PATH)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
             with open(LOG_PATH, "a") as f:
                 f.write(msg + "\n")
         except Exception:
