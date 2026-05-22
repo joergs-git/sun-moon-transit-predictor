@@ -3,7 +3,7 @@
 
 import { createServer } from 'node:http';
 import { promises as fs } from 'node:fs';
-import { extname, join, resolve } from 'node:path';
+import { extname, join, resolve, sep } from 'node:path';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -31,7 +31,13 @@ async function serveStatic(req, res, webRoot) {
   if (path === '/' || path === '') path = '/index.html';
   const root = resolve(webRoot);
   const safe = resolve(join(root, path));
-  if (!safe.startsWith(root)) {
+  // Separator-aware boundary: a naive startsWith(root) also accepts a
+  // sibling directory whose name shares the prefix (webRoot /srv/site →
+  // /srv/site-secret/leak.txt). WHATWG URL parsing usually collapses `..`,
+  // but URL-encoded slashes (%2e%2e%2fsite-secret%2f…) survive it and land
+  // the resolved path outside webRoot. Require an exact root match or a
+  // prefix that ends with the platform path separator.
+  if (safe !== root && !safe.startsWith(root + sep)) {
     res.writeHead(403); res.end('forbidden'); return;
   }
   try {

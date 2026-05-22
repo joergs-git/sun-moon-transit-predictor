@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
+import { promises as fsp, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { request as httpRequest } from 'node:http';
 import { createHttpServer } from '../src/server.js';
 import { HistoryStore } from '../src/store.js';
 
@@ -241,5 +244,67 @@ describe('HTTP server — /api/route (free callsign → route)', () => {
   it('404s when requestRoute is not wired', async () => {
     const res = await fetch(`${baseUrl}/api/route?cs=DLH400`);
     expect(res.status).toBe(404);
+  });
+});
+
+describe('static file path traversal', () => {
+  // webRoot = <tmp>/site ; a sibling <tmp>/site-secret/leak.txt shares the
+  // "site" prefix, so a naive startsWith(webRoot) check would serve it. The
+  // request uses URL-encoded slashes (%2e%2e%2f…) sent via the raw http
+  // module so it survives normalisation that fetch() would otherwise apply.
+  let srv;
+  let url;
+  let tmp;
+
+  beforeAll(async () => {
+    tmp = mkdtempSync(join(tmpdir(), 'stp-static-'));
+    const site = join(tmp, 'site');
+    const secret = join(tmp, 'site-secret');
+    await fsp.mkdir(site, { recursive: true });
+    await fsp.mkdir(secret, { recursive: true });
+    await fsp.writeFile(join(site, 'index.html'), '<h1>public</h1>');
+    await fsp.writeFile(join(secret, 'leak.txt'), 'TOP-SECRET');
+    srv = createHttpServer({
+      port: 0,
+      host: '127.0.0.1',
+      getState: () => fakeState,
+      store,
+      webRoot: site,
+    });
+    const { port } = await srv.start();
+    url = `http://127.0.0.1:${port}`;
+  });
+  afterAll(async () => {
+    if (srv) await srv.stop();
+    if (tmp) rmSync(tmp, { recursive: true, force: true });
+  });
+
+  // Raw GET that does NOT normalise the path (fetch would collapse the dots).
+  function rawGet(rawPath) {
+    return new Promise((res, rej) => {
+      const u = new URL(url);
+      const req = httpRequest(
+        { host: u.hostname, port: u.port, path: rawPath, method: 'GET' },
+        (r) => {
+          const chunks = [];
+          r.on('data', (c) => chunks.push(c));
+          r.on('end', () => res({ status: r.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+        },
+      );
+      req.on('error', rej);
+      req.end();
+    });
+  }
+
+  it('serves a normal file inside webRoot', async () => {
+    const r = await rawGet('/index.html');
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('public');
+  });
+
+  it('403s an encoded-slash traversal into a prefix-sibling dir', async () => {
+    const r = await rawGet('/%2e%2e%2fsite-secret%2fleak.txt');
+    expect(r.status).toBe(403);
+    expect(r.body).not.toContain('TOP-SECRET');
   });
 });
