@@ -55,6 +55,20 @@ done
 # ---------------------------------------------------------------------------
 # 2. Fast-forward only. Never auto-resolve merges in the background.
 # ---------------------------------------------------------------------------
+# Step 4 below runs `npm install`, which rewrites package-lock.json whenever
+# the Pi's npm version differs from the one that generated the committed
+# lockfile. That local churn then blocks the NEXT `git pull --ff-only` with
+# "Your local changes ... would be overwritten by merge". The committed
+# lockfile is authoritative, so discard any local edits to it (and to
+# package.json, same failure mode) before pulling. Targeted on purpose — we
+# do NOT blanket-reset the tree, so a real local change still surfaces.
+for f in package-lock.json package.json; do
+  if ! git diff --quiet -- "$f" 2>/dev/null; then
+    log "discarding local churn in $f before pull (npm-regenerated; committed copy wins)"
+    git checkout -- "$f" 2>/dev/null || true
+  fi
+done
+
 before="$(git rev-parse HEAD)"
 if ! git pull --ff-only --quiet; then
   log "git pull failed (non-fast-forward or network); leaving service running."
