@@ -38,14 +38,15 @@ export const DEFAULT_CONFIG = {
     pollIntervalMs: 2000,
   },
   tracker: {
-    // 15-minute look-ahead by default (v0.7.8+, was 300 s before). A high-
-    // altitude airliner is visible to a good ADS-B antenna ~20-25 min
-    // before overhead; 900 s catches the bulk of that window so candidates
-    // are recorded when the flight first enters reception range, not 30 s
-    // before transit. Linear extrapolation noise grows past ~10 min and
-    // false-positive "faded" episodes will become more common — that's the
-    // tradeoff for earlier detection. Clamp upper bound is 1800 s in code.
-    horizonS: 900,
+    // 5-minute look-ahead by default (v0.23.4; was 900 s). Linear-extrapolation
+    // error grows fast past a few minutes — especially for descending/turning
+    // approach traffic — so a 15-minute horizon produced a lot of speculative
+    // candidates that fired a 'radio' alert and then faded (false alarms). A
+    // 300 s window keeps predictions accurate and the alerts trustworthy: the
+    // SharpCap trigger only arms ~95 s out anyway, and a Pushover 1–2 min
+    // before is ample warning to glance at the capture. Raise it (clamp upper
+    // bound 1800 s) if you want earlier, noisier heads-ups.
+    horizonS: 300,
     stepS: 0.5,
     thresholdDeg: 0.3,        // tight band → 'candidate' level
     // Drop matches further than this from the tracking panel entirely.
@@ -158,6 +159,11 @@ export const DEFAULT_CONFIG = {
     // never exceed the listener's MAX_DURATION_S (120) and get rejected as
     // over-limit. Keep below the listener's cap.
     maxCaptureS: 115,
+    // Re-arm an already-armed capture when the refined closest-approach time
+    // moves more than this many seconds — the listener replaces the still-
+    // pending pre-roll with the fresher time. Fixes "armed early on a stale
+    // prediction that later corrected".
+    reArmShiftS: 12,
     // Send a Pushover when a capture is actually triggered (key params + ETA).
     notifyOnTrigger: true,
   },
@@ -389,14 +395,18 @@ export async function runService({
       const who = `${c.icao ?? c.callsign ?? '?'}|${c.body}`;
       sharpcap.armForCandidate(c, nowMs).then((res) => {
         if (res.sent) {
-          sharpcapArmedCount += 1;
-          sharpcapArmedLog.push({
-            icao: c.icao ?? null, body: c.body,
-            closestAtMs: c.closestApproachAtMs, armedAtMs: Date.now(),
-          });
-          if (sharpcapArmedLog.length > SHARPCAP_ARMED_MAX) sharpcapArmedLog.shift();
-          logger.info?.(`sharpcap: capture armed for ${who} (${res.response?.captureId ?? ''})`);
-          notifySharpcapTrigger(c, res);
+          // A re-arm replaces the same episode's pending capture — don't
+          // double-count it, just update the recorded closest time.
+          if (!res.reArmed) {
+            sharpcapArmedCount += 1;
+            sharpcapArmedLog.push({
+              icao: c.icao ?? null, body: c.body,
+              closestAtMs: c.closestApproachAtMs, armedAtMs: Date.now(),
+            });
+            if (sharpcapArmedLog.length > SHARPCAP_ARMED_MAX) sharpcapArmedLog.shift();
+          }
+          logger.info?.(`sharpcap: capture ${res.reArmed ? 're-armed' : 'armed'} for ${who} (${res.response?.captureId ?? ''})`);
+          if (!res.reArmed) notifySharpcapTrigger(c, res);
         } else if (res.error) {
           logger.warn?.(`sharpcap arm failed for ${who}: ${res.error?.message ?? res.error}`);
         } else if (res.reason === 'too-low' || res.reason === 'too-late') {

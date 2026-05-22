@@ -36,6 +36,11 @@ const DEFAULT_MAX_DRIFT_S = 45;
 // Keep the total clip safely under the listener's MAX_DURATION_S (120 s) so a
 // generous preBuffer+postBuffer+drift combo is never rejected as 'over-limit'.
 const DEFAULT_MAX_CAPTURE_S = 115;
+// Re-arm an already-armed capture when the refined closest-approach prediction
+// moves more than this — the listener replaces the still-pending (pre-roll)
+// capture with the fresher time. Fixes the "armed early on a stale prediction
+// that later corrected" miss.
+const DEFAULT_REARM_SHIFT_S = 12;
 
 /**
  * @typedef {Object} SharpCapConfig
@@ -64,6 +69,8 @@ export class SharpCapTrigger {
     this.net = netImpl;
     /** @type {Map<string, number>} key → last triggered at ms */
     this.lastTriggered = new Map();
+    /** @type {Map<string, number>} key → closestApproachAtMs that was armed */
+    this.armedClosest = new Map();
   }
 
   get enabled() {
@@ -191,7 +198,21 @@ export class SharpCapTrigger {
     const key = `${c.icao ?? c.callsign ?? 'unknown'}|${c.body}`;
     const dedupMs = this.config.dedupMs ?? DEFAULT_DEDUP_MS;
     const last = this.lastTriggered.get(key);
-    if (last != null && nowMs - last < dedupMs) return { sent: false, reason: 'deduped' };
+    let reArm = false;
+    if (last != null && nowMs - last < dedupMs) {
+      // Already armed this episode. Normally dedup → skip. But if the refined
+      // closest-approach prediction has moved more than reArmShiftS since we
+      // armed, re-send: the listener replaces the still-pending (pre-roll)
+      // capture with the fresher time. This fixes the "armed early on a stale
+      // prediction that later corrected" miss without waiting out dedupMs.
+      const reArmShiftS = Number.isFinite(this.config.reArmShiftS)
+        ? this.config.reArmShiftS : DEFAULT_REARM_SHIFT_S;
+      const armedClosest = this.armedClosest.get(key);
+      const shiftS = Number.isFinite(armedClosest)
+        ? Math.abs(c.closestApproachAtMs - armedClosest) / 1000 : 0;
+      if (shiftS <= reArmShiftS) return { sent: false, reason: 'deduped' };
+      reArm = true;
+    }
 
     // Widen the window by a drift margin that scales with how early we armed —
     // the predicted closest-approach time gets less certain the further out we
@@ -215,8 +236,10 @@ export class SharpCapTrigger {
     // whole point is to not miss — a transient send error must not lock us
     // out for dedupMs).
     this.lastTriggered.set(key, nowMs);
+    this.armedClosest.set(key, c.closestApproachAtMs);
     const result = await this._sendPayload(payload);
-    if (!result.sent) this.lastTriggered.delete(key);
+    if (!result.sent) { this.lastTriggered.delete(key); this.armedClosest.delete(key); }
+    else if (reArm) result.reArmed = true;
     return result;
   }
 

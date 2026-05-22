@@ -291,6 +291,26 @@ describe('SharpCapTrigger', () => {
       expect(sent.durationS).toBeLessThanOrEqual(115);
     });
 
+    it('re-arms within the dedup window when the predicted time shifts > reArmShiftS', async () => {
+      const { netImpl, created } = makeFakeNet({ replyLine: '{"ok":true}\n' });
+      const t = new SharpCapTrigger(
+        { enabled: true, host: 'pc', dedupMs: 60_000, reArmShiftS: 12, preBufferS: 10, postBufferS: 10 },
+        { netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+      );
+      const c1 = armCand({ closestApproachAtMs: NOW + 60_000 });
+      const r1 = await t.armForCandidate(c1, NOW);
+      expect(r1.sent).toBe(true);
+      // 5 s shift → still deduped (no re-arm)
+      const r2 = await t.armForCandidate(armCand({ closestApproachAtMs: NOW + 65_000 }), NOW + 2_000);
+      expect(r2.sent).toBe(false);
+      expect(r2.reason).toBe('deduped');
+      // 31 s shift → re-arm
+      const r3 = await t.armForCandidate(armCand({ closestApproachAtMs: NOW + 29_000 }), NOW + 4_000);
+      expect(r3.sent).toBe(true);
+      expect(r3.reArmed).toBe(true);
+      expect(created.length).toBe(2);   // initial + one re-arm
+    });
+
     it('skips a candidate wider than maxSepDeg', async () => {
       const t = new SharpCapTrigger({ enabled: true, host: 'pc', maxSepDeg: 0.5 });
       const res = await t.armForCandidate(armCand({ closestApproachSepDeg: 1.2 }), NOW);

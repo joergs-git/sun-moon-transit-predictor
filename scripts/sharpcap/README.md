@@ -278,6 +278,15 @@ of ±10 s (at lead 80 s the cap holds it to ±55 s). Set `leadDriftFrac: 0` to
 disable and use only the fixed buffers, or just raise
 `preBufferS`/`postBufferS` if you prefer a constant wide window.
 
+**Re-arming (v0.23.4).** Arming early means the predicted time can still be
+refined as more ADS-B comes in. If the predicted closest-approach moves more
+than `reArmShiftS` (default 12 s) while the capture is still in its pre-roll
+(not yet recording), the predictor re-sends and the listener **replaces the
+pending capture** with the fresher time — so an early arm on a not-yet-settled
+prediction self-corrects instead of recording the wrong window. A capture that
+is already recording is never interrupted, and a different target is never
+preempted (it gets `busy`). The journal logs `capture re-armed for …`.
+
 If a trigger does NOT fire, the service journal now says why
 (`sharpcap: arm skipped … too-low (el 22°, minEl 30°)` etc.) — check it with
 `journalctl -u stp.service -f | grep -i sharpcap` on the Pi.

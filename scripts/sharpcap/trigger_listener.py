@@ -89,6 +89,14 @@ TRANSFER_RESCAN_S = 2.0            # if nothing new yet, wait this long and scan
 
 _state_lock = threading.Lock()
 _capture_active = False
+# Re-arm support: a fresh trigger for the SAME target that arrives while the
+# previous one is still in its pre-roll wait (not yet recording) replaces it
+# with the updated time. Generation guards the handoff — the superseded
+# pre-roll thread sees a newer generation and aborts without touching state.
+_capture_gen = 0
+_active_label = None
+_recording = False
+_cancel_event = None   # threading.Event for the in-flight capture's pre-roll
 
 # Reject non-finite trigger numbers (NaN / +/-inf). float("nan") does NOT
 # raise, so a malformed packet like {"durationS": NaN} would otherwise slip
@@ -392,14 +400,22 @@ def _run_on_ui(func):
     return box.get("result")
 
 
-def _do_capture(label, pre_roll_s, duration_s):
+def _do_capture(label, pre_roll_s, duration_s, my_gen, cancel_event):
     """Wait pre_roll_s, then start a capture for duration_s. Runs in its own
-    thread so the listener can keep accepting reject-only follow-ups."""
-    global _capture_active
+    thread so the listener can keep accepting reject-only follow-ups.
+
+    my_gen / cancel_event support re-arming: a replacement trigger for the same
+    target sets cancel_event during the pre-roll wait, so this thread aborts
+    before recording and the newer generation takes over. The finally only
+    clears shared state if we are still the current generation."""
+    global _capture_active, _recording
     try:
         if pre_roll_s > 0:
             _log("capture {!r}: waiting pre-roll {:.2f}s".format(label, pre_roll_s))
-            time.sleep(pre_roll_s)
+            # Interruptible wait — returns True if cancelled (re-armed).
+            if cancel_event.wait(pre_roll_s):
+                _log("capture {!r}: pre-roll cancelled (re-armed with a fresher time)".format(label))
+                return
         try:
             cam = SharpCap.SelectedCamera   # noqa: F821  (provided by SharpCap host)
         except Exception:
@@ -408,6 +424,13 @@ def _do_capture(label, pre_roll_s, duration_s):
         if cam is None:
             _log("capture {!r}: SelectedCamera is None, aborting".format(label))
             return
+        # A replacement may have arrived in the instant before we locked in —
+        # if a newer generation exists, yield to it without recording.
+        with _state_lock:
+            if my_gen != _capture_gen:
+                _log("capture {!r}: superseded before recording, aborting".format(label))
+                return
+            _recording = True
         # Snapshot the capture folder BEFORE recording so the post-capture diff
         # transfers only the file(s) this capture produces — never leftovers.
         pre_snapshot = _scan_capture_dir() if TRANSFER_ENABLED else {}
@@ -440,12 +463,16 @@ def _do_capture(label, pre_roll_s, duration_s):
         # Transfer runs only here, i.e. strictly after StopCapture has returned.
         _transfer_new_files(pre_snapshot, label)
     finally:
+        # Only the current generation owns the shared state; a superseded
+        # thread must not clear the flags the replacement set.
         with _state_lock:
-            _capture_active = False
+            if my_gen == _capture_gen:
+                _capture_active = False
+                _recording = False
 
 
 def _handle_conn(conn, addr):
-    global _capture_active
+    global _capture_active, _capture_gen, _active_label, _recording, _cancel_event
     try:
         conn.settimeout(2.0)
         buf = b""
@@ -491,10 +518,27 @@ def _handle_conn(conn, addr):
 
         with _state_lock:
             if _capture_active:
-                _log("reject from {} ({!r}): busy".format(addr, label))
-                conn.sendall(b'{"ok": false, "error": "busy"}\n')
-                return
+                # Re-arm: a fresh trigger for the SAME target that is still in
+                # its pre-roll (not yet recording) replaces the pending one with
+                # the updated time. Anything else — a different target, or one
+                # that is already recording — is rejected busy (never interrupt
+                # a recording in progress).
+                if _recording or _active_label != label:
+                    _log("reject from {} ({!r}): busy".format(addr, label))
+                    conn.sendall(b'{"ok": false, "error": "busy"}\n')
+                    return
+                _log("re-arm {!r}: replacing pending capture with updated time".format(label))
+                if _cancel_event is not None:
+                    _cancel_event.set()   # wake + abort the superseded pre-roll
+            # Accept (fresh or replacement): bump the generation so the old
+            # pre-roll thread yields, and install a new cancel event.
+            _capture_gen += 1
+            my_gen = _capture_gen
             _capture_active = True
+            _active_label = label
+            _recording = False
+            _cancel_event = threading.Event()
+            ev = _cancel_event
 
         capture_id = "{}+{}".format(label, int(time.time()))
         _log("accept from {}: {!r} preRoll={:.2f}s duration={:.2f}s".format(
@@ -503,10 +547,11 @@ def _handle_conn(conn, addr):
             conn.sendall(("{\"ok\": true, \"captureId\": \"" + capture_id + "\"}\n").encode("utf-8"))
         except Exception:
             with _state_lock:
-                _capture_active = False
+                if my_gen == _capture_gen:
+                    _capture_active = False
             return
 
-        t = threading.Thread(target=_do_capture, args=(label, pre_roll_s, duration_s))
+        t = threading.Thread(target=_do_capture, args=(label, pre_roll_s, duration_s, my_gen, ev))
         t.daemon = True
         t.start()
     except Exception:
