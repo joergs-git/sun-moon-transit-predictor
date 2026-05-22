@@ -58,7 +58,8 @@ param(
     [switch]$Copy,               # copy instead of move (default)
     [string[]]$Exts,             # extensions to transfer, e.g. .ser,.txt
     [int]$Port,                  # listener TCP port
-    [string]$Token               # shared secret (must match predictor's sharpcap.token)
+    [string]$Token,              # shared secret (must match predictor's sharpcap.token)
+    [switch]$PickFolders         # pick source + destination via a folder dialog
 )
 
 $ErrorActionPreference = "Stop"
@@ -72,6 +73,33 @@ try {
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "    $msg" -ForegroundColor Green }
 function Write-Warn2($msg) { Write-Host "    $msg" -ForegroundColor Yellow }
+
+# Classic Windows folder-picker. Returns the chosen path, or $null if the user
+# cancels or no GUI is available. The dialog needs an STA thread (the default
+# in Windows PowerShell's powershell.exe). If it can't run (e.g. MTA host like
+# pwsh, or a headless session) we fall back to a typed prompt.
+function Select-FolderDialog($description, $initialPath) {
+    try {
+        $sta = [System.Threading.Thread]::CurrentThread.GetApartmentState()
+        if ($sta -ne [System.Threading.ApartmentState]::STA) { throw "not STA" }
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+        $dlg.Description = $description
+        $dlg.ShowNewFolderButton = $true
+        if ($initialPath -and (Test-Path $initialPath)) { $dlg.SelectedPath = $initialPath }
+        $owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }
+        $res = $dlg.ShowDialog($owner)
+        $owner.Dispose()
+        if ($res -eq [System.Windows.Forms.DialogResult]::OK) { return $dlg.SelectedPath }
+        return $null
+    } catch {
+        Write-Warn2 ("Folder dialog unavailable ({0}). Falling back to a typed prompt." -f $_.Exception.Message)
+        Write-Warn2 "Tip: run with the Windows PowerShell (powershell.exe), which is STA, to get the dialog."
+        $typed = Read-Host $description
+        if ([string]::IsNullOrWhiteSpace($typed)) { return $null }
+        return $typed
+    }
+}
 
 $rawBase = "https://raw.githubusercontent.com/$Owner/$Repo/$Branch/scripts/sharpcap"
 
@@ -147,12 +175,30 @@ if ($Move)            { $cfg["move"] = $true }
 if ($Copy)            { $cfg["move"] = $false }
 if ($Exts)            { $cfg["exts"] = $Exts }
 
+# Folder pickers: explicit -SourceDir/-DestDir always win and skip the dialog.
+# Otherwise pop a picker when -PickFolders is set, or when transfer is being
+# enabled without paths (so "enable but didn't say where" just asks).
+$pickSource = $PickFolders -or ($EnableTransfer -and -not $SourceDir)
+$pickDest   = $PickFolders -or ($EnableTransfer -and -not $DestDir)
+if ($pickSource) {
+    Write-Step "Pick the SharpCap capture folder to watch"
+    $p = Select-FolderDialog "Select the SharpCap capture folder to watch (subfolders included)" $cfg["sourceDir"]
+    if ($p) { $cfg["sourceDir"] = $p; Write-Ok "source: $p" } else { Write-Warn2 "no folder picked; keeping '$($cfg['sourceDir'])'" }
+}
+if ($pickDest) {
+    Write-Step "Pick the network destination folder"
+    $p = Select-FolderDialog "Select the destination folder on the network drive" $cfg["destDir"]
+    if ($p) { $cfg["destDir"] = $p; Write-Ok "destination: $p" } else { Write-Warn2 "no folder picked; keeping '$($cfg['destDir'])'" }
+}
+
 ($cfg | ConvertTo-Json -Depth 5) | Set-Content -Path $configPath -Encoding UTF8
 Write-Ok ("transfer={0}  source='{1}'  dest='{2}'  move={3}" -f `
     $cfg["transferEnabled"], $cfg["sourceDir"], $cfg["destDir"], $cfg["move"])
 if (-not $cfg["transferEnabled"]) {
-    Write-Warn2 "Transfer is OFF. Enable + set folders e.g.:"
-    Write-Warn2 "  .\install.ps1 -EnableTransfer -SourceDir 'C:\SharpCap Captures' -DestDir '\\NAS\transits'"
+    Write-Warn2 "Transfer is OFF. Enable it and pick the folders via a dialog:"
+    Write-Warn2 "  .\install.ps1 -EnableTransfer            # pops folder pickers"
+    Write-Warn2 "Or pick folders any time without changing the on/off state:"
+    Write-Warn2 "  .\install.ps1 -PickFolders"
 }
 
 # ---------------------------------------------------------------------------

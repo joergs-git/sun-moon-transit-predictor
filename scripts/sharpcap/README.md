@@ -69,7 +69,23 @@ listener body. This is important: the bootstrap re-downloads the listener from
 GitHub on every start, but it never touches your config, so your paths survive
 every update.
 
-Set them via the installer (it merges, so re-running keeps what you set):
+**Easiest — pick the folders in a dialog (no typing, no typos):**
+
+```powershell
+.\install.ps1 -EnableTransfer    # pops a classic folder picker for source + destination
+```
+
+`-EnableTransfer` without paths opens the standard Windows folder browser for
+the SharpCap capture folder and then the network destination (the picker's
+Network node / mapped drives let you choose a UNC target, and the "New folder"
+button creates the destination). To re-pick later without changing anything
+else:
+
+```powershell
+.\install.ps1 -PickFolders
+```
+
+**Or pass the paths explicitly** (also merges, so re-running keeps what you set):
 
 ```powershell
 .\install.ps1 -EnableTransfer `
@@ -77,6 +93,10 @@ Set them via the installer (it merges, so re-running keeps what you set):
               -DestDir '\\NAS\transits' `
               -Move          # optional: move instead of copy
 ```
+
+> The dialog needs an STA host — Windows PowerShell (`powershell.exe`) is STA
+> by default, so run it there. In an MTA host (e.g. `pwsh`) the installer
+> falls back to a typed prompt automatically.
 
 Config params:
 
@@ -90,6 +110,7 @@ Config params:
 | `-Exts .ser,.txt`     | `exts`            | which extensions to transfer                         |
 | `-Port <n>`           | `port`            | listener TCP port (match predictor `sharpcap.port`)  |
 | `-Token <s>`          | `token`           | shared secret (match predictor `sharpcap.token`)     |
+| `-PickFolders`        | —                 | choose `sourceDir` + `destDir` in a folder dialog    |
 
 You can also edit the JSON directly:
 
