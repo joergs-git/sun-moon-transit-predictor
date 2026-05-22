@@ -16,7 +16,56 @@ src/sharpcap.js TCP        ──▶  RunCapture() after preRoll, then StopCaptu
 The listener listens on TCP `:9999`. The predictor connects, sends one JSON
 line, the listener replies one JSON line, then arms the capture.
 
-## Install (one-time)
+## Install (automated — recommended)
+
+`install.ps1` is install, start and update in one. It downloads the latest
+listener from GitHub, sets up a bootstrap that **always pulls the newest
+version on every SharpCap start** (no versioning), and tells you the one-time
+SharpCap wiring step.
+
+In PowerShell on the Windows PC:
+
+```powershell
+# until the feature PR is merged, pass the feature branch:
+powershell -ExecutionPolicy Bypass -File install.ps1 -Branch claude/sharpcap-windows-trigger-DHPcL
+
+# after merge to main, simply:
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+You can fetch and run it in one line:
+
+```powershell
+$u="https://raw.githubusercontent.com/joergs-git/sun-moon-transit-predictor/main/scripts/sharpcap/install.ps1"; iwr $u -OutFile "$env:TEMP\stp-install.ps1"; powershell -ExecutionPolicy Bypass -File "$env:TEMP\stp-install.ps1"
+```
+
+What it does:
+
+- Installs into `%LOCALAPPDATA%\stp-sharpcap` (`bootstrap.py` +
+  `trigger_listener.cached.py` as offline fallback).
+- Prints the one-time SharpCap step: *File → SharpCap Settings → Startup →
+  run script* → point it at the installed `bootstrap.py`.
+- On every SharpCap launch the bootstrap downloads the latest
+  `trigger_listener.py` from GitHub and runs it in-process. **Updating = just
+  restart SharpCap.** Re-running `install.ps1` refreshes the bootstrap itself.
+
+Switches:
+
+| Switch            | Effect                                                                 |
+|-------------------|------------------------------------------------------------------------|
+| `-Branch <name>`  | which Git branch to pull from (default `main`)                         |
+| `-StartSharpCap`  | launch SharpCap right after install                                    |
+| `-InstallPython`  | also install CPython via winget — **not needed by the listener** (it   |
+|                   | runs in SharpCap's IronPython); only for the optional host-side `nc`   |
+|                   | test tooling                                                           |
+| `-InstallDir <p>` | override the install folder                                            |
+
+> **Why no standalone Python?** `trigger_listener.py` calls
+> `SharpCap.SelectedCamera`, which only exists inside SharpCap's scripting
+> host (IronPython). It cannot run as an external Python process, so it needs
+> no CPython and no pip packages — it is standard-library only.
+
+## Install (manual — if you prefer no auto-update)
 
 1. Open SharpCap. **Camera must already be selected, live preview running**
    (warm USB pipeline → first frame within ~10-50 ms of `RunCapture()`).
@@ -39,6 +88,39 @@ Edit the constants at the top of `trigger_listener.py` if you need to:
 | `SHARED_TOKEN` | `""`          | non-empty → predictor must send matching token|
 | `MAX_DURATION_S`| `120`        | safety cap                                    |
 | `MAX_PRE_ROLL_S`| `90`         | safety cap                                    |
+
+## Optional: copy the .ser to a network drive after each capture
+
+The listener can transfer the file(s) SharpCap just wrote into a folder on a
+network drive once the recording has stopped. This is **opt-in** — set
+`TRANSFER_ENABLED = True` at the top of `trigger_listener.py`.
+
+| Constant                    | Default                | Purpose                                                       |
+|-----------------------------|------------------------|---------------------------------------------------------------|
+| `TRANSFER_ENABLED`          | `False`                | master switch                                                 |
+| `SER_SOURCE_DIR`            | `C:\SharpCap Captures` | **must match** SharpCap's capture folder                      |
+| `SER_DEST_DIR`              | `\\NAS\transits`       | UNC path or mapped drive (e.g. `Z:\transits`)                 |
+| `TRANSFER_MOVE`             | `False`                | `True` = move (delete local original); `False` = copy         |
+| `TRANSFER_EXTS`             | `(".ser",)`            | extensions to transfer; add `".txt"` for the metadata sidecar |
+| `TRANSFER_SETTLE_TIMEOUT_S` | `60`                   | max wait for SharpCap to finish writing each file             |
+| `TRANSFER_POST_STOP_DELAY_S`| `1.5`                  | grace after StopCapture before scanning (covers `.tmp` rename)|
+| `TRANSFER_RESCAN_S`         | `2.0`                  | if nothing new yet, wait and scan once more                   |
+
+How it guarantees correctness:
+
+- **Transfer only after the recording is finished.** It runs strictly after
+  `StopCapture()` returns, then waits per file until the file size stops
+  growing (the handle is released) before touching it — a half-written `.ser`
+  is never copied.
+- **Old files are never re-transferred.** The capture folder is snapshotted
+  *before* `RunCapture()`; only files that are new — or that grew — relative
+  to that snapshot are sent. Leftovers from earlier captures (e.g. in copy
+  mode) are excluded by construction, and an in-process ledger of already-sent
+  files is a second line of defence.
+- Detection is by file modification time, **not** the SharpCap API, so it is
+  independent of the SharpCap version. Set the capture format to **SER** and
+  point `SER_SOURCE_DIR` at SharpCap's capture folder
+  (*File → SharpCap Settings → General → Capture Folder*).
 
 ## Configure (predictor side)
 

@@ -26,6 +26,8 @@
 # sync with the matching predictor service.json sharpcap.{port,token} fields.
 
 import json
+import os
+import shutil
 import socket
 import threading
 import time
@@ -41,6 +43,25 @@ LOG_PATH = "sharpcap_trigger.log"   # next to SharpCap.exe; comment out to disab
 MAX_DURATION_S = 120
 MAX_PRE_ROLL_S = 90
 
+# --- Optional post-capture transfer to a network drive ---------------------
+# After StopCapture, copy (or move) the .ser file(s) SharpCap just wrote into
+# a folder on a network drive. Detection is by file modification time, not the
+# SharpCap API, so it is independent of the SharpCap version: any matching
+# file under SER_SOURCE_DIR touched during the capture window is transferred.
+#
+# IMPORTANT: SER_SOURCE_DIR must match SharpCap's capture output folder
+# (SharpCap: File -> SharpCap Settings -> General -> Capture Folder) and the
+# capture format must be set to SER.
+TRANSFER_ENABLED = False
+SER_SOURCE_DIR = r"C:\\SharpCap Captures"   # SharpCap's local capture folder
+SER_DEST_DIR = r"\\\\NAS\\transits"          # UNC path or mapped drive, e.g. r"Z:\\transits"
+TRANSFER_MOVE = False          # True = move (delete local original); False = copy
+TRANSFER_EXTS = (".ser",)      # extensions to transfer; add ".txt" for the metadata sidecar
+TRANSFER_SETTLE_TIMEOUT_S = 60 # max wait for SharpCap to finish writing each file
+TRANSFER_SETTLE_INTERVAL_S = 0.5
+TRANSFER_POST_STOP_DELAY_S = 1.5   # give SharpCap a moment to finalise/rename the .ser
+TRANSFER_RESCAN_S = 2.0            # if nothing new yet, wait this long and scan once more
+
 
 _state_lock = threading.Lock()
 _capture_active = False
@@ -55,6 +76,142 @@ def _log(line):
                 f.write(msg + "\n")
         except Exception:
             pass
+
+
+# Signatures (abspath, size, int mtime) we have already transferred — guards
+# against ever sending the same file twice, e.g. across two close captures in
+# copy mode where the original stays in the source folder.
+_transferred_lock = threading.Lock()
+_transferred = set()
+
+
+def _scan_capture_dir():
+    """Map {abspath: mtime} of all files under SER_SOURCE_DIR matching
+    TRANSFER_EXTS. Used both for the pre-capture snapshot and the post-capture
+    diff so detection never relies on a wall-clock window."""
+    snap = {}
+    if not SER_SOURCE_DIR or not os.path.isdir(SER_SOURCE_DIR):
+        return snap
+    exts = tuple(e.lower() for e in TRANSFER_EXTS)
+    for root, _dirs, files in os.walk(SER_SOURCE_DIR):
+        for name in files:
+            if not name.lower().endswith(exts):
+                continue
+            path = os.path.join(root, name)
+            try:
+                snap[path] = os.path.getmtime(path)
+            except OSError:
+                pass
+    return snap
+
+
+def _diff_new_files(pre_snapshot):
+    """Files that appeared, or whose mtime advanced, since the pre-capture
+    snapshot. Anything already present and unchanged (i.e. an older capture's
+    leftovers) is by construction excluded."""
+    out = []
+    for path, mtime in _scan_capture_dir().items():
+        prev = pre_snapshot.get(path)
+        if prev is None or mtime > prev + 1e-6:
+            out.append(path)
+    return out
+
+
+def _wait_until_stable(path):
+    """Block until a file's size stops growing (SharpCap has released it) or
+    the settle timeout elapses. Returns False only if the file vanished."""
+    last_size = -1
+    stable = 0
+    deadline = time.time() + TRANSFER_SETTLE_TIMEOUT_S
+    while time.time() < deadline:
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return False
+        if size == last_size and size > 0:
+            stable += 1
+            if stable >= 3:
+                return True
+        else:
+            stable = 0
+            last_size = size
+        time.sleep(TRANSFER_SETTLE_INTERVAL_S)
+    return True   # proceed anyway after the timeout
+
+
+def _unique_dest(name):
+    """Collision-safe destination path inside SER_DEST_DIR."""
+    dest = os.path.join(SER_DEST_DIR, name)
+    if not os.path.exists(dest):
+        return dest
+    base, ext = os.path.splitext(name)
+    i = 1
+    while True:
+        cand = os.path.join(SER_DEST_DIR, "{}_{}{}".format(base, i, ext))
+        if not os.path.exists(cand):
+            return cand
+        i += 1
+
+
+def _signature(path):
+    """Stable identity of a settled file: (abspath, size, int mtime)."""
+    st = os.stat(path)
+    return (os.path.abspath(path), st.st_size, int(st.st_mtime))
+
+
+def _transfer_new_files(pre_snapshot, label):
+    """Copy/move the file(s) SharpCap created during this capture to the
+    network destination. `pre_snapshot` is {path: mtime} captured BEFORE
+    RunCapture(); only files that are new or grew relative to it are sent, so
+    leftovers from older captures are never re-transferred. Best-effort: every
+    failure is logged, none raises. Called only AFTER StopCapture() returns."""
+    if not TRANSFER_ENABLED:
+        return
+    if not SER_DEST_DIR:
+        _log("transfer: SER_DEST_DIR not set, skipping")
+        return
+
+    # Give SharpCap a moment to finalise (it may rename .ser.tmp -> .ser only
+    # after StopCapture returns), then diff against the pre-capture snapshot.
+    if TRANSFER_POST_STOP_DELAY_S > 0:
+        time.sleep(TRANSFER_POST_STOP_DELAY_S)
+    files = _diff_new_files(pre_snapshot)
+    if not files and TRANSFER_RESCAN_S > 0:
+        time.sleep(TRANSFER_RESCAN_S)
+        files = _diff_new_files(pre_snapshot)
+    if not files:
+        _log("transfer {!r}: no new {} files under {}".format(label, TRANSFER_EXTS, SER_SOURCE_DIR))
+        return
+
+    try:
+        if not os.path.isdir(SER_DEST_DIR):
+            os.makedirs(SER_DEST_DIR)
+    except Exception:
+        _log("transfer: cannot create dest dir {!r}:\n{}".format(SER_DEST_DIR, traceback.format_exc()))
+        return
+
+    for src in files:
+        try:
+            # Block until SharpCap has stopped growing the file (handle freed)
+            # before we touch it — never transfer a half-written capture.
+            if not _wait_until_stable(src):
+                _log("transfer {!r}: {} vanished before transfer".format(label, src))
+                continue
+            sig = _signature(src)
+            with _transferred_lock:
+                if sig in _transferred:
+                    continue
+            dest = _unique_dest(os.path.basename(src))
+            if TRANSFER_MOVE:
+                shutil.move(src, dest)
+                _log("transfer {!r}: moved {} -> {}".format(label, src, dest))
+            else:
+                shutil.copy2(src, dest)
+                _log("transfer {!r}: copied {} -> {}".format(label, src, dest))
+            with _transferred_lock:
+                _transferred.add(sig)
+        except Exception:
+            _log("transfer {!r}: failed for {}:\n{}".format(label, src, traceback.format_exc()))
 
 
 def _do_capture(label, pre_roll_s, duration_s):
@@ -73,6 +230,9 @@ def _do_capture(label, pre_roll_s, duration_s):
         if cam is None:
             _log("capture {!r}: SelectedCamera is None, aborting".format(label))
             return
+        # Snapshot the capture folder BEFORE recording so the post-capture diff
+        # transfers only the file(s) this capture produces — never leftovers.
+        pre_snapshot = _scan_capture_dir() if TRANSFER_ENABLED else {}
         _log("capture {!r}: RunCapture (duration {:.2f}s)".format(label, duration_s))
         try:
             cam.RunCapture()
@@ -85,6 +245,9 @@ def _do_capture(label, pre_roll_s, duration_s):
             _log("capture {!r}: StopCapture done".format(label))
         except Exception:
             _log("capture {!r}: StopCapture failed:\n{}".format(label, traceback.format_exc()))
+            return
+        # Transfer runs only here, i.e. strictly after StopCapture has returned.
+        _transfer_new_files(pre_snapshot, label)
     finally:
         with _state_lock:
             _capture_active = False
