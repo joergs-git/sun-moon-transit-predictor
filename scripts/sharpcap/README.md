@@ -60,6 +60,54 @@ Switches:
 |                   | test tooling                                                           |
 | `-InstallDir <p>` | override the install folder                                            |
 
+### Defining the folders (do this once)
+
+The folder to watch on the Windows PC and the network destination are
+machine-specific, so they live in a local config file
+(`%LOCALAPPDATA%\stp-sharpcap\stp-sharpcap.config.json`) — **not** in the
+listener body. This is important: the bootstrap re-downloads the listener from
+GitHub on every start, but it never touches your config, so your paths survive
+every update.
+
+Set them via the installer (it merges, so re-running keeps what you set):
+
+```powershell
+.\install.ps1 -EnableTransfer `
+              -SourceDir 'C:\SharpCap Captures' `
+              -DestDir '\\NAS\transits' `
+              -Move          # optional: move instead of copy
+```
+
+Config params:
+
+| Switch / param        | Config key        | Meaning                                              |
+|-----------------------|-------------------|------------------------------------------------------|
+| `-SourceDir <path>`   | `sourceDir`       | SharpCap capture folder to watch (**subfolders included** — `os.walk` recurses, so SharpCap's date subfolders are fine) |
+| `-DestDir <path>`     | `destDir`         | network destination, UNC (`\\NAS\share`) or mapped drive (`Z:\...`) |
+| `-EnableTransfer`     | `transferEnabled` | turn transfer on                                     |
+| `-DisableTransfer`    | `transferEnabled` | turn transfer off                                    |
+| `-Move` / `-Copy`     | `move`            | move (delete local original) vs copy (default)       |
+| `-Exts .ser,.txt`     | `exts`            | which extensions to transfer                         |
+| `-Port <n>`           | `port`            | listener TCP port (match predictor `sharpcap.port`)  |
+| `-Token <s>`          | `token`           | shared secret (match predictor `sharpcap.token`)     |
+
+You can also edit the JSON directly:
+
+```json
+{
+  "port": 9999,
+  "token": "",
+  "transferEnabled": true,
+  "sourceDir": "C:\\SharpCap Captures",
+  "destDir": "\\\\NAS\\transits",
+  "move": false,
+  "exts": [".ser"]
+}
+```
+
+> The same keys also work via the `STP_SHARPCAP_CONFIG` env var (point it at a
+> JSON file) for the manual-install path that doesn't use the bootstrap.
+
 > **Why no standalone Python?** `trigger_listener.py` calls
 > `SharpCap.SelectedCamera`, which only exists inside SharpCap's scripting
 > host (IronPython). It cannot run as an external Python process, so it needs

@@ -78,6 +78,76 @@ def _log(line):
             pass
 
 
+# Friendly JSON config key -> module constant. The constants above are only
+# fallback defaults; the machine-specific values (which folders to watch, where
+# to copy to) live in a local JSON file so they SURVIVE the auto-update — the
+# listener body is re-pulled from GitHub on every start, but this config is not.
+_CONFIG_KEY_MAP = {
+    "port": "PORT",
+    "bind": "BIND",
+    "token": "SHARED_TOKEN",
+    "transferEnabled": "TRANSFER_ENABLED",
+    "sourceDir": "SER_SOURCE_DIR",
+    "destDir": "SER_DEST_DIR",
+    "move": "TRANSFER_MOVE",
+    "exts": "TRANSFER_EXTS",
+    "settleTimeoutS": "TRANSFER_SETTLE_TIMEOUT_S",
+    "postStopDelayS": "TRANSFER_POST_STOP_DELAY_S",
+    "rescanS": "TRANSFER_RESCAN_S",
+    "maxDurationS": "MAX_DURATION_S",
+    "maxPreRollS": "MAX_PRE_ROLL_S",
+}
+
+
+def _candidate_config_paths():
+    paths = []
+    env = os.environ.get("STP_SHARPCAP_CONFIG")
+    if env:
+        paths.append(env)
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        paths.append(os.path.join(local, "stp-sharpcap", "stp-sharpcap.config.json"))
+    # cwd is usually SharpCap.exe's folder when run as a startup script.
+    paths.append(os.path.join(os.getcwd(), "stp-sharpcap.config.json"))
+    return paths
+
+
+def _apply_local_config():
+    """Override the fallback constants from a machine-local JSON config.
+
+    Source of the config, in priority order:
+      1. STP_LOCAL_CONFIG global injected by bootstrap.py (it knows the
+         install dir, so this is the reliable path under auto-update).
+      2. A JSON file at one of _candidate_config_paths() (manual install)."""
+    cfg = None
+    g = globals()
+    inj = g.get("STP_LOCAL_CONFIG")
+    if isinstance(inj, dict):
+        cfg = inj
+        _log("config: using settings injected by bootstrap")
+    else:
+        for path in _candidate_config_paths():
+            try:
+                if os.path.isfile(path):
+                    with open(path) as f:
+                        cfg = json.load(f)
+                    _log("config: loaded {}".format(path))
+                    break
+            except Exception:
+                _log("config: failed reading {}:\n{}".format(path, traceback.format_exc()))
+    if not isinstance(cfg, dict):
+        _log("config: none found, using built-in defaults")
+        return
+    for json_key, const_name in _CONFIG_KEY_MAP.items():
+        if json_key in cfg and cfg[json_key] is not None:
+            val = cfg[json_key]
+            if const_name == "TRANSFER_EXTS" and isinstance(val, list):
+                val = tuple(val)
+            g[const_name] = val
+    _log("config: transfer={} source={!r} dest={!r} move={}".format(
+        g["TRANSFER_ENABLED"], g["SER_SOURCE_DIR"], g["SER_DEST_DIR"], g["TRANSFER_MOVE"]))
+
+
 # Signatures (abspath, size, int mtime) we have already transferred — guards
 # against ever sending the same file twice, e.g. across two close captures in
 # copy mode where the original stays in the source folder.
@@ -340,6 +410,8 @@ def _serve():
         t.daemon = True
         t.start()
 
+
+_apply_local_config()
 
 _listener_thread = threading.Thread(target=_serve)
 _listener_thread.daemon = True
