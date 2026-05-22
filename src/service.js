@@ -140,6 +140,13 @@ export const DEFAULT_CONFIG = {
     bodies: ['Sun', 'Moon'],
     dedupMs: 60_000,
     connectTimeoutMs: 2000,
+    // Tick-based arming (the "never miss a transit" path): arm as soon as a
+    // candidate's projected closest separation is within maxSepDeg AND the
+    // closest approach is near enough that the pre-roll fits the listener cap.
+    // maxSepDeg is generous on purpose — better an extra clip than a missed
+    // shot. Set lower to be stricter, or minElevationDeg=0 to never gate on
+    // elevation.
+    maxSepDeg: 0.5,
     // Send a Pushover when a capture is actually triggered (key params + ETA).
     notifyOnTrigger: true,
   },
@@ -349,22 +356,44 @@ export async function runService({
     pushover.send(msg).catch((e) => logger.warn?.('sharpcap push failed:', e?.message ?? e));
   }
 
+  // Tick-based SharpCap arming — the "never miss a transit" path. Called every
+  // tick with the live candidate list; SharpCapTrigger.armForCandidate gates
+  // on body/sep/elevation/time + dedup, so each crossing arms exactly one
+  // capture as soon as the pre-roll fits the listener cap. Quiet reasons
+  // (too-early / too-wide / deduped / body-filtered) are NOT logged — they
+  // fire every tick for distant or off-band traffic; only real skips
+  // (too-low / too-late) and failures are surfaced so a miss is never silent.
+  function armSharpcapForCandidates(candidates, nowMs) {
+    if (!sharpcap.enabled) return;
+    for (const c of candidates) {
+      const who = `${c.icao ?? c.callsign ?? '?'}|${c.body}`;
+      sharpcap.armForCandidate(c, nowMs).then((res) => {
+        if (res.sent) {
+          logger.info?.(`sharpcap: capture armed for ${who} (${res.response?.captureId ?? ''})`);
+          notifySharpcapTrigger(c, res);
+        } else if (res.error) {
+          logger.warn?.(`sharpcap arm failed for ${who}: ${res.error?.message ?? res.error}`);
+        } else if (res.reason === 'too-low' || res.reason === 'too-late') {
+          logger.info?.(`sharpcap: arm skipped for ${who}: ${res.reason}`
+            + (Number.isFinite(c.aircraftAtClosest?.elevationDeg)
+              ? ` (el ${c.aircraftAtClosest.elevationDeg.toFixed(0)}°, minEl ${config.sharpcap.minElevationDeg}°)`
+              : ''));
+        }
+      }).catch((e) => logger.warn?.('sharpcap arm threw:', e?.message ?? e));
+    }
+  }
+
   const notifier = new Notifier({
     pushover,
     routeLookup: (cs) => routeLookup.lookup(cs),
+    // History record only. The SharpCap capture is NOT armed here anymore —
+    // the old onEvent path fired solely on the fragile ±30 s 'imminent' stage,
+    // so an ADS-B gap in that window meant a missed shot. Arming now runs on
+    // every tick against the live candidates (see armSharpcapForCandidates),
+    // which is the "never miss a transit" path.
     onEvent: (evt) => {
       try { store.recordEvent(evt.stage, evt.candidate, evt.route, Date.now()); }
       catch (e) { logger.error?.('store record failed:', e); }
-      if (sharpcap.enabled) {
-        sharpcap.triggerFromEvent(evt).then((res) => {
-          if (res.sent) {
-            logger.info?.(`sharpcap: capture armed for ${evt.candidate?.icao}|${evt.candidate?.body} (${res.response?.captureId ?? ''})`);
-            notifySharpcapTrigger(evt.candidate, res);
-          } else if (res.error) {
-            logger.warn?.(`sharpcap trigger failed: ${res.error?.message ?? res.error}`);
-          }
-        }).catch((e) => logger.warn?.('sharpcap trigger threw:', e?.message ?? e));
-      }
     },
     minStage: config.pushover.minStage ?? 'radio',
     radioThresholdDeg: config.pushover.radioThresholdDeg,
@@ -544,6 +573,7 @@ export async function runService({
         postBufferS: config.sharpcap.postBufferS,
         triggerOnStage: config.sharpcap.triggerOnStage,
         minElevationDeg: config.sharpcap.minElevationDeg,
+        maxSepDeg: config.sharpcap.maxSepDeg,
         notifyOnTrigger: config.sharpcap.notifyOnTrigger !== false,
         tokenMasked: mask(config.sharpcap.token),
         hasToken: Boolean(config.sharpcap.token),
@@ -745,6 +775,11 @@ export async function runService({
         if (!Number.isFinite(v) || v < 0 || v > 90) throw new Error('sharpcap.minElevationDeg must be between 0 and 90 (0 = off)');
         config.sharpcap.minElevationDeg = v;
       }
+      if ('maxSepDeg' in s) {
+        const v = Number(s.maxSepDeg);
+        if (!Number.isFinite(v) || v <= 0 || v > 5) throw new Error('sharpcap.maxSepDeg must be > 0 and ≤ 5');
+        config.sharpcap.maxSepDeg = v;
+      }
       if (typeof s.triggerOnStage === 'string'
           && ['radio', 'candidate', 'imminent'].includes(s.triggerOnStage)) {
         config.sharpcap.triggerOnStage = s.triggerOnStage;
@@ -764,6 +799,7 @@ export async function runService({
         postBufferS: config.sharpcap.postBufferS,
         triggerOnStage: config.sharpcap.triggerOnStage,
         minElevationDeg: config.sharpcap.minElevationDeg,
+        maxSepDeg: config.sharpcap.maxSepDeg,
         notifyOnTrigger: config.sharpcap.notifyOnTrigger,
         hasToken: Boolean(config.sharpcap.token),
       };
@@ -1141,6 +1177,15 @@ export async function runService({
     } catch (e) {
       logger.error?.('notifier tick failed:', e);
     }
+
+    // Arm SharpCap against the same live candidate set, every tick — so a
+    // transit is never missed because the notifier's single 'imminent' event
+    // landed in an ADS-B gap. Fire-and-forget; dedup keeps it to one capture
+    // per (icao|body) episode.
+    armSharpcapForCandidates(
+      issForLifecycle.length ? enriched.concat(issForLifecycle) : enriched,
+      nowMs,
+    );
   }
 
   // If schedule augmentation is enabled, pull rows from schedule_observations

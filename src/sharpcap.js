@@ -21,6 +21,9 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 2000;
 const DEFAULT_PRE_BUFFER_S = 5;     // start capture this much BEFORE closest approach
 const DEFAULT_POST_BUFFER_S = 15;   // keep recording this much AFTER closest approach
 const DEFAULT_DEDUP_MS = 60_000;    // suppress identical (icao|body) re-triggers
+// Tick-based arming (armForCandidate): "rather over-record than miss a shot".
+const DEFAULT_MAX_SEP_DEG = 0.5;    // arm any candidate projected within this sep
+const DEFAULT_MAX_PRE_ROLL_S = 85;  // keep pre-roll under the listener's 90 s cap
 
 /**
  * @typedef {Object} SharpCapConfig
@@ -116,6 +119,80 @@ export class SharpCapTrigger {
 
     const result = await this._sendPayload(payload);
     if (result.sent) this.lastTriggered.set(key, nowMs);
+    return result;
+  }
+
+  /**
+   * Tick-based arming — the "never miss a transit" path. Unlike
+   * triggerFromEvent (which only fires on a single notifier stage event,
+   * the fragile ±30 s 'imminent' window), this is meant to be called every
+   * service tick for every live candidate. It arms the capture as soon as
+   * the closest approach is near enough that the pre-roll fits the listener's
+   * cap, so even a brief / marginal candidate that the imminent stage would
+   * have missed (e.g. an ADS-B gap in the last 30 s) still gets recorded. The
+   * (icao|body) dedup keeps it to one capture per episode.
+   *
+   * Gates, in order: enabled → body filter → capture-worthy separation
+   * (maxSepDeg, generous on purpose) → elevation → time window → dedup.
+   *
+   * @param {any} candidate  a tracker candidate (closestApproachAtMs etc.)
+   * @param {number} [nowMs]
+   * @returns {Promise<{ sent: boolean, response?: any, error?: any, reason?: string }>}
+   */
+  async armForCandidate(candidate, nowMs = Date.now()) {
+    if (!this.enabled) return { sent: false, reason: 'disabled' };
+    const c = candidate;
+    if (!c || !Number.isFinite(c.closestApproachAtMs)) {
+      return { sent: false, reason: 'no-candidate' };
+    }
+
+    const bodies = this.config.bodies;
+    if (Array.isArray(bodies) && bodies.length && !bodies.includes(c.body)) {
+      return { sent: false, reason: 'body-filtered' };
+    }
+
+    // Capture-worthy separation. Deliberately generous (default 0.5°, the
+    // near-miss band) so we err toward over-recording rather than missing a
+    // tight pass that the projection slightly under/over-estimated.
+    const maxSepDeg = Number.isFinite(this.config.maxSepDeg)
+      ? this.config.maxSepDeg : DEFAULT_MAX_SEP_DEG;
+    if (Number.isFinite(c.closestApproachSepDeg) && c.closestApproachSepDeg > maxSepDeg) {
+      return { sent: false, reason: 'too-wide' };
+    }
+
+    const minEl = this.config.minElevationDeg;
+    if (Number.isFinite(minEl) && minEl > 0) {
+      const el = c.aircraftAtClosest?.elevationDeg ?? c.bodyAtClosest?.elevationDeg;
+      if (Number.isFinite(el) && el < minEl) return { sent: false, reason: 'too-low' };
+    }
+
+    const preBufferS = Number.isFinite(this.config.preBufferS) ? this.config.preBufferS : DEFAULT_PRE_BUFFER_S;
+    const postBufferS = Number.isFinite(this.config.postBufferS) ? this.config.postBufferS : DEFAULT_POST_BUFFER_S;
+    const maxPreRollS = Number.isFinite(this.config.maxPreRollS) ? this.config.maxPreRollS : DEFAULT_MAX_PRE_ROLL_S;
+    const tToClosestS = (c.closestApproachAtMs - nowMs) / 1000;
+    // Too far out for the pre-roll to fit the listener cap → wait (a later
+    // tick will arm it). Too far past closest (beyond the post-roll) → the
+    // window would record nothing useful.
+    if (tToClosestS > preBufferS + maxPreRollS) return { sent: false, reason: 'too-early' };
+    if (tToClosestS < -postBufferS) return { sent: false, reason: 'too-late' };
+
+    const key = `${c.icao ?? c.callsign ?? 'unknown'}|${c.body}`;
+    const dedupMs = this.config.dedupMs ?? DEFAULT_DEDUP_MS;
+    const last = this.lastTriggered.get(key);
+    if (last != null && nowMs - last < dedupMs) return { sent: false, reason: 'deduped' };
+
+    const preRollS = Math.max(0, tToClosestS - preBufferS);
+    const durationS = Math.max(1, preBufferS + postBufferS);
+    const payload = { label: key, preRollS, durationS };
+    if (this.config.token) payload.token = this.config.token;
+
+    // Claim the dedup slot BEFORE the await so two ticks in the same window
+    // can't both fire; release it on failure so the next tick retries (the
+    // whole point is to not miss — a transient send error must not lock us
+    // out for dedupMs).
+    this.lastTriggered.set(key, nowMs);
+    const result = await this._sendPayload(payload);
+    if (!result.sent) this.lastTriggered.delete(key);
     return result;
   }
 

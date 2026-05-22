@@ -219,8 +219,8 @@ Or edit `config/service.json` directly:
   "token": "",
   "preBufferS": 10,
   "postBufferS": 10,
-  "triggerOnStage": "imminent",
   "minElevationDeg": 20,
+  "maxSepDeg": 0.5,
   "bodies": ["Sun", "Moon"],
   "dedupMs": 60000,
   "connectTimeoutMs": 2000,
@@ -233,11 +233,29 @@ Or edit `config/service.json` directly:
 | `host`            | Windows PC running SharpCap                                                   |
 | `preBufferS`      | recording starts this many seconds *before* closest approach (default 10)     |
 | `postBufferS`     | recording stops this many seconds *after* closest approach (default 10)       |
-| `triggerOnStage`  | fire on `imminent` (default ±30 s window), `candidate`, or `radio`            |
-| `minElevationDeg` | skip when target is below this — telescope can't see anyway                   |
+| `minElevationDeg` | skip when target is below this (telescope can't see it). **0 = never gate on elevation** — set this if you'd rather record everything. |
+| `maxSepDeg`       | arm any candidate projected within this separation (default 0.5° — generous, "rather over-record than miss"). Lower to be stricter. |
 | `bodies`          | which body to record (`Sun`, `Moon`, or both)                                 |
 | `dedupMs`         | suppress identical `(icao, body)` re-triggers within this window              |
 | `notifyOnTrigger` | send a Pushover (flight, separation, ETA, −pre/+post window) when armed       |
+
+### How arming works (v0.21.11 — "never miss a transit")
+
+The capture is armed by a **per-tick check against every live candidate**, not
+by a single one-shot event. Earlier versions fired only on the notifier's
+`imminent` stage (a ±30 s window); if ADS-B briefly dropped the aircraft in
+exactly that window, the shot was lost. Now, on every 2 s tick, each candidate
+whose **projected closest separation ≤ `maxSepDeg`** and whose **closest
+approach is near enough that the pre-roll fits** (≤ ~95 s out) arms a capture —
+once per `(icao, body)` thanks to dedup. The pre-roll is
+`max(0, secondsToClosest − preBufferS)`, so a transit that is already seconds
+away records **immediately** (pre-roll 0). A transient send error releases the
+dedup slot so the next tick retries. Net effect: as long as the aircraft is
+tracked on *any* tick in the ~95 s before closest approach, it records.
+
+If a trigger does NOT fire, the service journal now says why
+(`sharpcap: arm skipped … too-low (el 22°, minEl 30°)` etc.) — check it with
+`journalctl -u stp.service -f | grep -i sharpcap` on the Pi.
 
 ## Wire-format
 

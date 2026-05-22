@@ -204,6 +204,87 @@ describe('SharpCapTrigger', () => {
     expect(res.error.message).toMatch(/timeout/);
   });
 
+  describe('armForCandidate (tick-based "never miss" path)', () => {
+    const NOW = 1_700_000_000_000;
+    function armCand(over = {}) {
+      return {
+        icao: 'abc123', callsign: 'DLH1', body: 'Sun',
+        closestApproachAtMs: NOW + 20_000,
+        closestApproachSepDeg: 0.1,
+        aircraftAtClosest: { azimuthDeg: 180, elevationDeg: 45, rangeM: 10_000 },
+        ...over,
+      };
+    }
+
+    it('arms a near candidate within the pre-roll window (one capture)', async () => {
+      const { netImpl, created } = makeFakeNet({ replyLine: '{"ok":true,"captureId":"a-1"}\n' });
+      const t = new SharpCapTrigger(
+        { enabled: true, host: 'pc', preBufferS: 10, postBufferS: 10 },
+        { netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+      );
+      const res = await t.armForCandidate(armCand({ closestApproachAtMs: NOW + 20_000 }), NOW);
+      expect(res.sent).toBe(true);
+      const sent = JSON.parse(created[0].writes[0]);
+      expect(sent.preRollS).toBeCloseTo(10, 3);   // 20 s out − 10 s pre-buffer
+      expect(sent.durationS).toBeCloseTo(20, 3);
+    });
+
+    it('records immediately (pre-roll 0) when the transit is seconds away', async () => {
+      const { netImpl, created } = makeFakeNet({ replyLine: '{"ok":true}\n' });
+      const t = new SharpCapTrigger(
+        { enabled: true, host: 'pc', preBufferS: 10, postBufferS: 10 },
+        { netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+      );
+      await t.armForCandidate(armCand({ closestApproachAtMs: NOW + 3_000 }), NOW);
+      expect(JSON.parse(created[0].writes[0]).preRollS).toBe(0);
+    });
+
+    it('waits (too-early) until the pre-roll fits the listener cap', async () => {
+      const { netImpl, created } = makeFakeNet({ replyLine: '{"ok":true}\n' });
+      const t = new SharpCapTrigger(
+        { enabled: true, host: 'pc', preBufferS: 10, postBufferS: 10 },
+        { netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+      );
+      // 5 min out → preRoll would be ~290 s, far over the 85 s cap.
+      const res = await t.armForCandidate(armCand({ closestApproachAtMs: NOW + 300_000 }), NOW);
+      expect(res.sent).toBe(false);
+      expect(res.reason).toBe('too-early');
+      expect(created.length).toBe(0);
+    });
+
+    it('skips a candidate wider than maxSepDeg', async () => {
+      const t = new SharpCapTrigger({ enabled: true, host: 'pc', maxSepDeg: 0.5 });
+      const res = await t.armForCandidate(armCand({ closestApproachSepDeg: 1.2 }), NOW);
+      expect(res).toEqual({ sent: false, reason: 'too-wide' });
+    });
+
+    it('skips below the elevation gate', async () => {
+      const t = new SharpCapTrigger({ enabled: true, host: 'pc', minElevationDeg: 30 });
+      const res = await t.armForCandidate(
+        armCand({ aircraftAtClosest: { elevationDeg: 12 } }), NOW);
+      expect(res).toEqual({ sent: false, reason: 'too-low' });
+    });
+
+    it('dedupes within the window but releases the slot on a failed send', async () => {
+      // First send fails (ok:false) → slot released → second send succeeds.
+      const fail = makeFakeNet({ replyLine: '{"ok":false,"error":"busy"}\n' });
+      const t = new SharpCapTrigger(
+        { enabled: true, host: 'pc' },
+        { netImpl: fail.netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+      );
+      const r1 = await t.armForCandidate(armCand(), NOW);
+      expect(r1.sent).toBe(false);            // failed → slot released
+      // swap in a succeeding net and retry: not deduped because the slot was freed
+      const ok = makeFakeNet({ replyLine: '{"ok":true}\n' });
+      t.net = ok.netImpl;
+      const r2 = await t.armForCandidate(armCand(), NOW + 2_000);
+      expect(r2.sent).toBe(true);
+      // a third immediate attempt IS deduped
+      const r3 = await t.armForCandidate(armCand(), NOW + 3_000);
+      expect(r3.reason).toBe('deduped');
+    });
+  });
+
   describe('testTrigger', () => {
     it('sends an immediate zero-pre-roll capture of the given duration', async () => {
       const { netImpl, created } = makeFakeNet({ replyLine: '{"ok":true,"captureId":"t-1"}\n' });
