@@ -124,21 +124,27 @@ def _load_local_config():
     """Machine-local settings (which folder to watch, network destination,
     port, token). Kept separate from the listener body so it survives the
     auto-update — the listener is re-pulled from GitHub, this file is not."""
+    # Honour STP_SHARPCAP_CONFIG (absolute path to a JSON file) before the
+    # install-dir default — lets a user run a SECOND SharpCap instance on the
+    # SAME PC with its own config (different port → distinct listener) by
+    # launching it from a shortcut / batch that sets this env var first.
+    # Single-instance setups never see it and use the default install config.
+    path = os.environ.get("STP_SHARPCAP_CONFIG") or CONFIG_PATH
     try:
-        if os.path.exists(CONFIG_PATH):
+        if os.path.exists(path):
             import json
-            # utf-8-sig strips a UTF-8 BOM — Windows PowerShell 5.1's
-            # `Set-Content -Encoding UTF8` prepends one, which plain json.load
-            # rejects with "Expecting value: line 1 column 1 (char 0)".
-            with open(CONFIG_PATH, "r") as f:
+            # Strip a UTF-8 BOM — PowerShell 5.1's `Set-Content -Encoding
+            # UTF8` writes one and CPython's json.load chokes on it with
+            # "Expecting value: line 1 column 1 (char 0)".
+            with open(path, "r") as f:
                 text = f.read()
             if text[:1] == u"\ufeff":
                 text = text[1:]
             if not text.strip():
-                _log("local config {} is empty; using defaults".format(CONFIG_PATH))
+                _log("local config {} is empty; using defaults".format(path))
                 return None
             cfg = json.loads(text)
-            _log("loaded local config {}".format(CONFIG_PATH))
+            _log("loaded local config {}".format(path))
             return cfg
     except Exception:
         _log("reading local config failed:\n" + traceback.format_exc())

@@ -280,6 +280,43 @@ Each PC runs the same listener install (`install.ps1`), just with its own
 camera/scope. `enabled` is the master switch; a rig is active when it has a
 `host`. Per-rig `token` is optional (falls back to the base token).
 
+#### Two SharpCap instances on the **same** PC (v0.25.1)
+
+You can also drive two cameras from one PC by running two SharpCap instances —
+each needs its own **port** (the listener can't bind 9999 twice). Give the
+second instance its own config via the `STP_SHARPCAP_CONFIG` env var:
+
+1. After the normal install, copy the existing config to a second file with a
+   different port:
+   ```powershell
+   $src = "$env:LOCALAPPDATA\stp-sharpcap\stp-sharpcap.config.json"
+   $dst = "$env:LOCALAPPDATA\stp-sharpcap\stp-sharpcap.rig2.config.json"
+   Copy-Item $src $dst
+   # then edit $dst and change "port": 9999  →  e.g. "port": 9998
+   ```
+2. Create a small batch file (e.g. `Desktop\SharpCap-Rig2.bat`) that launches
+   the second SharpCap with this env var set:
+   ```bat
+   @echo off
+   set STP_SHARPCAP_CONFIG=%LOCALAPPDATA%\stp-sharpcap\stp-sharpcap.rig2.config.json
+   start "" "C:\Program Files\SharpCap 4.1 (64 bit)\SharpCap.exe"
+   ```
+3. Launch SharpCap **#1 normally** (uses the default config, port 9999).
+   Launch SharpCap **#2 via the batch file** (uses rig2 config, port 9998).
+   Each picks its own camera in its own SharpCap window.
+4. In the predictor's `targets`, give the rig the matching port:
+   ```json
+   "targets": [
+     { "name": "Sun", "host": "127.0.0.1", "port": 9999, "bodies": ["Sun"] },
+     { "name": "Moon", "host": "127.0.0.1", "port": 9998, "bodies": ["Moon"] }
+   ]
+   ```
+
+Both instances share the same install dir, cached listener and log file (lines
+are timestamped + tagged with the capture label, so they interleave cleanly).
+Updating: a single `install.ps1` re-run refreshes both, and on every SharpCap
+launch each instance still auto-downloads the newest listener.
+
 You can also manage rigs in the **web Settings panel** (v0.24.1): under
 *SharpCap capture trigger → Capture rigs* there's a "+ Add rig" list with
 name / host / port / body / pre / post per rig — plus a per-rig **Test 2s**
