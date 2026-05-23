@@ -111,6 +111,7 @@ h2 { font-size: 14px; margin: 16px 0 8px; color: var(--accent); text-transform: 
 .sc-rig .rig-host { flex: 2 1 130px; min-width: 110px; }
 .sc-rig .rig-port { flex: 0 0 64px; width: 64px; }
 .sc-rig .rig-pre, .sc-rig .rig-post { flex: 0 0 60px; width: 60px; }
+.sc-rig .rig-sep { flex: 0 0 64px; width: 64px; }
 .sc-rig .rig-body { flex: 0 0 auto; }
 /* Per-rig Test button: accent-coloured so it stands out between the small
    inputs in the wrapping row — the user otherwise had to hunt for it. */

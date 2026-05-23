@@ -663,6 +663,7 @@ export async function runService({
           bodies: t.bodies ?? config.sharpcap.bodies,
           preBufferS: t.preBufferS ?? config.sharpcap.preBufferS,
           postBufferS: t.postBufferS ?? config.sharpcap.postBufferS,
+          maxSepDeg: t.maxSepDeg ?? config.sharpcap.maxSepDeg,
           tokenMasked: mask(t.token),
           hasToken: Boolean(t.token ?? config.sharpcap.token),
         })),
@@ -907,6 +908,10 @@ export async function runService({
           if ('bodies' in t) {
             const raw = Array.isArray(t.bodies) ? t.bodies : [t.bodies];
             if (!raw.every((b) => b === 'Sun' || b === 'Moon')) throw new Error(`sharpcap.targets[${i}].bodies must be Sun/Moon`);
+          }
+          if ('maxSepDeg' in t && t.maxSepDeg != null) {
+            const v = Number(t.maxSepDeg);
+            if (!Number.isFinite(v) || v <= 0 || v > 5) throw new Error(`sharpcap.targets[${i}].maxSepDeg must be > 0 and ≤ 5`);
           }
           return { ...t, host: t.host.trim() };
         });

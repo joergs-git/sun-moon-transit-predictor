@@ -1430,6 +1430,13 @@ function scRigRow(rig = {}) {
   body.innerHTML = '<option value="Sun">☀ Sun</option><option value="Moon">🌙 Moon</option>';
   const pre = field('rig-pre', 'pre s', 'number');
   const post = field('rig-post', 'post s', 'number');
+  // Per-rig "observation radius" — projected sep below which a candidate is
+  // armed on this rig. A long focal length wants a small radius (e.g. 0.3°);
+  // a wide-field scope can use a bigger one (e.g. 2°). Empty → inherit the
+  // base sharpcap.maxSepDeg. NOTE: tracker.looseThresholdDeg ("Panel band °"
+  // above) must be ≥ the widest rig's radius — otherwise the tracker filters
+  // those candidates out before they reach the rig.
+  const sep = field('rig-sep', 'sep °', 'number'); sep.step = 'any';
   const test = document.createElement('button');
   test.type = 'button'; test.className = 'btn rig-test'; test.textContent = '🎥 Test 2s';
   test.title = 'Fire a 2 s test capture on this rig (no save needed; uses the saved token)';
@@ -1446,7 +1453,8 @@ function scRigRow(rig = {}) {
   body.value = (Array.isArray(rig.bodies) ? rig.bodies[0] : rig.bodies) ?? 'Sun';
   pre.value = rig.preBufferS ?? '';
   post.value = rig.postBufferS ?? '';
-  for (const el of [name, host, port, body, pre, post, test, rm, tmsg]) row.appendChild(el);
+  sep.value = rig.maxSepDeg ?? '';
+  for (const el of [name, host, port, body, pre, post, sep, test, rm, tmsg]) row.appendChild(el);
   return row;
 }
 function fillSharpcapTargets(targets) {
@@ -1465,6 +1473,7 @@ function collectSharpcapTargets() {
     const port = v('.rig-port'); if (port !== '') rig.port = Number(port);
     const pre = v('.rig-pre');  if (pre !== '')  rig.preBufferS = Number(pre);
     const post = v('.rig-post'); if (post !== '') rig.postBufferS = Number(post);
+    const sep = v('.rig-sep');  if (sep !== '')  rig.maxSepDeg = Number(sep);
     return rig;
   }).filter(Boolean);
 }
