@@ -1431,7 +1431,7 @@ function scRigRow(rig = {}) {
   const pre = field('rig-pre', 'pre s', 'number');
   const post = field('rig-post', 'post s', 'number');
   const test = document.createElement('button');
-  test.type = 'button'; test.className = 'btn rig-test'; test.textContent = 'Test 2s';
+  test.type = 'button'; test.className = 'btn rig-test'; test.textContent = '🎥 Test 2s';
   test.title = 'Fire a 2 s test capture on this rig (no save needed; uses the saved token)';
   const tmsg = document.createElement('span');
   tmsg.className = 'field-hint rig-test-msg';

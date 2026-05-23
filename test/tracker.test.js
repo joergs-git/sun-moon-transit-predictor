@@ -90,6 +90,26 @@ describe('findTransits', () => {
     expect(Math.abs(c.aircraftAtClosest.elevationDeg - sun.elevationDeg)).toBeLessThan(0.15);
   });
 
+  it('skips aircraft below minAltitudeM and keeps those at/above', () => {
+    const t0 = new Date('2026-06-21T11:30:00Z').getTime();
+    const sun = sunAzEl(RHEINE, new Date(t0));
+    const high = makeAircraft({ ...aircraftAtBodyLineOfSight(RHEINE, sun, 11000),
+      icao: 'high01', groundSpeedMs: 0, trackDeg: 0, receivedAtMs: t0 });
+    const low  = makeAircraft({ ...aircraftAtBodyLineOfSight(RHEINE, sun, 800),
+      icao: 'low01',  groundSpeedMs: 0, trackDeg: 0, receivedAtMs: t0 });
+    // Without the gate both pass through the tracker.
+    expect(findTransits(RHEINE, [high, low], t0).length).toBe(2);
+    // With a 2000 m gate only the high-altitude airframe remains.
+    const filtered = findTransits(RHEINE, [high, low], t0, { minAltitudeM: 2000 });
+    expect(filtered.length).toBe(1);
+    expect(filtered[0].icao).toBe('high01');
+    // Aircraft with no altitude data are skipped while the gate is on.
+    const noAlt = makeAircraft({ ...aircraftAtBodyLineOfSight(RHEINE, sun, 11000),
+      icao: 'na01', altMmsl: null, groundSpeedMs: 0, trackDeg: 0, receivedAtMs: t0 });
+    const gated = findTransits(RHEINE, [noAlt], t0, { minAltitudeM: 2000 });
+    expect(gated).toEqual([]);
+  });
+
   it('returns no candidates when both bodies are below the threshold', () => {
     const t0 = new Date('2026-12-21T22:00:00Z').getTime(); // sun deep below horizon
     const ac = makeAircraft({ receivedAtMs: t0 });

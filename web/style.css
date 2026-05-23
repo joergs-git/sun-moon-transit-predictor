@@ -112,7 +112,16 @@ h2 { font-size: 14px; margin: 16px 0 8px; color: var(--accent); text-transform: 
 .sc-rig .rig-port { flex: 0 0 64px; width: 64px; }
 .sc-rig .rig-pre, .sc-rig .rig-post { flex: 0 0 60px; width: 60px; }
 .sc-rig .rig-body { flex: 0 0 auto; }
-.sc-rig .rig-test { flex: 0 0 auto; padding: 2px 8px; }
+/* Per-rig Test button: accent-coloured so it stands out between the small
+   inputs in the wrapping row — the user otherwise had to hunt for it. */
+.sc-rig .rig-test {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.sc-rig .rig-test:hover { background: var(--accent); color: #1b1f24; }
 .sc-rig .rig-remove { flex: 0 0 auto; padding: 2px 8px; }
 .sc-rig .rig-test-msg { flex: 1 0 100%; }   /* own line below the row */
 /* SharpCap trigger readout next to the clock — armed body + session count. */
@@ -486,7 +495,14 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
    at the bottom regardless of how many sections fit on screen. */
 .settings-card {
   width: min(760px, calc(100vw - 24px));
+  /* Old 100vh fallback for browsers without dvh; on iOS Safari 100vh exceeds
+     the visible viewport (it includes the chrome bar), so the modal extended
+     below the toolbar and the Save row + lower fields were unreachable. dvh
+     tracks the actually-visible viewport — overflow-y on .settings-fields
+     then has somewhere to scroll, and the action row stays in view. */
   max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  width: min(760px, calc(100dvw - 24px));
   padding: 14px 18px 0;       /* the action row supplies its own bottom padding */
   display: flex;
   flex-direction: column;

@@ -282,6 +282,11 @@ export function findTransits(observer, aircraftList, nowMs, opts = {}) {
     bodies = ['Sun', 'Moon'],
     geoidUndulationM = observer.geoidUndulationM ?? 0,
   } = opts;
+  // Minimum aircraft altitude (m MSL) to consider — 0 disables the gate.
+  // Drops low traffic (helicopters, light aircraft, drones) that you don't
+  // want cluttering predictions/alerts. An aircraft with no altitude data is
+  // skipped when the gate is on (we can't verify it's high enough).
+  const minAltitudeM = Number.isFinite(opts.minAltitudeM) ? opts.minAltitudeM : 0;
   // Loose threshold defines the 'radio' (approach) detection band: aircraft
   // whose projected min separation lands inside [thresholdDeg, looseThresholdDeg]
   // are still reported so the UI / Pushover pipeline can give a much earlier
@@ -316,6 +321,9 @@ export function findTransits(observer, aircraftList, nowMs, opts = {}) {
 
   for (const ac of aircraftList) {
     if (typeof ac.groundSpeedMs !== 'number' || typeof ac.trackDeg !== 'number') continue;
+    // Altitude gate (m MSL). Unknown altitude → skip when the gate is on.
+    if (minAltitudeM > 0
+        && (!Number.isFinite(ac.altMmsl) || ac.altMmsl < minAltitudeM)) continue;
 
     // Project aircraft from the *fix time*, not from nowMs. The body sampling
     // step at index i is at "nowMs + i*stepS", so the elapsed time since the

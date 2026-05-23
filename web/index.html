@@ -421,6 +421,9 @@
           <label>
             Tight band °<input name="tracker.thresholdDeg" type="number" step="any" min="0.05">
             <small class="field-hint">≤ this counts as a real transit ("candidate"). Sun/Moon disc radius ≈ 0.27°, so <b>0.3°</b> (default) ≈ a graze. Must be ≤ Panel band.</small></label>
+          <label>
+            Min altitude (m)<input name="tracker.minAltitudeM" type="number" step="100" min="0">
+            <small class="field-hint">Only consider aircraft <b>at or above</b> this altitude (m MSL). <b>0 = off</b>. E.g. <b>2000</b> drops helicopters, GA, drones and keeps airliner traffic. Applies to the whole pipeline — candidates, alerts, History, SharpCap arming.</small></label>
         </fieldset>
 
         <fieldset>

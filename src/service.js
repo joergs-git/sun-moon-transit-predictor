@@ -55,6 +55,13 @@ export const DEFAULT_CONFIG = {
     // (pushover.radioThresholdDeg, default 1°) so you can dial the panel
     // and the notifications independently.
     looseThresholdDeg: 2.0,
+    // Minimum aircraft altitude (m MSL) to consider; 0 = no gate. Set to e.g.
+    // 2000 to drop low traffic (helicopters, light aircraft, drones) that you
+    // don't want cluttering predictions/alerts. Aircraft with no altitude
+    // data are skipped while the gate is on (can't verify they're high
+    // enough). Applies to the whole pipeline (candidates → notifier → arming
+    // → History → stats) so a single knob controls "what counts".
+    minAltitudeM: 0,
     bodies: ['Sun', 'Moon'],
   },
   pushover: {
@@ -787,6 +794,11 @@ export async function runService({
         const v = Number(t.thresholdDeg);
         if (!Number.isFinite(v) || v <= 0) throw new Error('tracker.thresholdDeg must be a positive number');
         config.tracker.thresholdDeg = v;
+      }
+      if ('minAltitudeM' in t) {
+        const v = Number(t.minAltitudeM);
+        if (!Number.isFinite(v) || v < 0) throw new Error('tracker.minAltitudeM must be ≥ 0 (0 = off)');
+        config.tracker.minAltitudeM = v;
       }
       if ('horizonS' in t) {
         const v = Number(t.horizonS);
