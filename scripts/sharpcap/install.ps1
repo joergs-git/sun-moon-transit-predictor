@@ -67,7 +67,7 @@ param(
     #     a third instance, etc. -----------------------------------------------
     [switch]$AddInstance,        # create a second-instance config + Desktop .bat
     [string]$InstanceName = "Rig2", # used for the config filename + .bat name
-    [int]$InstancePort,          # listener port for this instance (default base ± 1)
+    [int]$InstancePort,          # listener port for this instance (default base +/- 1)
     [string]$SharpCapPath,       # optional override; auto-detected by default
 
     [switch]$Help                # print usage and exit
@@ -75,7 +75,7 @@ param(
 
 if ($Help) {
 @"
-sun-moon-transit-predictor — SharpCap trigger installer (install / start / update)
+sun-moon-transit-predictor -- SharpCap trigger installer (install / start / update)
 
 USAGE
   powershell -ExecutionPolicy Bypass -File install.ps1 [options]
@@ -132,7 +132,7 @@ EXAMPLES
   # Add a second SharpCap instance on the same PC (port 9998, Desktop .bat):
   .\install.ps1 -AddInstance
 
-  # …with explicit name + port:
+  # ...with explicit name + port:
   .\install.ps1 -AddInstance -InstanceName Moon -InstancePort 9998
 
 For full docs: scripts/sharpcap/README.md   (or: Get-Help .\install.ps1 -Detailed)
@@ -169,7 +169,7 @@ if ($AddInstance) {
             elseif ($basePort -gt 1) { $basePort - 1 }
             else { 9998 }
     if ($port -eq $basePort) {
-        throw "instance port $port equals base port $basePort — pick a different -InstancePort."
+        throw "instance port $port equals base port $basePort -- pick a different -InstancePort."
     }
     # Sanitise the instance name for use in a filename.
     $safeName = ($InstanceName -replace '[^a-zA-Z0-9_-]', '_')
@@ -181,13 +181,13 @@ if ($AddInstance) {
     $cfg["port"] = $port
     $cfgPath = Join-Path $InstallDir "stp-sharpcap.$safeName.config.json"
     $json = $cfg | ConvertTo-Json -Depth 5
-    # UTF-8 without BOM — see the base config write below for why.
+    # UTF-8 without BOM -- see the base config write below for why.
     [System.IO.File]::WriteAllText($cfgPath, $json, (New-Object System.Text.UTF8Encoding $false))
     Write-Ok "wrote $cfgPath  (port $port)"
 
     # Locate SharpCap.exe: explicit -SharpCapPath > auto-detected under
     # %ProgramFiles%\SharpCap*\. Take the alphabetically last hit (usually the
-    # newest version). Warn + use a placeholder path if nothing matched —
+    # newest version). Warn + use a placeholder path if nothing matched --
     # users can edit the .bat or re-run with -SharpCapPath.
     $exe = $SharpCapPath
     if (-not $exe) {
@@ -197,7 +197,7 @@ if ($AddInstance) {
     if ($exe -and (Test-Path $exe)) {
         Write-Ok "SharpCap found: $exe"
     } else {
-        Write-Warn2 "SharpCap.exe not auto-detected — edit the .bat to point at your install (or re-run with -SharpCapPath)."
+        Write-Warn2 "SharpCap.exe not auto-detected -- edit the .bat to point at your install (or re-run with -SharpCapPath)."
         if (-not $exe) { $exe = "C:\Program Files\SharpCap 4.1 (64 bit)\SharpCap.exe" }
     }
 
@@ -346,7 +346,7 @@ if ($pickDest) {
 
 # Write UTF-8 WITHOUT a BOM. Windows PowerShell 5.1's `Set-Content -Encoding
 # UTF8` prepends a BOM, which the CPython embedded in SharpCap 4.x cannot
-# parse (json.load → "Expecting value: line 1 column 1 (char 0)"). .NET's
+# parse (json.load -> "Expecting value: line 1 column 1 (char 0)"). .NET's
 # WriteAllText with UTF8Encoding($false) emits no BOM on every PS version.
 $cfgJson = $cfg | ConvertTo-Json -Depth 5
 [System.IO.File]::WriteAllText($configPath, $cfgJson, (New-Object System.Text.UTF8Encoding $false))
