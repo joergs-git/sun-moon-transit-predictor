@@ -60,6 +60,16 @@ param(
     [int]$Port,                  # listener TCP port
     [string]$Token,              # shared secret (must match predictor's sharpcap.token)
     [switch]$PickFolders,        # pick source + destination via a folder dialog
+
+    # --- Second-instance setup (one PC, two cameras). Drops a per-instance
+    #     config + a Desktop .bat launcher in one go; the existing install /
+    #     base config stays untouched. Re-run with another -InstanceName to add
+    #     a third instance, etc. -----------------------------------------------
+    [switch]$AddInstance,        # create a second-instance config + Desktop .bat
+    [string]$InstanceName = "Rig2", # used for the config filename + .bat name
+    [int]$InstancePort,          # listener port for this instance (default base ± 1)
+    [string]$SharpCapPath,       # optional override; auto-detected by default
+
     [switch]$Help                # print usage and exit
 )
 
@@ -98,6 +108,14 @@ OPTIONS
   -Port <n>             Listener TCP port (default 9999; match predictor)
   -Token <secret>       Shared secret (match predictor's sharpcap.token)
 
+  Two SharpCap instances on the same PC (different cameras / settings):
+  -AddInstance          One-shot: drops a per-instance config + a Desktop
+                        launcher .bat that runs SharpCap with that config.
+                        Run after the normal install. Default port = base - 1.
+  -InstanceName <s>     Name for the config file + .bat (default: Rig2)
+  -InstancePort <n>     Listener port for this instance (default: base - 1)
+  -SharpCapPath <path>  Override the auto-detected SharpCap.exe location
+
   -Help                 Show this help
 
 EXAMPLES
@@ -110,6 +128,12 @@ EXAMPLES
 
   # Update later (just re-run; settings are preserved):
   .\install.ps1
+
+  # Add a second SharpCap instance on the same PC (port 9998, Desktop .bat):
+  .\install.ps1 -AddInstance
+
+  # …with explicit name + port:
+  .\install.ps1 -AddInstance -InstanceName Moon -InstancePort 9998
 
 For full docs: scripts/sharpcap/README.md   (or: Get-Help .\install.ps1 -Detailed)
 "@ | Write-Host
@@ -127,6 +151,80 @@ try {
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "    $msg" -ForegroundColor Green }
 function Write-Warn2($msg) { Write-Host "    $msg" -ForegroundColor Yellow }
+
+# -AddInstance: one-shot setup of an extra SharpCap instance on the SAME PC
+# (different listener port). Drops a per-instance config + a Desktop launcher
+# .bat that sets STP_SHARPCAP_CONFIG before running SharpCap. Re-run with
+# another -InstanceName to add a third instance, etc. Does NOT touch
+# bootstrap.py or the base config.
+if ($AddInstance) {
+    Write-Step "Adding second-instance setup: $InstanceName"
+    $baseCfg = Join-Path $InstallDir "stp-sharpcap.config.json"
+    if (-not (Test-Path $baseCfg)) {
+        throw "base config not found at $baseCfg. Run install.ps1 once (without -AddInstance) first so the install dir + base config exist."
+    }
+    $base = Get-Content -Raw -Path $baseCfg | ConvertFrom-Json
+    $basePort = if ($base.port) { [int]$base.port } else { 9999 }
+    $port = if ($PSBoundParameters.ContainsKey("InstancePort")) { $InstancePort }
+            elseif ($basePort -gt 1) { $basePort - 1 }
+            else { 9998 }
+    if ($port -eq $basePort) {
+        throw "instance port $port equals base port $basePort — pick a different -InstancePort."
+    }
+    # Sanitise the instance name for use in a filename.
+    $safeName = ($InstanceName -replace '[^a-zA-Z0-9_-]', '_')
+    if (-not $safeName) { $safeName = "Rig2" }
+
+    # Write the per-instance config (copy of base, different port).
+    $cfg = [ordered]@{}
+    foreach ($p in $base.PSObject.Properties) { $cfg[$p.Name] = $p.Value }
+    $cfg["port"] = $port
+    $cfgPath = Join-Path $InstallDir "stp-sharpcap.$safeName.config.json"
+    $json = $cfg | ConvertTo-Json -Depth 5
+    # UTF-8 without BOM — see the base config write below for why.
+    [System.IO.File]::WriteAllText($cfgPath, $json, (New-Object System.Text.UTF8Encoding $false))
+    Write-Ok "wrote $cfgPath  (port $port)"
+
+    # Locate SharpCap.exe: explicit -SharpCapPath > auto-detected under
+    # %ProgramFiles%\SharpCap*\. Take the alphabetically last hit (usually the
+    # newest version). Warn + use a placeholder path if nothing matched —
+    # users can edit the .bat or re-run with -SharpCapPath.
+    $exe = $SharpCapPath
+    if (-not $exe) {
+        $hits = Get-ChildItem -Path (Join-Path $env:ProgramFiles "SharpCap*\SharpCap.exe") -ErrorAction SilentlyContinue
+        if ($hits) { $exe = ($hits | Sort-Object FullName -Descending | Select-Object -First 1).FullName }
+    }
+    if ($exe -and (Test-Path $exe)) {
+        Write-Ok "SharpCap found: $exe"
+    } else {
+        Write-Warn2 "SharpCap.exe not auto-detected — edit the .bat to point at your install (or re-run with -SharpCapPath)."
+        if (-not $exe) { $exe = "C:\Program Files\SharpCap 4.1 (64 bit)\SharpCap.exe" }
+    }
+
+    # Drop the launcher .bat on the Desktop (or in the install dir if Desktop
+    # isn't writable, e.g. roaming profile / locked-down).
+    $desktop = [Environment]::GetFolderPath("Desktop")
+    if (-not (Test-Path $desktop)) { $desktop = $InstallDir }
+    $batPath = Join-Path $desktop "SharpCap-$safeName.bat"
+    $batLines = @(
+        "@echo off",
+        "rem  Launch SharpCap as the '$safeName' instance, listener on port $port.",
+        "rem  Created by stp-sharpcap install.ps1 -AddInstance.",
+        "set STP_SHARPCAP_CONFIG=$cfgPath",
+        "start `"`" `"$exe`""
+    )
+    [System.IO.File]::WriteAllLines($batPath, $batLines, (New-Object System.Text.UTF8Encoding $false))
+    Write-Ok "wrote launcher $batPath"
+
+    Write-Host ""
+    Write-Host "Next steps:" -ForegroundColor Cyan
+    Write-Host "  1. Launch SharpCap #1 normally (uses the default config, port $basePort)."
+    Write-Host "  2. Double-click  $batPath  to launch SharpCap #2 (port $port)."
+    Write-Host "  3. In the predictor's Settings (or service.json) add a target:"
+    Write-Host "       { `"name`": `"$safeName`", `"host`": `"127.0.0.1`", `"port`": $port, `"bodies`": [`"Moon`"] }"
+    Write-Host "     (set `"bodies`" to the disc this rig should record.)"
+    return
+}
 
 # Classic Windows folder-picker. Returns the chosen path, or $null if the user
 # cancels or no GUI is available. The dialog needs an STA thread (the default
