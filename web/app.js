@@ -1154,19 +1154,16 @@ function acinfoHtml(info) {
 // column collapses so the other takes the full width (e.g. auto-FOV =
 // map only, no AirNav until you click).
 function syncFovAux() {
-  // v0.27.0 layout: #fov-right is the right column inside the FOV grid,
-  // stacking plan view, side view and the AirNav photo/data card. Each
-  // cell hides itself when empty; the whole right column hides when all
-  // three are empty so the sketch takes the full width.
-  const box = $('#fov-right');
-  if (!box) return;
+  // v0.27.1 layout: plan/side/airframe cells live inside .top-right next
+  // to Sky now + Detection funnel. Sky/detect are always visible, so we
+  // only toggle the three cells individually — the column itself never
+  // hides (it always has Sky + Detect on top).
   const mapHas = !!(fovMap && fovMap.innerHTML);
   const sideHas = !!(fovSide && fovSide.innerHTML);
   const acHas = !!(fovAcinfo && fovAcinfo.innerHTML);
   if (fovMap) fovMap.hidden = !mapHas;
   if (fovSide) fovSide.hidden = !sideHas;
   if (fovAcinfo) fovAcinfo.hidden = !acHas;
-  box.hidden = !(mapHas || sideHas || acHas);
 }
 async function renderFovAcinfo(meta) {
   if (!fovAcinfo) return;
@@ -1393,7 +1390,7 @@ document.body.addEventListener('mouseout', (ev) => {
 window.addEventListener('scroll', hideAcPop, true);
 
 // Esc unpins, restoring auto mode — discoverable shortcut without a UI
-// button cluttering the sky-row pane.
+// button cluttering the FOV preview pane.
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape') hideAcPop();
   if (ev.key === 'Escape' && pin) { pin = null; refreshFovPane(); }

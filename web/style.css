@@ -373,11 +373,29 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
    The breakpoint stays generous (≥ 640 px) so anything wider than a
    portrait phone keeps the side-by-side arrangement — Alert learning is
    never full-width below the row on a normal browser window. */
-/* Page layout reorganised in v0.27.0: the .sky-row grid is gone; every
-   top-level section now stacks full-width top → bottom (Sky now,
-   Detection funnel, FOV preview, Tracking, History, Stats, Alert
-   learning). Inside the FOV section the sketch + right column use their
-   own 2-col grid (.fov-grid below). */
+/* Top-of-page 2-column block (v0.27.1): LEFT = dominant FOV sketch.
+   RIGHT = compact stack of Sky now + Detection funnel + plan view +
+   side view + airframe details. Keeps the whole upper region short
+   instead of three full-width sections piling on top of each other. */
+.top-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
+  gap: 12px;
+  margin-bottom: 8px;
+  align-items: start;
+}
+@media (max-width: 720px) {
+  .top-row { grid-template-columns: 1fr; }
+}
+.top-right {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+/* Sky now + Detection funnel keep their normal section chrome but lose
+   the outer margin so they pack tightly inside the right column. */
+.top-right > section { margin: 0; }
 
 /* FOV preview panel. Same panel chrome as the tables so the page reads as
    one surface; SVG inside scales to the panel width. The fov-mode pill in
@@ -683,42 +701,23 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
    (~62 / 38). The AirNav column collapses when [hidden] so the sketch
    takes the full width on its own (auto-FOV, nothing clicked). Wraps to
    stacked on a very narrow pane. */
-/* FOV preview layout (v0.27.0): left = the dominant transit sketch,
-   right = a vertical stack of plan view, side view, and (when available)
-   the AirNav photo/data card. The right column hides as a whole when all
-   three cells are empty so the sketch takes full width on its own
-   (auto-FOV with nothing pinned). Wraps to a single column on narrow. */
-.fov-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr);
-  gap: 12px;
-  align-items: start;
-}
-@media (max-width: 720px) {
-  .fov-grid { grid-template-columns: 1fr; }
-}
-.fov-grid > .fov-body { margin: 0; min-width: 0; }
-.fov-right {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-  /* 11 px matches the SVG LABEL_SIZE so the whole right-hand column reads
-     at one consistent size. */
-  font-size: 11px;
-}
-.fov-right > [hidden] { display: none; }
-.fov-right > .fov-aux-cell,
-.fov-right > .fov-aux-right {
+/* Plan view, side view and airframe info card live inside .top-right
+   (under Sky now + Detection funnel). Each hides itself when empty.
+   11 px matches the SVG LABEL_SIZE so the whole right column reads at
+   one consistent size. */
+.top-right > [hidden] { display: none; }
+.top-right > .fov-aux-cell,
+.top-right > .fov-aux-right {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 4px;
   padding: 8px 10px;
   min-width: 0;
+  font-size: 11px;
 }
 .fov-aux-cell svg { display: block; width: 100%; height: auto; }
 .fov-aux-right { overflow: auto; }
-.fov-right > .fov-aux-right { display: flex; flex-direction: column; }
+.top-right > .fov-aux-right { display: flex; flex-direction: column; }
 .ac-photo {
   display: block;
   width: 100%;

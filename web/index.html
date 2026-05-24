@@ -37,83 +37,78 @@
     </div>
   </header>
 
-  <section id="sky-section">
-    <h2>Sky now</h2>
-    <table id="sky">
-      <thead>
-        <tr>
-          <th title="Celestial body — Sun or Moon, evaluated for the configured observer location.">Body</th>
-          <th title="Azimuth in degrees, measured clockwise from true north (0° = N, 90° = E, 180° = S, 270° = W).">Az</th>
-          <th title="Elevation in degrees above the local horizon (refraction-corrected).">El</th>
-          <th title="✓ when the body is above the 20° elevation floor used by the transit detector. Below that, refraction residuals + obstructions make a transit unreliable.">Observable</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-    <!-- Next naked-eye ISS pass (el > 20°, after dusk, station sunlit).
-         Computed offline from the TLE; hidden until one is predicted. -->
-    <p class="iss-pass" id="iss-pass" hidden></p>
-  </section>
-
-  <section id="detect-section">
-    <!-- Detection funnel (moved out of Alert learning in v0.27.0 so it
-         sits next to Sky now where users actually look for live signal.) -->
-    <!-- Detection funnel (v0.8.0). Three horizontal bars: every unique
-         airframe the receiver saw this session, how many ever projected
-         inside the panel band, and how many ever skimmed < 0.5°. Bars are
-         pure CSS (no chart library — keeps the zero-dependency frontend). -->
-    <div class="detect-funnel" id="detect-funnel" title="Cumulative since the service started (resets on restart). 'Detected' counts every distinct aircraft with a usable position, regardless of how far it was from the Sun/Moon line.">
-      <div class="funnel-title">Detection funnel <span class="funnel-sub" id="funnel-sub">since start</span></div>
-      <div class="funnel-row">
-        <span class="funnel-label" title="Distinct aircraft seen with a usable position since the service started (resets on restart) — regardless of how far from the Sun/Moon line.">Total detected</span>
-        <span class="funnel-track"><span class="funnel-bar fb-total" id="fb-total"></span></span>
-        <span class="funnel-val" id="fv-total">—</span>
-      </div>
-      <div class="funnel-row">
-        <span class="funnel-label" title="Aircraft with a usable fix RIGHT NOW (this tick), including ones nowhere near the Sun/Moon — i.e. the live dump1090 count.">Live planes</span>
-        <span class="funnel-track"><span class="funnel-bar fb-live" id="fb-live"></span></span>
-        <span class="funnel-val" id="fv-live">—</span>
-      </div>
-      <div class="funnel-row">
-        <span class="funnel-label" id="fl-band">&lt; 2°</span>
-        <span class="funnel-track"><span class="funnel-bar fb-band" id="fb-band"></span></span>
-        <span class="funnel-val" id="fv-band">—</span>
-      </div>
-      <div class="funnel-row">
-        <span class="funnel-label">&lt; 0.5°</span>
-        <span class="funnel-track"><span class="funnel-bar fb-near" id="fb-near"></span></span>
-        <span class="funnel-val" id="fv-near">—</span>
-      </div>
-      <div class="funnel-row">
-        <span class="funnel-label" title="Tightest bucket — a sub-0.2° projected pass is a near-certain on-disc transit (Sun/Moon disc radius ≈ 0.27°).">&lt; 0.2°</span>
-        <span class="funnel-track"><span class="funnel-bar fb-vnear" id="fb-vnear"></span></span>
-        <span class="funnel-val" id="fv-vnear">—</span>
-      </div>
-    </div>
-  </section>
-
-  <section id="fov-section">
+  <div class="top-row">
+    <section id="fov-section">
     <h2>
       FOV preview
       <span id="fov-mode" class="fov-mode" title="auto = newest live candidate with sep &lt; 1°. pinned = locked to your selection; cleared automatically when a newer qualifying candidate appears.">auto</span>
     </h2>
     <p class="hint" id="fov-hint">Waiting for a close approach (separation &lt; 1°). Click any tracking or history row to pin it here.</p>
-    <!-- Left: the dominant transit sketch. Right: a vertical stack of plan
-         view, side view, and (when available) the AirNav photo/data card.
-         Each right-column cell hides itself when empty; the whole right
-         column hides when all three are empty so the sketch takes the full
-         width (auto-FOV with nothing pinned). -->
-    <div class="fov-grid">
-      <div id="fov-body" class="fov-body"></div>
-      <aside id="fov-right" class="fov-right" hidden>
-        <div id="fov-map" class="fov-aux-cell" hidden></div>
-        <div id="fov-side" class="fov-aux-cell" hidden></div>
-        <div id="fov-acinfo" class="fov-aux-right" hidden></div>
-      </aside>
-    </div>
-    <!-- Offline airframe specs strip (full width). -->
-    <div id="fov-specs" class="fov-specs" hidden></div>
-  </section>
+    <div id="fov-body" class="fov-body"></div>
+    </section>
+    <aside class="top-right">
+      <!-- Compact panels stacked next to the sketch: Sky now and the
+           Detection funnel sit above the plan/side/airframe cells so the
+           page stays short. plan/side/acinfo each hide when empty. -->
+      <section id="sky-section">
+        <h2>Sky now</h2>
+        <table id="sky">
+          <thead>
+            <tr>
+              <th title="Celestial body — Sun or Moon, evaluated for the configured observer location.">Body</th>
+              <th title="Azimuth in degrees, measured clockwise from true north (0° = N, 90° = E, 180° = S, 270° = W).">Az</th>
+              <th title="Elevation in degrees above the local horizon (refraction-corrected).">El</th>
+              <th title="✓ when the body is above the 20° elevation floor used by the transit detector. Below that, refraction residuals + obstructions make a transit unreliable.">Observable</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <!-- Next naked-eye ISS pass (el > 20°, after dusk, station sunlit).
+             Computed offline from the TLE; hidden until one is predicted. -->
+        <p class="iss-pass" id="iss-pass" hidden></p>
+      </section>
+      <section id="detect-section">
+        <!-- Detection funnel (moved out of Alert learning in v0.27.0 so it
+             sits next to Sky now where users actually look for live signal.) -->
+        <!-- Detection funnel (v0.8.0). Three horizontal bars: every unique
+             airframe the receiver saw this session, how many ever projected
+             inside the panel band, and how many ever skimmed < 0.5°. Bars are
+             pure CSS (no chart library — keeps the zero-dependency frontend). -->
+        <div class="detect-funnel" id="detect-funnel" title="Cumulative since the service started (resets on restart). 'Detected' counts every distinct aircraft with a usable position, regardless of how far it was from the Sun/Moon line.">
+          <div class="funnel-title">Detection funnel <span class="funnel-sub" id="funnel-sub">since start</span></div>
+          <div class="funnel-row">
+            <span class="funnel-label" title="Distinct aircraft seen with a usable position since the service started (resets on restart) — regardless of how far from the Sun/Moon line.">Total detected</span>
+            <span class="funnel-track"><span class="funnel-bar fb-total" id="fb-total"></span></span>
+            <span class="funnel-val" id="fv-total">—</span>
+          </div>
+          <div class="funnel-row">
+            <span class="funnel-label" title="Aircraft with a usable fix RIGHT NOW (this tick), including ones nowhere near the Sun/Moon — i.e. the live dump1090 count.">Live planes</span>
+            <span class="funnel-track"><span class="funnel-bar fb-live" id="fb-live"></span></span>
+            <span class="funnel-val" id="fv-live">—</span>
+          </div>
+          <div class="funnel-row">
+            <span class="funnel-label" id="fl-band">&lt; 2°</span>
+            <span class="funnel-track"><span class="funnel-bar fb-band" id="fb-band"></span></span>
+            <span class="funnel-val" id="fv-band">—</span>
+          </div>
+          <div class="funnel-row">
+            <span class="funnel-label">&lt; 0.5°</span>
+            <span class="funnel-track"><span class="funnel-bar fb-near" id="fb-near"></span></span>
+            <span class="funnel-val" id="fv-near">—</span>
+          </div>
+          <div class="funnel-row">
+            <span class="funnel-label" title="Tightest bucket — a sub-0.2° projected pass is a near-certain on-disc transit (Sun/Moon disc radius ≈ 0.27°).">&lt; 0.2°</span>
+            <span class="funnel-track"><span class="funnel-bar fb-vnear" id="fb-vnear"></span></span>
+            <span class="funnel-val" id="fv-vnear">—</span>
+          </div>
+        </div>
+      </section>
+      <div id="fov-map" class="fov-aux-cell" hidden></div>
+      <div id="fov-side" class="fov-aux-cell" hidden></div>
+      <div id="fov-acinfo" class="fov-aux-right" hidden></div>
+    </aside>
+  </div>
+  <div id="fov-specs" class="fov-specs" hidden></div>
 
   <section>
     <h2>LIVE-TRACKING-SIGNALS</h2>
