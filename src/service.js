@@ -872,7 +872,7 @@ export async function runService({
       }
       if ('maxSepDeg' in s) {
         const v = Number(s.maxSepDeg);
-        if (!Number.isFinite(v) || v <= 0 || v > 5) throw new Error('sharpcap.maxSepDeg must be > 0 and ≤ 5');
+        if (!Number.isFinite(v) || v <= 0 || v > 10) throw new Error('sharpcap.maxSepDeg must be > 0 and ≤ 10');
         config.sharpcap.maxSepDeg = v;
       }
       if ('bodies' in s) {
@@ -911,7 +911,7 @@ export async function runService({
           }
           if ('maxSepDeg' in t && t.maxSepDeg != null) {
             const v = Number(t.maxSepDeg);
-            if (!Number.isFinite(v) || v <= 0 || v > 5) throw new Error(`sharpcap.targets[${i}].maxSepDeg must be > 0 and ≤ 5`);
+            if (!Number.isFinite(v) || v <= 0 || v > 10) throw new Error(`sharpcap.targets[${i}].maxSepDeg must be > 0 and ≤ 10`);
           }
           return { ...t, host: t.host.trim() };
         });
@@ -1076,8 +1076,21 @@ export async function runService({
     }
     state.aircraftCount = aircraft.length;
 
+    // Auto-widen the tracker's outer "panel band" so any rig whose own
+    // maxSepDeg is wider than the global tracker.looseThresholdDeg still
+    // receives the candidates it wants. Otherwise the tracker would silently
+    // throw them away before the rig's arming check ever runs — and the
+    // user would have to manually keep two settings in sync.
+    let effectiveLooseDeg = Number.isFinite(config.tracker.looseThresholdDeg)
+      ? config.tracker.looseThresholdDeg : 0;
+    for (const { trigger } of sharpcapTargets) {
+      if (!trigger.enabled) continue;
+      const m = Number(trigger.config.maxSepDeg);
+      if (Number.isFinite(m) && m > effectiveLooseDeg) effectiveLooseDeg = m;
+    }
     const trackerOpts = {
       ...config.tracker,
+      looseThresholdDeg: effectiveLooseDeg || config.tracker.looseThresholdDeg,
       geoidUndulationM: observer.geoidUndulationM ?? config.tracker.geoidUndulationM ?? 0,
     };
     const candidates = findTransits(observer, aircraft, nowMs, trackerOpts);
