@@ -1154,18 +1154,19 @@ function acinfoHtml(info) {
 // column collapses so the other takes the full width (e.g. auto-FOV =
 // map only, no AirNav until you click).
 function syncFovAux() {
-  const box = $('#fov-aux');
+  // v0.27.0 layout: #fov-right is the right column inside the FOV grid,
+  // stacking plan view, side view and the AirNav photo/data card. Each
+  // cell hides itself when empty; the whole right column hides when all
+  // three are empty so the sketch takes the full width.
+  const box = $('#fov-right');
   if (!box) return;
-  // #fov-aux is now purely the two geometry maps (plan + side). The AirNav
-  // box lives in #fov-top beside the transit sketch and collapses on its
-  // own via the .fov-top > [hidden] rule.
   const mapHas = !!(fovMap && fovMap.innerHTML);
   const sideHas = !!(fovSide && fovSide.innerHTML);
   const acHas = !!(fovAcinfo && fovAcinfo.innerHTML);
   if (fovMap) fovMap.hidden = !mapHas;
   if (fovSide) fovSide.hidden = !sideHas;
   if (fovAcinfo) fovAcinfo.hidden = !acHas;
-  box.hidden = !(mapHas || sideHas);
+  box.hidden = !(mapHas || sideHas || acHas);
 }
 async function renderFovAcinfo(meta) {
   if (!fovAcinfo) return;

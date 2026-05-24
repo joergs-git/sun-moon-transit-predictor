@@ -37,121 +37,83 @@
     </div>
   </header>
 
-  <div class="sky-row">
-    <section id="sky-section">
-      <h2>Sky now</h2>
-      <table id="sky">
-        <thead>
-          <tr>
-            <th title="Celestial body — Sun or Moon, evaluated for the configured observer location.">Body</th>
-            <th title="Azimuth in degrees, measured clockwise from true north (0° = N, 90° = E, 180° = S, 270° = W).">Az</th>
-            <th title="Elevation in degrees above the local horizon (refraction-corrected).">El</th>
-            <th title="✓ when the body is above the 20° elevation floor used by the transit detector. Below that, refraction residuals + obstructions make a transit unreliable.">Observable</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-      <!-- Next naked-eye ISS pass (el > 20°, after dusk, station sunlit).
-           Computed offline from the TLE; hidden until one is predicted. -->
-      <p class="iss-pass" id="iss-pass" hidden></p>
-    </section>
+  <section id="sky-section">
+    <h2>Sky now</h2>
+    <table id="sky">
+      <thead>
+        <tr>
+          <th title="Celestial body — Sun or Moon, evaluated for the configured observer location.">Body</th>
+          <th title="Azimuth in degrees, measured clockwise from true north (0° = N, 90° = E, 180° = S, 270° = W).">Az</th>
+          <th title="Elevation in degrees above the local horizon (refraction-corrected).">El</th>
+          <th title="✓ when the body is above the 20° elevation floor used by the transit detector. Below that, refraction residuals + obstructions make a transit unreliable.">Observable</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <!-- Next naked-eye ISS pass (el > 20°, after dusk, station sunlit).
+         Computed offline from the TLE; hidden until one is predicted. -->
+    <p class="iss-pass" id="iss-pass" hidden></p>
+  </section>
 
-    <section id="learning-section">
-      <h2>Alert learning</h2>
-      <p class="hint">
-        Rolling 14-day stats. <b>Graduated</b> = radio alert that
-        tightened up. <b>Faded</b> = radio alert that never panned out.
-        <b>Surprise</b> = tight transit with no prior radio.
-      </p>
-      <div id="learning-cards" class="learning-cards">
-        <div class="learning-card" id="learn-graze">
-          <span class="learn-num">
-            <span class="graze-line"><span class="graze-body body-Sun">☀</span><span id="learn-graze-sun">—</span></span>
-            <span class="graze-line"><span class="graze-body body-Moon">🌙</span><span id="learn-graze-moon">—</span></span>
-          </span>
-          <span class="learn-label" title="Of all detected aircraft in the window, the share that actually grazed each body's disc (closest separation below the graze threshold — default 0.3°, roughly where a 36 m wingspan at 10 km starts overlapping the Sun's 0.27° disc radius). Refines as more data accumulates.">graze rate</span>
-          <span class="learn-detail" id="learn-graze-detail">— / — total</span>
-        </div>
-        <div class="learning-card" id="learn-hit">
-          <span class="learn-num">—</span>
-          <span class="learn-label" title="Of all radio alerts in the window, how many graduated to candidate or imminent.">hit rate</span>
-          <span class="learn-detail">— / — radios</span>
-        </div>
-        <div class="learning-card" id="learn-surprise">
-          <span class="learn-num">—</span>
-          <span class="learn-label" title="Of all tight transits we actually had, how many came without any prior radio warning.">surprise rate</span>
-          <span class="learn-detail">— / — transits</span>
-        </div>
-        <div class="learning-card" id="learn-episodes">
-          <span class="learn-num">—</span>
-          <span class="learn-label" title="Total episodes (one approach by one airframe) over the rolling window. Each can fire one to three stages.">episodes</span>
-          <span class="learn-detail">in last 14 days</span>
-        </div>
+  <section id="detect-section">
+    <!-- Detection funnel (moved out of Alert learning in v0.27.0 so it
+         sits next to Sky now where users actually look for live signal.) -->
+    <!-- Detection funnel (v0.8.0). Three horizontal bars: every unique
+         airframe the receiver saw this session, how many ever projected
+         inside the panel band, and how many ever skimmed < 0.5°. Bars are
+         pure CSS (no chart library — keeps the zero-dependency frontend). -->
+    <div class="detect-funnel" id="detect-funnel" title="Cumulative since the service started (resets on restart). 'Detected' counts every distinct aircraft with a usable position, regardless of how far it was from the Sun/Moon line.">
+      <div class="funnel-title">Detection funnel <span class="funnel-sub" id="funnel-sub">since start</span></div>
+      <div class="funnel-row">
+        <span class="funnel-label" title="Distinct aircraft seen with a usable position since the service started (resets on restart) — regardless of how far from the Sun/Moon line.">Total detected</span>
+        <span class="funnel-track"><span class="funnel-bar fb-total" id="fb-total"></span></span>
+        <span class="funnel-val" id="fv-total">—</span>
       </div>
+      <div class="funnel-row">
+        <span class="funnel-label" title="Aircraft with a usable fix RIGHT NOW (this tick), including ones nowhere near the Sun/Moon — i.e. the live dump1090 count.">Live planes</span>
+        <span class="funnel-track"><span class="funnel-bar fb-live" id="fb-live"></span></span>
+        <span class="funnel-val" id="fv-live">—</span>
+      </div>
+      <div class="funnel-row">
+        <span class="funnel-label" id="fl-band">&lt; 2°</span>
+        <span class="funnel-track"><span class="funnel-bar fb-band" id="fb-band"></span></span>
+        <span class="funnel-val" id="fv-band">—</span>
+      </div>
+      <div class="funnel-row">
+        <span class="funnel-label">&lt; 0.5°</span>
+        <span class="funnel-track"><span class="funnel-bar fb-near" id="fb-near"></span></span>
+        <span class="funnel-val" id="fv-near">—</span>
+      </div>
+      <div class="funnel-row">
+        <span class="funnel-label" title="Tightest bucket — a sub-0.2° projected pass is a near-certain on-disc transit (Sun/Moon disc radius ≈ 0.27°).">&lt; 0.2°</span>
+        <span class="funnel-track"><span class="funnel-bar fb-vnear" id="fb-vnear"></span></span>
+        <span class="funnel-val" id="fv-vnear">—</span>
+      </div>
+    </div>
+  </section>
 
-      <!-- Detection funnel (v0.8.0). Three horizontal bars: every unique
-           airframe the receiver saw this session, how many ever projected
-           inside the panel band, and how many ever skimmed < 0.5°. Bars are
-           pure CSS (no chart library — keeps the zero-dependency frontend). -->
-      <div class="detect-funnel" id="detect-funnel" title="Cumulative since the service started (resets on restart). 'Detected' counts every distinct aircraft with a usable position, regardless of how far it was from the Sun/Moon line.">
-        <div class="funnel-title">Detection funnel <span class="funnel-sub" id="funnel-sub">since start</span></div>
-        <div class="funnel-row">
-          <span class="funnel-label" title="Distinct aircraft seen with a usable position since the service started (resets on restart) — regardless of how far from the Sun/Moon line.">Total detected</span>
-          <span class="funnel-track"><span class="funnel-bar fb-total" id="fb-total"></span></span>
-          <span class="funnel-val" id="fv-total">—</span>
-        </div>
-        <div class="funnel-row">
-          <span class="funnel-label" title="Aircraft with a usable fix RIGHT NOW (this tick), including ones nowhere near the Sun/Moon — i.e. the live dump1090 count.">Live planes</span>
-          <span class="funnel-track"><span class="funnel-bar fb-live" id="fb-live"></span></span>
-          <span class="funnel-val" id="fv-live">—</span>
-        </div>
-        <div class="funnel-row">
-          <span class="funnel-label" id="fl-band">&lt; 2°</span>
-          <span class="funnel-track"><span class="funnel-bar fb-band" id="fb-band"></span></span>
-          <span class="funnel-val" id="fv-band">—</span>
-        </div>
-        <div class="funnel-row">
-          <span class="funnel-label">&lt; 0.5°</span>
-          <span class="funnel-track"><span class="funnel-bar fb-near" id="fb-near"></span></span>
-          <span class="funnel-val" id="fv-near">—</span>
-        </div>
-        <div class="funnel-row">
-          <span class="funnel-label" title="Tightest bucket — a sub-0.2° projected pass is a near-certain on-disc transit (Sun/Moon disc radius ≈ 0.27°).">&lt; 0.2°</span>
-          <span class="funnel-track"><span class="funnel-bar fb-vnear" id="fb-vnear"></span></span>
-          <span class="funnel-val" id="fv-vnear">—</span>
-        </div>
-      </div>
-    </section>
-
-    <section id="fov-section">
-      <h2>
-        FOV preview
-        <span id="fov-mode" class="fov-mode" title="auto = newest live candidate with sep &lt; 1°. pinned = locked to your selection; cleared automatically when a newer qualifying candidate appears.">auto</span>
-      </h2>
-      <p class="hint" id="fov-hint">Waiting for a close approach (separation &lt; 1°). Click any tracking or history row to pin it here.</p>
-      <!-- Top row: the dominant transit sketch (left) + the compact AirNav
-           photo/data box beside it (right, ~38%). The AirNav column
-           collapses via .fov-top > [hidden] when empty so the sketch takes
-           the full width (auto-FOV with nothing clicked). -->
-      <div id="fov-top" class="fov-top">
-        <div id="fov-body" class="fov-body"></div>
-        <div id="fov-acinfo" class="fov-aux-right" hidden></div>
-      </div>
-      <!-- Offline airframe specs for the shown transit. Filled from the
-           ADS-B `t` (ICAO type) field via web/aircraft-types.js — no network,
-           no photos. Hidden until a type is resolvable. -->
-      <div id="fov-specs" class="fov-specs" hidden></div>
-      <!-- Lower box: LEFT = offline plan-view mini-map (top-down, rings =
-           km from you); RIGHT = side view (vertical profile: observer →
-           aircraft, with the 20/30/45° elevation bands coloured so
-           visibility is obvious). Both pure SVG from our own ADS-B data;
-           each half collapses when empty (ISS / missing geometry). -->
-      <div id="fov-aux" class="fov-aux" hidden>
+  <section id="fov-section">
+    <h2>
+      FOV preview
+      <span id="fov-mode" class="fov-mode" title="auto = newest live candidate with sep &lt; 1°. pinned = locked to your selection; cleared automatically when a newer qualifying candidate appears.">auto</span>
+    </h2>
+    <p class="hint" id="fov-hint">Waiting for a close approach (separation &lt; 1°). Click any tracking or history row to pin it here.</p>
+    <!-- Left: the dominant transit sketch. Right: a vertical stack of plan
+         view, side view, and (when available) the AirNav photo/data card.
+         Each right-column cell hides itself when empty; the whole right
+         column hides when all three are empty so the sketch takes the full
+         width (auto-FOV with nothing pinned). -->
+    <div class="fov-grid">
+      <div id="fov-body" class="fov-body"></div>
+      <aside id="fov-right" class="fov-right" hidden>
         <div id="fov-map" class="fov-aux-cell" hidden></div>
         <div id="fov-side" class="fov-aux-cell" hidden></div>
-      </div>
-    </section>
-  </div>
+        <div id="fov-acinfo" class="fov-aux-right" hidden></div>
+      </aside>
+    </div>
+    <!-- Offline airframe specs strip (full width). -->
+    <div id="fov-specs" class="fov-specs" hidden></div>
+  </section>
 
   <section>
     <h2>LIVE-TRACKING-SIGNALS</h2>
@@ -319,6 +281,40 @@
         <div class="acstats-head"><span class="body-Moon">🌙</span> By Moon
           <span class="acstats-sub" id="hs-moon-tot">—</span></div>
         <div class="acstats-bars" id="hs-moon"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="learning-section">
+    <h2>Alert learning</h2>
+    <p class="hint">
+      Rolling 14-day stats. <b>Graduated</b> = radio alert that
+      tightened up. <b>Faded</b> = radio alert that never panned out.
+      <b>Surprise</b> = tight transit with no prior radio.
+    </p>
+    <div id="learning-cards" class="learning-cards">
+      <div class="learning-card" id="learn-graze">
+        <span class="learn-num">
+          <span class="graze-line"><span class="graze-body body-Sun">☀</span><span id="learn-graze-sun">—</span></span>
+          <span class="graze-line"><span class="graze-body body-Moon">🌙</span><span id="learn-graze-moon">—</span></span>
+        </span>
+        <span class="learn-label" title="Of all detected aircraft in the window, the share that actually grazed each body's disc (closest separation below the graze threshold — default 0.3°, roughly where a 36 m wingspan at 10 km starts overlapping the Sun's 0.27° disc radius). Refines as more data accumulates.">graze rate</span>
+        <span class="learn-detail" id="learn-graze-detail">— / — total</span>
+      </div>
+      <div class="learning-card" id="learn-hit">
+        <span class="learn-num">—</span>
+        <span class="learn-label" title="Of all radio alerts in the window, how many graduated to candidate or imminent.">hit rate</span>
+        <span class="learn-detail">— / — radios</span>
+      </div>
+      <div class="learning-card" id="learn-surprise">
+        <span class="learn-num">—</span>
+        <span class="learn-label" title="Of all tight transits we actually had, how many came without any prior radio warning.">surprise rate</span>
+        <span class="learn-detail">— / — transits</span>
+      </div>
+      <div class="learning-card" id="learn-episodes">
+        <span class="learn-num">—</span>
+        <span class="learn-label" title="Total episodes (one approach by one airframe) over the rolling window. Each can fire one to three stages.">episodes</span>
+        <span class="learn-detail">in last 14 days</span>
       </div>
     </div>
   </section>
