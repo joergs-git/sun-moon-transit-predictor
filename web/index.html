@@ -38,18 +38,10 @@
   </header>
 
   <div class="top-row">
-    <section id="fov-section">
-    <h2>
-      FOV preview
-      <span id="fov-mode" class="fov-mode" title="auto = newest live candidate with sep &lt; 1°. pinned = locked to your selection; cleared automatically when a newer qualifying candidate appears.">auto</span>
-    </h2>
-    <p class="hint" id="fov-hint">Waiting for a close approach (separation &lt; 1°). Click any tracking or history row to pin it here.</p>
-    <div id="fov-body" class="fov-body"></div>
-    </section>
-    <aside class="top-right">
-      <!-- Compact panels stacked next to the sketch: Sky now and the
-           Detection funnel sit above the plan/side/airframe cells so the
-           page stays short. plan/side/acinfo each hide when empty. -->
+    <div class="top-left">
+      <!-- LEFT column: Sky now and Detection funnel sit ABOVE the FOV
+           sketch — live state reads first, the sketch is the dominant
+           visual below. -->
       <section id="sky-section">
         <h2>Sky now</h2>
         <table id="sky">
@@ -103,6 +95,18 @@
           </div>
         </div>
       </section>
+      <section id="fov-section">
+        <h2>
+          FOV preview
+          <span id="fov-mode" class="fov-mode" title="auto = newest live candidate with sep &lt; 1°. pinned = locked to your selection; cleared automatically when a newer qualifying candidate appears.">auto</span>
+        </h2>
+        <p class="hint" id="fov-hint">Waiting for a close approach (separation &lt; 1°). Click any tracking or history row to pin it here.</p>
+        <div id="fov-body" class="fov-body"></div>
+      </section>
+    </div>
+    <aside class="top-right">
+      <!-- RIGHT column: plan/side/airframe cells parallel to the left
+           column. Each hides itself when empty. -->
       <div id="fov-map" class="fov-aux-cell" hidden></div>
       <div id="fov-side" class="fov-aux-cell" hidden></div>
       <div id="fov-acinfo" class="fov-aux-right" hidden></div>

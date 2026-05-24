@@ -387,14 +387,17 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
 @media (max-width: 720px) {
   .top-row { grid-template-columns: 1fr; }
 }
+.top-left,
 .top-right {
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-width: 0;
 }
-/* Sky now + Detection funnel keep their normal section chrome but lose
-   the outer margin so they pack tightly inside the right column. */
+/* Sections inside either column lose their outer margin so they pack
+   tightly. Sky now + Detection funnel live in .top-left ABOVE the FOV
+   sketch; plan/side/airframe cells live in .top-right parallel to them. */
+.top-left > section,
 .top-right > section { margin: 0; }
 
 /* FOV preview panel. Same panel chrome as the tables so the page reads as
