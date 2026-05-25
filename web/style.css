@@ -105,6 +105,23 @@ h2 { font-size: 14px; margin: 16px 0 8px; color: var(--accent); text-transform: 
 /* SharpCap multi-rig editor in Settings. */
 .sc-rigs-block { margin-top: 10px; }
 .sc-rigs-head { font-weight: 600; margin-bottom: 4px; }
+/* Section subheaders inside the SharpCap fieldset — visually separate the
+   on/off toggles, the global defaults, the main-rig fields and the extra
+   rigs list. Thin top border so the grouping reads even on dense screens. */
+.sc-subhead {
+  font-weight: 600;
+  font-size: 13px;
+  margin: 14px 0 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  color: var(--fg);
+}
+.sc-subhead-hint {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 6px;
+}
 .sc-rigs { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
 .sc-rig { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .sc-rig .rig-name { flex: 1 1 90px; min-width: 80px; }

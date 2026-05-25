@@ -498,16 +498,18 @@
 
         <fieldset>
           <legend>SharpCap capture trigger</legend>
+          <!-- ── On/off toggles ─────────────────────────────────────── -->
           <label class="checkbox-row">
             <input name="sharpcap.enabled" type="checkbox"> Enabled
             <small class="field-hint">When an imminent transit is detected, tell a SharpCap listener on a Windows PC to start recording. See scripts/sharpcap/ for the Windows-side install.</small></label>
           <label class="checkbox-row">
             <input name="sharpcap.notifyOnTrigger" type="checkbox"> Push on trigger
             <small class="field-hint">Send a Pushover with flight, separation, ETA and the −pre/+post window whenever a capture is armed.</small></label>
-          <label>Windows host<input name="sharpcap.host" type="text" autocomplete="off" spellcheck="false" placeholder="192.168.1.42 or sharpcap-pc">
-            <small class="field-hint">IP address or hostname of the PC running SharpCap with the trigger listener.</small></label>
-          <label>Port<input name="sharpcap.port" type="number" step="1" min="1" max="65535" placeholder="9999">
-            <small class="field-hint">Listener TCP port (default 9999). Must match the Windows config.</small></label>
+
+          <!-- ── Global defaults — inherited by ALL rigs (main + every
+                  entry in the Capture rigs list below) unless that rig
+                  overrides the field individually. ─────────────────── -->
+          <div class="sc-subhead">Global defaults <span class="sc-subhead-hint">— inherited by every rig unless overridden in its row</span></div>
           <label>Pre-roll (s)<input name="sharpcap.preBufferS" type="number" step="any" min="0">
             <small class="field-hint">Start recording this many seconds <b>before</b> the predicted closest approach. Default 5.</small></label>
           <label>Post-roll (s)<input name="sharpcap.postBufferS" type="number" step="any" min="0">
@@ -519,23 +521,37 @@
           <label>Max clip (s)<input name="sharpcap.maxCaptureS" type="number" step="any" min="1" max="120">
             <small class="field-hint">Hard ceiling on total clip length (Pre + Post + 2 × drift). Default <b>115 s</b> — keeps the request safely under the Windows-side listener's 120 s cap. Raise only if you've also raised <code>MAX_DURATION_S</code> in the listener config.</small></label>
           <label>Min elevation °<input name="sharpcap.minElevationDeg" type="number" step="any" min="0" max="90">
-            <small class="field-hint">Don't trigger when the target is below this (telescope can't see it). 0 = off. <b>Default for all rigs</b> — each rig in the list below inherits this unless its row overrides it.</small></label>
+            <small class="field-hint">Don't trigger when the target is below this (telescope can't see it). 0 = off.</small></label>
+
+          <!-- ── Main rig — the implicit "main" target promoted from
+                  the top-level sharpcap.{host,port,…} block (v0.30.1).
+                  Per-rig overrides for Pre/Post/drift/etc. of the main
+                  rig live in service.json. ───────────────────────────── -->
+          <div class="sc-subhead">Main rig <span class="sc-subhead-hint">— this Host/Port runs alongside the Capture rigs list below</span></div>
+          <label>Windows host<input name="sharpcap.host" type="text" autocomplete="off" spellcheck="false" placeholder="192.168.1.42 or sharpcap-pc">
+            <small class="field-hint">IP address or hostname of the PC running SharpCap with the trigger listener.</small></label>
+          <label>Port<input name="sharpcap.port" type="number" step="1" min="1" max="65535" placeholder="9999">
+            <small class="field-hint">Listener TCP port (default 9999). Must match the Windows config.</small></label>
           <label>Max sep °<input name="sharpcap.maxSepDeg" type="number" step="any" min="0" max="10">
-            <small class="field-hint">Projected angular separation below which the <b>main</b> rig (this Host/Port) arms a capture. <b>Default 0.5°</b> — a near-certain on-disc transit at the Sun/Moon disc radius (~0.27°) plus a safety margin. Long focal length wants this smaller (e.g. 0.2°); widefield can go larger (e.g. 1–2°). Each rig in the list below has its own <b>sep °</b> — those override this value. Tracker <i>Panel band °</i> auto-widens to the largest sep across all rigs so nothing gets filtered out before arming.</small></label>
+            <small class="field-hint">Projected angular separation below which this <b>main</b> rig arms a capture. <b>Default 0.5°</b> — a near-certain on-disc transit at the Sun/Moon disc radius (~0.27°) plus a safety margin. Long focal length wants this smaller (e.g. 0.2°); widefield can go larger (e.g. 1–2°). Each rig in the list below has its own <b>sep °</b> — those override this value. Tracker <i>Panel band °</i> auto-widens to the largest sep across all rigs so nothing gets filtered out before arming.</small></label>
           <label>Trigger body
             <select name="sharpcap.body">
               <option value="Sun">☀ Sun</option>
               <option value="Moon">🌙 Moon</option>
             </select>
-            <small class="field-hint">Which disc to record. One scope can only track one at a time, so this is Sun <b>or</b> Moon — not both.</small></label>
+            <small class="field-hint">Which disc this main rig records. One scope can only track one at a time, so this is Sun <b>or</b> Moon — not both.</small></label>
           <div class="checkbox-row">
             <button type="button" id="sharpcap-test-btn" class="btn">Test trigger (2 s)</button>
             <small id="sharpcap-test-msg" class="field-hint">Fires an immediate 2 s capture using the host/port above (no save needed).</small>
           </div>
 
+          <!-- ── Additional rigs — extra capture targets, each with its
+                  own host/port and per-row overrides for body/pre/post/
+                  sep°. Empty fields fall back to the Global defaults
+                  block above. ─────────────────────────────────────────── -->
           <div class="sc-rigs-block">
-            <div class="sc-rigs-head">Capture rigs (multiple telescopes)</div>
-            <small class="field-hint">Leave empty to use the single Host/Body above. Add a rig per telescope to drive several at once — each is routed by its own body. Columns per row: <b>name · host · port · ☀/🌙 · pre s · post s · sep °</b> (+ Test/✕). <b>sep °</b> = the per-rig observation radius (long focal length → small, e.g. 0.3°; widefield → larger, e.g. 2–5°). Empty fields inherit the defaults above. The global <i>Panel band °</i> above auto-widens to the largest rig sep so wide rigs work out of the box; raise the Panel band manually only if you want the live-tracking table to show even more. Per-rig token: set in <code>service.json</code>.</small>
+            <div class="sc-subhead">Capture rigs <span class="sc-subhead-hint">— extra telescopes; each row's empty fields inherit Global defaults above</span></div>
+            <small class="field-hint">Add a rig per additional telescope to drive several at once — each is routed by its own body. Columns per row: <b>name · host · port · ☀/🌙 · pre s · post s · sep °</b> (+ Test/✕). <b>sep °</b> = the per-rig observation radius (long focal length → small, e.g. 0.3°; widefield → larger, e.g. 2–5°). Empty fields inherit the Global defaults block above. The tracker's <i>Panel band °</i> (in the Tracker section) auto-widens to the largest rig sep so wide rigs work out of the box; raise the Panel band manually only if you want the live-tracking table to show even more. Per-rig token: set in <code>service.json</code>.</small>
             <div id="sharpcap-targets" class="sc-rigs"></div>
             <button type="button" id="sharpcap-add-rig" class="btn">+ Add rig</button>
           </div>
