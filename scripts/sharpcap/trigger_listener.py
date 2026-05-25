@@ -330,7 +330,14 @@ def _transfer_new_files(pre_snapshot, label):
             with _transferred_lock:
                 if sig in _transferred:
                     continue
-            dest = _unique_dest(os.path.basename(src))
+            # v0.30.3: splice the listener's PORT into the destination
+            # filename so two rigs on the same machine can deliver to the
+            # same dest dir / network share without clobbering each other.
+            # Example: 2026-05-25-1820_2-Moon.ser -> 2026-05-25-1820_2-Moon_p9999.ser
+            src_base = os.path.basename(src)
+            base, ext = os.path.splitext(src_base)
+            tagged = "{}_p{}{}".format(base, PORT, ext)
+            dest = _unique_dest(tagged)
             if TRANSFER_MOVE:
                 shutil.move(src, dest)
                 _log("transfer {!r}: moved {} -> {}".format(label, src, dest))

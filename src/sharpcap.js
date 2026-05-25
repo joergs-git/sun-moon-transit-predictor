@@ -271,14 +271,24 @@ export class SharpCapTrigger {
     if (meta) payload.meta = meta;
 
     // Claim the dedup slot BEFORE the await so two ticks in the same window
-    // can't both fire; release it on failure so the next tick retries (the
-    // whole point is to not miss — a transient send error must not lock us
-    // out for dedupMs).
+    // can't both fire; release it on hard NETWORK failure so the next tick
+    // retries — the whole point is to not miss a transit because of a
+    // transient send error. v0.30.3: a listener-level rejection (busy /
+    // unauth / no-camera / over-limit / bad-*) is NOT a transient error;
+    // the listener received our payload and gave a definitive answer.
+    // Treating those as "retry next tick" caused a TCP-storm during every
+    // recording (~25 busy entries in the listener log for a 110 s clip)
+    // because each "busy" deleted the dedup, and the next tick re-fired.
     this.lastTriggered.set(key, nowMs);
     this.armedClosest.set(key, c.closestApproachAtMs);
     const result = await this._sendPayload(payload);
-    if (!result.sent) { this.lastTriggered.delete(key); this.armedClosest.delete(key); }
-    else if (reArm) result.reArmed = true;
+    if (!result.sent && !result.response) {
+      // No JSON reply at all → connect/timeout/socket-closed. Listener may
+      // be down or restarting; clear dedup so the next tick retries.
+      this.lastTriggered.delete(key);
+      this.armedClosest.delete(key);
+    }
+    if (result.sent && reArm) result.reArmed = true;
     return result;
   }
 

@@ -324,23 +324,46 @@ describe('SharpCapTrigger', () => {
       expect(res).toEqual({ sent: false, reason: 'too-low' });
     });
 
-    it('dedupes within the window but releases the slot on a failed send', async () => {
-      // First send fails (ok:false) → slot released → second send succeeds.
-      const fail = makeFakeNet({ replyLine: '{"ok":false,"error":"busy"}\n' });
+    it('keeps the dedup slot on a listener-level rejection (busy etc.) so we do NOT TCP-storm', async () => {
+      // v0.30.3: when the listener REPLIED but with ok:false (busy /
+      // unauth / over-limit / …), the listener received our payload and
+      // gave a definitive answer. Releasing the dedup slot in that case
+      // would fire again every tick for the entire ~minute the listener
+      // is busy recording, which is exactly the storm we now suppress.
+      const busy = makeFakeNet({ replyLine: '{"ok":false,"error":"busy"}\n' });
       const t = new SharpCapTrigger(
         { enabled: true, host: 'pc' },
-        { netImpl: fail.netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+        { netImpl: busy.netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
       );
       const r1 = await t.armForCandidate(armCand(), NOW);
-      expect(r1.sent).toBe(false);            // failed → slot released
-      // swap in a succeeding net and retry: not deduped because the slot was freed
+      expect(r1.sent).toBe(false);
+      expect(r1.response?.error).toBe('busy');
+      // Same candidate, 2 s later — even if we swap in a SUCCEEDING net,
+      // the dedup must hold so we don't keep retrying behind the busy.
+      const ok = makeFakeNet({ replyLine: '{"ok":true}\n' });
+      t.net = ok.netImpl;
+      const r2 = await t.armForCandidate(armCand(), NOW + 2_000);
+      expect(r2.reason).toBe('deduped');
+    });
+
+    it('releases the dedup slot on a NETWORK failure (no reply at all) so the next tick retries', async () => {
+      // Connect timeout / socket closed / listener down → no JSON reply.
+      // That's a transient hiccup, not a definitive "no" — release the
+      // slot so the next eligible tick gets another shot. This preserves
+      // the v0.24 "never miss" guarantee for the listener-restart case.
+      const nodata = makeFakeNet({ dropConnection: true });
+      const t = new SharpCapTrigger(
+        { enabled: true, host: 'pc' },
+        { netImpl: nodata.netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+      );
+      const r1 = await t.armForCandidate(armCand(), NOW);
+      expect(r1.sent).toBe(false);
+      expect(r1.response).toBeUndefined();    // no JSON reply
+      // Slot released → next attempt fires (swap to succeeding net).
       const ok = makeFakeNet({ replyLine: '{"ok":true}\n' });
       t.net = ok.netImpl;
       const r2 = await t.armForCandidate(armCand(), NOW + 2_000);
       expect(r2.sent).toBe(true);
-      // a third immediate attempt IS deduped
-      const r3 = await t.armForCandidate(armCand(), NOW + 3_000);
-      expect(r3.reason).toBe('deduped');
     });
   });
 
