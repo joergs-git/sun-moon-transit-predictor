@@ -373,7 +373,29 @@ export async function runService({
   // `targets` array → a single implicit target = the base config (back-compat).
   function buildSharpcapTargets() {
     const base = config.sharpcap;
-    const list = Array.isArray(base.targets) && base.targets.length ? base.targets : [base];
+    const targets = Array.isArray(base.targets) ? base.targets : [];
+    // v0.30.1 — auto-promote the base config to its OWN rig whenever it
+    // is independently usable (enabled + host) AND no target claims the
+    // same host:port. Pre-v0.30.1 behaviour silently dropped the base as
+    // a rig the moment a targets[] entry was present, so users with a
+    // working "main" recorder + an "extra" rig saw only the extras fire.
+    // The address-collision check protects the existing one-rig-only
+    // setup where the user *replaced* the base with the same host:port
+    // entry in targets[] (would have caused a duplicate listener hit).
+    const port = (x) => Number.isInteger(x?.port) ? x.port : (base.port ?? 9999);
+    const addr = (x) => `${String(x?.host ?? base.host ?? '').toLowerCase()}:${port(x)}`;
+    const targetAddrs = new Set(targets.map(addr));
+    const list = [];
+    const baseUsable = Boolean(base?.enabled && typeof base?.host === 'string' && base.host.trim());
+    if (baseUsable && !targetAddrs.has(addr(base))) {
+      // Mark with an explicit name so the readout can distinguish the
+      // implicit main rig from named targets.
+      list.push({ ...base, name: base.name ?? 'main' });
+    }
+    for (const t of targets) list.push(t);
+    // Fallback: no usable base AND no targets → keep a single disabled
+    // entry so sharpcapAnyEnabled() / sharpcapArmedBodies() stay valid.
+    if (!list.length) list.push(base);
     return list.map((t, i) => {
       const merged = { ...base, ...t };
       delete merged.targets;
