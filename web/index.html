@@ -93,6 +93,38 @@
             <span class="funnel-track"><span class="funnel-bar fb-vnear" id="fb-vnear"></span></span>
             <span class="funnel-val" id="fv-vnear">—</span>
           </div>
+
+          <!-- Lifetime persistent block. Two denominators side-by-side
+               (all ICAOs ever seen vs. only those ≥ 30° elevation) plus
+               per-body confirmed hits at < 0.5° / < 0.2°. Hidden until the
+               server actually delivers the data (older builds don't). -->
+          <div class="funnel-lifetime" id="funnel-lifetime" hidden>
+            <div class="funnel-divider"></div>
+            <div class="funnel-title">Lifetime <span class="funnel-sub" id="funnel-lifetime-sub">persistent (survives restarts)</span></div>
+            <div class="funnel-life-row">
+              <span class="funnel-life-label" title="Total distinct ICAOs ever seen by this receiver (aircraft_sightings). Includes long-range / low-elevation contacts — the broad denominator.">All ICAOs ever seen</span>
+              <span class="funnel-life-val" id="fv-life-all">—</span>
+            </div>
+            <div class="funnel-life-row">
+              <span class="funnel-life-label" title="Subset of ICAOs that reached ≥ 30° elevation at some point — the 'actually overhead' denominator. Tracking started with v0.29.0; rows before that aren't reflected.">≥ 30° elevation ICAOs</span>
+              <span class="funnel-life-val" id="fv-life-high">—</span>
+              <span class="funnel-life-since" id="fv-life-high-since"></span>
+            </div>
+            <div class="funnel-grid">
+              <div class="funnel-grid-h">Body</div>
+              <div class="funnel-grid-h" title="Distinct ICAOs that actually came closer than 0.5° to the body (transit_history, stage=imminent).">&lt; 0.5° hits</div>
+              <div class="funnel-grid-h" title="Distinct ICAOs that actually came closer than 0.2° to the body (sub-disc-radius pass).">&lt; 0.2° hits</div>
+
+              <div class="funnel-grid-body" title="Hits on the Sun.">☀ Sun</div>
+              <div class="funnel-grid-cell" id="fv-life-sun-05">—</div>
+              <div class="funnel-grid-cell" id="fv-life-sun-02">—</div>
+
+              <div class="funnel-grid-body" title="Hits on the Moon.">☾ Moon</div>
+              <div class="funnel-grid-cell" id="fv-life-moon-05">—</div>
+              <div class="funnel-grid-cell" id="fv-life-moon-02">—</div>
+            </div>
+            <div class="funnel-foot">Each cell: <b>N</b> <span class="funnel-foot-frac">(% of all / % of ≥30°)</span></div>
+          </div>
         </div>
       </section>
       <section id="fov-section">

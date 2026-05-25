@@ -78,6 +78,19 @@ CREATE TABLE IF NOT EXISTS aircraft_sightings (
 );
 CREATE INDEX IF NOT EXISTS idx_sightings_top
   ON aircraft_sightings(kind, visits DESC, last_seen_ms DESC);
+
+-- Lifetime denominator for the "high-quality detection" funnel: every ICAO
+-- ever observed at ≥ 30° elevation in the sky from this site. Recorded
+-- exactly once per airframe on first qualifying tick; combined with
+-- transit_history.closest_sep_deg gives a true "of the planes that were
+-- properly overhead, what fraction came close to Sun/Moon" ratio. Tracking
+-- starts from the v0.29.0 first run (no retro fill possible).
+CREATE TABLE IF NOT EXISTS aircraft_high_elev (
+  icao          TEXT PRIMARY KEY,
+  first_seen_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aircraft_high_elev_first
+  ON aircraft_high_elev(first_seen_ms);
 `;
 
 export class HistoryStore {
@@ -126,6 +139,62 @@ export class HistoryStore {
     this._sightTouch = this.db.prepare(
       'UPDATE aircraft_sightings SET last_seen_ms = ? WHERE kind = ? AND key = ?',
     );
+
+    // High-elevation tracking (v0.29.0). One row per airframe that ever
+    // appeared at ≥ 30° elevation from this site — used as the "good
+    // observability" denominator in the Detection Funnel widget. INSERT
+    // OR IGNORE means re-running on the same airframe is a free no-op.
+    this._highElevIns = this.db.prepare(
+      'INSERT OR IGNORE INTO aircraft_high_elev (icao, first_seen_ms) VALUES (?, ?)',
+    );
+    this._highElevAll = this.db.prepare(
+      'SELECT icao FROM aircraft_high_elev',
+    );
+    this._highElevCount = this.db.prepare(
+      'SELECT COUNT(*) AS n, MIN(first_seen_ms) AS sinceMs FROM aircraft_high_elev',
+    );
+    // Aggregated close-approach counts (numerator), split by body and
+    // distinct ICAO. Filtered by stage = 'imminent' to count only flights
+    // that were ACTUALLY confirmed to pass that close — a "candidate"-only
+    // row is just a prediction the tracker emitted, not a confirmed hit.
+    this._closeCount = this.db.prepare(
+      `SELECT body, COUNT(DISTINCT icao) AS n
+       FROM transit_history
+       WHERE stage = 'imminent' AND closest_sep_deg IS NOT NULL AND closest_sep_deg < ?
+       GROUP BY body`,
+    );
+  }
+
+  /** Mark an ICAO as having appeared at ≥ 30° elevation. Idempotent. */
+  markHighElevation(icao, nowMs) {
+    if (!icao) return;
+    this._highElevIns.run(String(icao).toLowerCase(), nowMs);
+  }
+
+  /** Snapshot the in-DB high-elev ICAO set into memory at service start.
+   *  Used as a dedup guard so we don't re-insert known ICAOs every tick. */
+  loadHighElevSet() {
+    const s = new Set();
+    for (const r of this._highElevAll.all()) s.add(r.icao);
+    return s;
+  }
+
+  /** Total distinct ICAOs ever recorded at ≥ 30° elevation + earliest
+   *  observation timestamp (= when the tracking began on this DB). */
+  highElevTotals() {
+    const r = this._highElevCount.get();
+    return { count: r?.n ?? 0, sinceMs: r?.sinceMs ?? null };
+  }
+
+  /** Distinct ICAOs from transit_history.stage='imminent' whose closest
+   *  approach was < `sepBelowDeg`, grouped by body. Plain object keyed by
+   *  body name (lowercased). */
+  closeApproachCounts(sepBelowDeg) {
+    const out = {};
+    for (const r of this._closeCount.all(sepBelowDeg)) {
+      out[String(r.body).toLowerCase()] = r.n;
+    }
+    return out;
   }
 
   /**

@@ -733,6 +733,65 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
   color: var(--fg);
 }
 
+/* Lifetime block under the since-boot bars. Two denominator rows + a
+   per-body × per-threshold grid showing actual confirmed close
+   approaches. Same panel chrome (no extra background), just a thin
+   divider so it visually groups apart from the live bars above. */
+.funnel-divider {
+  margin: 8px 0 6px;
+  border-top: 1px solid var(--line);
+}
+.funnel-life-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 2px 0;
+  font-size: 11px;
+}
+.funnel-life-label {
+  flex: 1 1 auto;
+  color: var(--muted);
+}
+.funnel-life-val {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--fg);
+}
+.funnel-life-since {
+  font-size: 10px;
+  opacity: 0.6;
+  font-style: italic;
+}
+.funnel-grid {
+  display: grid;
+  grid-template-columns: minmax(60px, auto) 1fr 1fr;
+  gap: 2px 8px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+.funnel-grid-h {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 2px;
+}
+.funnel-grid-body { color: var(--muted); }
+.funnel-grid-cell {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+.funnel-foot {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 6px;
+  font-style: italic;
+}
+.funnel-foot-frac { opacity: 0.8; }
+
 /* E — offline airframe spec block under the FOV sketch. */
 .fov-specs {
   margin-top: 8px;

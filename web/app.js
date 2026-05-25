@@ -522,6 +522,45 @@ function renderDetectFunnel(stats) {
   // user can widen/narrow it in Settings).
   const band = Number.isFinite(stats.bandDeg) ? stats.bandDeg : 2;
   $('#fl-band').innerHTML = `&lt; ${band}°`;
+
+  // Lifetime persistent block — only show when the server actually
+  // delivered the data (older builds don't have stats.lifetime).
+  renderDetectFunnelLifetime(stats.lifetime);
+}
+
+// Per-body × per-threshold cell: shows the absolute count plus two
+// percentages — once against the broad "all ICAOs ever seen" denominator
+// and once against the tighter "≥ 30° elevation" denominator. Both are
+// useful: the first answers "how rare are transits among ANY contact",
+// the second "how often does a properly-overhead plane actually transit".
+function fmtFunnelCell(n, allN, highN) {
+  if (!Number.isFinite(n) || n <= 0) return '0';
+  const fmtPct = (denom) => denom > 0 ? `${((n / denom) * 100).toFixed(2)}%` : '—';
+  return `<b>${n}</b> <span class="funnel-foot-frac">(${fmtPct(allN)} / ${fmtPct(highN)})</span>`;
+}
+
+function renderDetectFunnelLifetime(life) {
+  const block = $('#funnel-lifetime');
+  if (!block) return;
+  if (!life || !life.denominators) {
+    block.hidden = true;
+    return;
+  }
+  block.hidden = false;
+  const allN  = life.denominators.allIcaos ?? 0;
+  const highN = life.denominators.highElev ?? 0;
+  $('#fv-life-all').textContent  = String(allN);
+  $('#fv-life-high').textContent = String(highN);
+  const sinceMs = life.denominators.highElevSinceMs;
+  $('#fv-life-high-since').textContent = sinceMs
+    ? `· tracking since ${new Date(sinceMs).toLocaleDateString()}`
+    : '· no observations yet';
+  const u05 = life.hits?.under05 ?? {};
+  const u02 = life.hits?.under02 ?? {};
+  $('#fv-life-sun-05').innerHTML  = fmtFunnelCell(u05.sun  ?? 0, allN, highN);
+  $('#fv-life-sun-02').innerHTML  = fmtFunnelCell(u02.sun  ?? 0, allN, highN);
+  $('#fv-life-moon-05').innerHTML = fmtFunnelCell(u05.moon ?? 0, allN, highN);
+  $('#fv-life-moon-02').innerHTML = fmtFunnelCell(u02.moon ?? 0, allN, highN);
 }
 
 const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];

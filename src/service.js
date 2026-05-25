@@ -499,6 +499,13 @@ export async function runService({
   // `${kind}:${key}` → { lastSeenMs, lastFlushMs }.
   const sightSeen = new Map();
 
+  // High-elevation tracking: in-memory mirror of aircraft_high_elev. An
+  // ICAO is added the first tick it appears at ≥ 30° elevation; subsequent
+  // ticks are a free no-op. Bootstrapped from disk so a restart doesn't
+  // re-count every airframe that already qualifies.
+  const HIGH_ELEV_THRESHOLD_DEG = 30;
+  const highElevIcaos = store ? store.loadHighElevSet() : new Set();
+
   // ISS prediction cache. Recomputed on a slow cadence (config.iss.recomputeMs)
   // and whenever the TLE file changes on disk. The notifier de-dupes the
   // Pushover + History rows per (icao,body), so no extra bookkeeping here.
@@ -1172,6 +1179,20 @@ export async function runService({
     }));
     state.totalLive = cappedTotalLive;
 
+    // High-elevation lifetime tracker for the Detection Funnel denominator.
+    // Reuses the totalLive Az/El results, so the only extra cost is the
+    // in-memory set test + the first-time INSERT. Past first encounter the
+    // membership check short-circuits and we never touch the DB again for
+    // that airframe.
+    for (const entry of totalLive) {
+      if (!entry.icao) continue;
+      if (entry.elevationDeg <= HIGH_ELEV_THRESHOLD_DEG) continue;
+      if (highElevIcaos.has(entry.icao)) continue;
+      highElevIcaos.add(entry.icao);
+      try { store.markHighElevation(entry.icao, nowMs); }
+      catch (e) { logger.warn?.('markHighElevation failed:', e?.message ?? e); }
+    }
+
     state.lastUpdateMs = nowMs;
 
     // Click-to-update self-diagnostic. The endpoint only drops a trigger
@@ -1255,6 +1276,39 @@ export async function runService({
       if (c.closestApproachSepDeg < 0.5) nearIcaos.add(c.icao);
       if (c.closestApproachSepDeg < 0.2) veryNearIcaos.add(c.icao);
     }
+    // Lifetime detection stats (persistent, survives restarts). Denominator
+    // has two flavours so the user can read both:
+    //   - allIcaos: every distinct airframe ever seen by the receiver
+    //     (aircraft_sightings). Honest but a bit pessimistic — counts
+    //     contacts that never rose above the horizon noise.
+    //   - highElev: only airframes that ever appeared at ≥ 30° elevation
+    //     (aircraft_high_elev). Tighter "observability" filter, but
+    //     tracking only started with v0.29.0 so the earlier history isn't
+    //     reflected.
+    // Numerator comes from confirmed ('imminent') rows in transit_history
+    // and is split per body — the actual question the user asks of the
+    // funnel: "of the planes that could have transited, how many really
+    // did, on Sun vs Moon."
+    let lifetimeStats = null;
+    try {
+      const totals = store.sightingTotals();
+      const high = store.highElevTotals();
+      const under05 = store.closeApproachCounts(0.5);
+      const under02 = store.closeApproachCounts(0.2);
+      lifetimeStats = {
+        denominators: {
+          allIcaos:  totals?.icao?.distinctKeys ?? 0,
+          highElev:  high.count,
+          highElevSinceMs: high.sinceMs,
+          highElevThresholdDeg: HIGH_ELEV_THRESHOLD_DEG,
+        },
+        hits: { under05, under02 },
+        thresholds: { under05Deg: 0.5, under02Deg: 0.2 },
+      };
+    } catch (e) {
+      logger.warn?.('lifetime detect stats failed:', e?.message ?? e);
+    }
+
     state.detectStats = {
       totalUnique: detectedIcaos.size,
       liveCount: aircraft.length,        // aircraft with a usable fix right now
@@ -1265,6 +1319,7 @@ export async function runService({
       nearDeg: 0.5,
       veryNearDeg: 0.2,
       sinceMs: state_sinceMs,
+      lifetime: lifetimeStats,
     };
 
     // Refresh the predictor watchlist on the configured cadence, then surface
