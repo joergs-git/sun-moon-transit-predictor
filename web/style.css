@@ -407,7 +407,15 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
    exchange for keeping the table in the right column instead of stealing
    a full-width row below the page header. */
 .total-live-section { margin: 0; }
-.total-live-section .table-scroll { overflow-x: auto; }
+/* Fixed height so the section below the top-row (Real candidates, History,
+   stats…) doesn't jump every tick when traffic comes and goes. 25 data
+   rows fit visibly at the current 11 px / 3-px-padding row height; the
+   sticky thead keeps the column headers in view while the rest scrolls. */
+.total-live-section .table-scroll {
+  height: 600px;
+  overflow-y: auto;
+  overflow-x: auto;
+}
 .total-live-table {
   width: 100%;
   border-collapse: collapse;
@@ -420,7 +428,15 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
   border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
   white-space: nowrap;
 }
-.total-live-table th { font-size: 10px; opacity: 0.75; font-weight: 500; }
+.total-live-table thead th {
+  font-size: 10px;
+  opacity: 0.85;
+  font-weight: 500;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+}
 .total-live-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
 .total-live-table .sep-cell { font-weight: 600; }
 .total-live-table .empty { text-align: center; color: #888; font-style: italic; padding: 10px; }

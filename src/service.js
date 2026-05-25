@@ -1158,9 +1158,11 @@ export async function runService({
       });
     }
     totalLive.sort((a, b) => a.sepDeg - b.sepDeg);
-    // Cap to keep /api/state lean in busy airspace — the panel only displays
-    // the closest few anyway.
-    const cappedTotalLive = totalLive.slice(0, 30);
+    // Cap to keep /api/state lean in busy airspace. The panel itself is a
+    // fixed-height ~25-row viewport with a scrollbar, so we keep a healthy
+    // surplus available for the user to scroll through — 100 comfortably
+    // covers the busiest sites without bloating state.
+    const cappedTotalLive = totalLive.slice(0, 100);
     // Share the same RouteLookup cache the candidate enricher uses, so we
     // don't double-fetch. Cached hits return instantly; first-seen callsigns
     // pick up their route on the next tick.
