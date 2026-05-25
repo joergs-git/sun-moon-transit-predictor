@@ -1555,6 +1555,13 @@ function scRigRow(rig = {}) {
     if (type) { i.type = type; if (type === 'number') { i.step = 'any'; i.min = '0'; } }
     return i;
   };
+  // Per-rig enabled checkbox — independent of the top-level "Enabled"
+  // toggle (which only governs the main rig). Default checked when adding
+  // a new row, since a rig you just added is presumably one you want on.
+  const enabled = document.createElement('input');
+  enabled.type = 'checkbox';
+  enabled.className = 'rig-enabled';
+  enabled.title = 'Enable this rig. Independent of the main rig\'s Enabled toggle above.';
   const name = field('rig-name', 'name');
   const host = field('rig-host', 'host / IP');
   const port = field('rig-port', 'port', 'number'); port.min = '1'; port.max = '65535';
@@ -1580,6 +1587,7 @@ function scRigRow(rig = {}) {
   rm.type = 'button'; rm.className = 'btn rig-remove'; rm.textContent = '✕'; rm.title = 'Remove this rig';
   rm.addEventListener('click', () => row.remove());
   // Set values via properties (no innerHTML interpolation → no escaping issues).
+  enabled.checked = rig.enabled !== false;        // default true on add
   name.value = rig.name ?? '';
   host.value = rig.host ?? '';
   port.value = rig.port ?? '';
@@ -1587,7 +1595,7 @@ function scRigRow(rig = {}) {
   pre.value = rig.preBufferS ?? '';
   post.value = rig.postBufferS ?? '';
   sep.value = rig.maxSepDeg ?? '';
-  for (const el of [name, host, port, body, pre, post, sep, test, rm, tmsg]) row.appendChild(el);
+  for (const el of [enabled, name, host, port, body, pre, post, sep, test, rm, tmsg]) row.appendChild(el);
   return row;
 }
 function fillSharpcapTargets(targets) {
@@ -1602,6 +1610,11 @@ function collectSharpcapTargets() {
     const host = v('.rig-host').trim();
     if (!host) return null;            // skip blank rows
     const rig = { host, bodies: [v('.rig-body')] };
+    // Per-rig enabled. Only serialise when explicitly OFF, so a normal
+    // (checked) row stays minimal in service.json — default-true keeps
+    // the file readable.
+    const enabledEl = row.querySelector('.rig-enabled');
+    if (enabledEl && !enabledEl.checked) rig.enabled = false;
     const name = v('.rig-name').trim(); if (name) rig.name = name;
     const port = v('.rig-port'); if (port !== '') rig.port = Number(port);
     const pre = v('.rig-pre');  if (pre !== '')  rig.preBufferS = Number(pre);

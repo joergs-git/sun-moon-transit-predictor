@@ -124,6 +124,7 @@ h2 { font-size: 14px; margin: 16px 0 8px; color: var(--accent); text-transform: 
 }
 .sc-rigs { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
 .sc-rig { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.sc-rig .rig-enabled { flex: 0 0 auto; margin: 0 2px 0 0; width: 14px; height: 14px; }
 .sc-rig .rig-name { flex: 1 1 90px; min-width: 80px; }
 .sc-rig .rig-host { flex: 2 1 130px; min-width: 110px; }
 .sc-rig .rig-port { flex: 0 0 64px; width: 64px; }
@@ -591,12 +592,19 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
   padding-right: 4px;
   flex: 1 1 auto;
   min-height: 0;
-  /* Two-column grid on wide cards so fieldsets pair up and the modal stays
-     short; auto-drops to one column on narrow screens (≈< 700 px). */
+  /* Two explicit columns so the user controls which fieldset sits where
+     (left vs right). Inner .settings-col stacks its fieldsets vertically.
+     Drops to one column on narrow screens via auto-fit. */
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 8px 12px;
   align-content: start;
+}
+.settings-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
 }
 .settings-card fieldset {
   border: 1px solid var(--line);

@@ -408,6 +408,8 @@
            look-ahead step=30/min=10 bug) — leave correctness to the server. -->
       <form id="settings-form" novalidate>
         <div class="settings-fields">
+        <!-- Left column: observation & optical hardware + Pushover -->
+        <div class="settings-col">
         <fieldset>
           <legend>Observer</legend>
           <label>Name <input name="observer.name" type="text" placeholder="Rheine">
@@ -422,6 +424,22 @@
             <small class="field-hint">Optional, refraction model only. Blank = 10 °C.</small></label>
           <label>Pressure (mbar)<input name="observer.pressureMbar" type="number" step="0.1">
             <small class="field-hint">Optional, refraction model only. Blank = 1010.</small></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Telescope &amp; sensor (FOV sketch)</legend>
+          <label>Focal length (mm)<input name="optics.telescopeFocalMm" type="number" step="any" min="1" required>
+            <small class="field-hint">Telescope effective focal length — sets the FOV-sketch scale (your reducer/Barlow included).</small></label>
+          <label>Sensor model<input name="optics.sensorName" type="text" placeholder="ZWO ASI174MM">
+            <small class="field-hint">Free text — shown in the sketch footer only.</small></label>
+          <label>Sensor W (mm)<input name="optics.sensorWmm" type="number" step="any" min="0.01" required>
+            <small class="field-hint">Sensor active-area width (mm) — sets the FOV box width.</small></label>
+          <label>Sensor H (mm)<input name="optics.sensorHmm" type="number" step="any" min="0.01" required>
+            <small class="field-hint">Sensor active-area height (mm) — sets the FOV box height.</small></label>
+          <label>Sensor W (px)<input name="optics.sensorPxW" type="number" step="1" min="1">
+            <small class="field-hint">Horizontal resolution — informational only, not used in the geometric FOV.</small></label>
+          <label>Sensor H (px)<input name="optics.sensorPxH" type="number" step="1" min="1">
+            <small class="field-hint">Vertical resolution — informational only.</small></label>
         </fieldset>
 
         <fieldset>
@@ -453,21 +471,9 @@
             <small class="field-hint">The clickable URL Pushover shows on the alert (tap → opens this predictor's web UI). Blank = auto-detected LAN IP on the app's port (e.g. http://&lt;lan-ip&gt;:8081/).</small></label>
         </fieldset>
 
-        <fieldset>
-          <legend>Telescope &amp; sensor (FOV sketch)</legend>
-          <label>Focal length (mm)<input name="optics.telescopeFocalMm" type="number" step="any" min="1" required>
-            <small class="field-hint">Telescope effective focal length — sets the FOV-sketch scale (your reducer/Barlow included).</small></label>
-          <label>Sensor model<input name="optics.sensorName" type="text" placeholder="ZWO ASI174MM">
-            <small class="field-hint">Free text — shown in the sketch footer only.</small></label>
-          <label>Sensor W (mm)<input name="optics.sensorWmm" type="number" step="any" min="0.01" required>
-            <small class="field-hint">Sensor active-area width (mm) — sets the FOV box width.</small></label>
-          <label>Sensor H (mm)<input name="optics.sensorHmm" type="number" step="any" min="0.01" required>
-            <small class="field-hint">Sensor active-area height (mm) — sets the FOV box height.</small></label>
-          <label>Sensor W (px)<input name="optics.sensorPxW" type="number" step="1" min="1">
-            <small class="field-hint">Horizontal resolution — informational only, not used in the geometric FOV.</small></label>
-          <label>Sensor H (px)<input name="optics.sensorPxH" type="number" step="1" min="1">
-            <small class="field-hint">Vertical resolution — informational only.</small></label>
-        </fieldset>
+        </div><!-- /.settings-col -->
+        <!-- Right column: tracker + ADS-B integrations + capture trigger -->
+        <div class="settings-col">
 
         <fieldset>
           <legend>Tracker</legend>
@@ -500,8 +506,8 @@
           <legend>SharpCap capture trigger</legend>
           <!-- ── On/off toggles ─────────────────────────────────────── -->
           <label class="checkbox-row">
-            <input name="sharpcap.enabled" type="checkbox"> Enabled
-            <small class="field-hint">When an imminent transit is detected, tell a SharpCap listener on a Windows PC to start recording. See scripts/sharpcap/ for the Windows-side install.</small></label>
+            <input name="sharpcap.enabled" type="checkbox"> Enabled <span class="sc-subhead-hint">(main rig only)</span>
+            <small class="field-hint">Enables the <b>main rig</b> (the Host/Port pair under "Main rig" below). Each extra rig in the Capture rigs list has its OWN checkbox — disabling this toggle does not cascade to them. See scripts/sharpcap/ for the Windows-side install.</small></label>
           <label class="checkbox-row">
             <input name="sharpcap.notifyOnTrigger" type="checkbox"> Push on trigger
             <small class="field-hint">Send a Pushover with flight, separation, ETA and the −pre/+post window whenever a capture is armed.</small></label>
@@ -551,12 +557,13 @@
                   block above. ─────────────────────────────────────────── -->
           <div class="sc-rigs-block">
             <div class="sc-subhead">Capture rigs <span class="sc-subhead-hint">— extra telescopes; each row's empty fields inherit Global defaults above</span></div>
-            <small class="field-hint">Add a rig per additional telescope to drive several at once — each is routed by its own body. Columns per row: <b>name · host · port · ☀/🌙 · pre s · post s · sep °</b> (+ Test/✕). <b>sep °</b> = the per-rig observation radius (long focal length → small, e.g. 0.3°; widefield → larger, e.g. 2–5°). Empty fields inherit the Global defaults block above. The tracker's <i>Panel band °</i> (in the Tracker section) auto-widens to the largest rig sep so wide rigs work out of the box; raise the Panel band manually only if you want the live-tracking table to show even more. Per-rig token: set in <code>service.json</code>.</small>
+            <small class="field-hint">Add a rig per additional telescope to drive several at once — each is routed by its own body and has its own on/off. Columns per row: <b>☐ · name · host · port · ☀/🌙 · pre s · post s · sep °</b> (+ Test/✕). The leading checkbox enables/disables JUST this rig — independent of the main rig's toggle. <b>sep °</b> = the per-rig observation radius (long focal length → small, e.g. 0.3°; widefield → larger, e.g. 2–5°). Empty fields inherit the Global defaults block above. The tracker's <i>Panel band °</i> (in the Tracker section) auto-widens to the largest rig sep so wide rigs work out of the box; raise the Panel band manually only if you want the live-tracking table to show even more. Per-rig token: set in <code>service.json</code>.</small>
             <div id="sharpcap-targets" class="sc-rigs"></div>
             <button type="button" id="sharpcap-add-rig" class="btn">+ Add rig</button>
           </div>
         </fieldset>
 
+        </div><!-- /.settings-col (right) -->
         </div><!-- /.settings-fields -->
 
         <div class="settings-actions">

@@ -374,36 +374,52 @@ export async function runService({
   function buildSharpcapTargets() {
     const base = config.sharpcap;
     const targets = Array.isArray(base.targets) ? base.targets : [];
-    // v0.30.1 — auto-promote the base config to its OWN rig whenever it
-    // is independently usable (enabled + host) AND no target claims the
-    // same host:port. Pre-v0.30.1 behaviour silently dropped the base as
-    // a rig the moment a targets[] entry was present, so users with a
-    // working "main" recorder + an "extra" rig saw only the extras fire.
-    // The address-collision check protects the existing one-rig-only
-    // setup where the user *replaced* the base with the same host:port
-    // entry in targets[] (would have caused a duplicate listener hit).
+    // v0.30.6 — each rig has an INDEPENDENT enabled state. The top-level
+    // sharpcap.enabled now toggles ONLY the auto-promoted "main" rig; each
+    // targets[] entry has its own t.enabled (default true). Disabling the
+    // main rig no longer cascades to the extras and vice-versa — matches
+    // user expectation that one checkbox per rig means exactly that.
+    //
+    // Address-collision check (from v0.30.1) still guards against
+    // duplicate listener hits: if a target claims the same host:port as
+    // the base, the auto-promoted main is suppressed (the user's intent
+    // was clearly to replace the base via the targets[] entry).
     const port = (x) => Number.isInteger(x?.port) ? x.port : (base.port ?? 9999);
     const addr = (x) => `${String(x?.host ?? base.host ?? '').toLowerCase()}:${port(x)}`;
     const targetAddrs = new Set(targets.map(addr));
-    const list = [];
-    const baseUsable = Boolean(base?.enabled && typeof base?.host === 'string' && base.host.trim());
-    if (baseUsable && !targetAddrs.has(addr(base))) {
-      // Mark with an explicit name so the readout can distinguish the
-      // implicit main rig from named targets.
-      list.push({ ...base, name: base.name ?? 'main' });
-    }
-    for (const t of targets) list.push(t);
-    // Fallback: no usable base AND no targets → keep a single disabled
-    // entry so sharpcapAnyEnabled() / sharpcapArmedBodies() stay valid.
-    if (!list.length) list.push(base);
-    return list.map((t, i) => {
-      const merged = { ...base, ...t };
+    const out = [];
+    // Auto-promoted main: exists as long as a host is configured AND no
+    // target shadows it. Its on/off lives in base.enabled directly — so a
+    // disabled-but-configured main rig stays present but never fires.
+    const baseHasHost = typeof base?.host === 'string' && base.host.trim();
+    if (baseHasHost && !targetAddrs.has(addr(base))) {
+      const merged = { ...base };
       delete merged.targets;
-      return {
-        name: t.name ?? base.name ?? `rig-${i + 1}`,
+      out.push({
+        name: base.name ?? 'main',
         trigger: new SharpCapTrigger(merged, { logger }),
-      };
+      });
+    }
+    // Each target — independent enabled (default true unless explicitly
+    // set to false). Crucially, we OVERWRITE the merged.enabled so the
+    // base's enabled doesn't leak in via the spread.
+    targets.forEach((t, i) => {
+      const merged = { ...base, ...t, enabled: t.enabled !== false };
+      delete merged.targets;
+      out.push({
+        name: t.name ?? `rig-${i + 1}`,
+        trigger: new SharpCapTrigger(merged, { logger }),
+      });
     });
+    // Empty (no main, no targets) → keep a single disabled placeholder so
+    // sharpcapAnyEnabled() / sharpcapArmedBodies() stay well-defined.
+    if (!out.length) {
+      out.push({
+        name: base.name ?? 'main',
+        trigger: new SharpCapTrigger({ ...base, enabled: false }, { logger }),
+      });
+    }
+    return out;
   }
   let sharpcapTargets = buildSharpcapTargets();
   const sharpcapAnyEnabled = () => sharpcapTargets.some((t) => t.trigger.enabled);
@@ -696,6 +712,7 @@ export async function runService({
         // using the fields above.
         targets: (config.sharpcap.targets ?? []).map((t) => ({
           name: t.name ?? null,
+          enabled: t.enabled !== false,        // default true, only false when explicit
           host: t.host ?? '',
           port: t.port ?? config.sharpcap.port,
           bodies: t.bodies ?? config.sharpcap.bodies,
@@ -969,6 +986,12 @@ export async function runService({
             const v = Number(t.maxSepDeg);
             if (!Number.isFinite(v) || v <= 0 || v > 10) throw new Error(`sharpcap.targets[${i}].maxSepDeg must be > 0 and ≤ 10`);
           }
+          // v0.30.6: per-rig enabled. Strict boolean; absence implies
+          // "on" (a rig listed in targets[] without enabled is treated as
+          // enabled, matching the pre-v0.30.6 baseline behaviour).
+          if ('enabled' in t && typeof t.enabled !== 'boolean') {
+            throw new Error(`sharpcap.targets[${i}].enabled must be a boolean`);
+          }
           return { ...t, host: t.host.trim() };
         });
         config.sharpcap.targets = targets;
@@ -990,7 +1013,8 @@ export async function runService({
         maxSepDeg: config.sharpcap.maxSepDeg,
         bodies: config.sharpcap.bodies,
         targets: (config.sharpcap.targets ?? []).map((t) => ({
-          name: t.name ?? null, host: t.host, port: t.port ?? config.sharpcap.port,
+          name: t.name ?? null, enabled: t.enabled !== false,
+          host: t.host, port: t.port ?? config.sharpcap.port,
           bodies: t.bodies ?? config.sharpcap.bodies, hasToken: Boolean(t.token ?? config.sharpcap.token),
         })),
         notifyOnTrigger: config.sharpcap.notifyOnTrigger,
