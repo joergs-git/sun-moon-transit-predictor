@@ -582,15 +582,20 @@ function renderIssPass(iss) {
 function renderTotalLive(state) {
   const section = document.getElementById('total-live-section');
   if (!section) return;
-  const lifecycle = Array.isArray(state.lifecycle) ? state.lifecycle : [];
-  const hasActive = lifecycle.some((e) =>
-    e.status === 'radio' || e.status === 'candidate' || e.status === 'imminent',
-  );
-  // A pinned row means the user explicitly asked to keep looking at it,
-  // so the plan/side/airframe cells should stay up even when nothing else
-  // is active. typeof check stays cheap if pin is still in TDZ at load.
+  // Show the totalLive panel whenever the right column would otherwise be
+  // empty — i.e. when there is NO content for FOV / plan / side / airframe
+  // to display. That's exactly the condition refreshFovPane uses to render
+  // something: either an explicit pin OR an auto-pickable entry (a live
+  // candidate with closestApproachSepDeg < FOV_NEAR_DEG and usable
+  // geometry). A bare "radio" / faraway entry does NOT trigger the FOV
+  // stack, so the totalLive panel stays visible alongside it — matches the
+  // user's expectation that the list is up "whenever no FOV / plane view
+  // etc. is shown".
   const isPinned = typeof pin !== 'undefined' && pin != null;
-  if (hasActive || isPinned) {
+  const auto = typeof pickAutoEntry === 'function'
+    ? pickAutoEntry(Array.isArray(state.lifecycle) ? state.lifecycle : [])
+    : null;
+  if (isPinned || auto) {
     section.hidden = true;
     return;
   }
