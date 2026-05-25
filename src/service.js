@@ -682,6 +682,9 @@ export async function runService({
         port: config.sharpcap.port,
         preBufferS: config.sharpcap.preBufferS,
         postBufferS: config.sharpcap.postBufferS,
+        leadDriftFrac: config.sharpcap.leadDriftFrac,
+        maxDriftS: config.sharpcap.maxDriftS,
+        maxCaptureS: config.sharpcap.maxCaptureS,
         triggerOnStage: config.sharpcap.triggerOnStage,
         minElevationDeg: config.sharpcap.minElevationDeg,
         maxSepDeg: config.sharpcap.maxSepDeg,
@@ -910,6 +913,24 @@ export async function runService({
         if (!Number.isFinite(v) || v <= 0 || v > 10) throw new Error('sharpcap.maxSepDeg must be > 0 and ≤ 10');
         config.sharpcap.maxSepDeg = v;
       }
+      // Drift-window knobs (v0.30.4 — exposed in Settings). 0 disables the
+      // drift pad; the recording window is then exactly preBuffer +
+      // postBuffer around the predicted closest approach.
+      if ('leadDriftFrac' in s) {
+        const v = Number(s.leadDriftFrac);
+        if (!Number.isFinite(v) || v < 0 || v > 2) throw new Error('sharpcap.leadDriftFrac must be 0 ≤ x ≤ 2');
+        config.sharpcap.leadDriftFrac = v;
+      }
+      if ('maxDriftS' in s) {
+        const v = Number(s.maxDriftS);
+        if (!Number.isFinite(v) || v < 0) throw new Error('sharpcap.maxDriftS must be ≥ 0');
+        config.sharpcap.maxDriftS = v;
+      }
+      if ('maxCaptureS' in s) {
+        const v = Number(s.maxCaptureS);
+        if (!Number.isFinite(v) || v <= 0 || v > 120) throw new Error('sharpcap.maxCaptureS must be > 0 and ≤ 120 (listener hard cap)');
+        config.sharpcap.maxCaptureS = v;
+      }
       if ('bodies' in s) {
         // Single-body selection from the UI ('Sun' | 'Moon'); a one scope can
         // only track one disc at a time. Accept an array or a bare string.
@@ -961,6 +982,9 @@ export async function runService({
         port: config.sharpcap.port,
         preBufferS: config.sharpcap.preBufferS,
         postBufferS: config.sharpcap.postBufferS,
+        leadDriftFrac: config.sharpcap.leadDriftFrac,
+        maxDriftS: config.sharpcap.maxDriftS,
+        maxCaptureS: config.sharpcap.maxCaptureS,
         triggerOnStage: config.sharpcap.triggerOnStage,
         minElevationDeg: config.sharpcap.minElevationDeg,
         maxSepDeg: config.sharpcap.maxSepDeg,

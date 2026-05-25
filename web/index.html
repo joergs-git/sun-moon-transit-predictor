@@ -501,16 +501,25 @@
           <label class="checkbox-row">
             <input name="sharpcap.enabled" type="checkbox"> Enabled
             <small class="field-hint">When an imminent transit is detected, tell a SharpCap listener on a Windows PC to start recording. See scripts/sharpcap/ for the Windows-side install.</small></label>
+          <label class="checkbox-row">
+            <input name="sharpcap.notifyOnTrigger" type="checkbox"> Push on trigger
+            <small class="field-hint">Send a Pushover with flight, separation, ETA and the −pre/+post window whenever a capture is armed.</small></label>
           <label>Windows host<input name="sharpcap.host" type="text" autocomplete="off" spellcheck="false" placeholder="192.168.1.42 or sharpcap-pc">
             <small class="field-hint">IP address or hostname of the PC running SharpCap with the trigger listener.</small></label>
           <label>Port<input name="sharpcap.port" type="number" step="1" min="1" max="65535" placeholder="9999">
             <small class="field-hint">Listener TCP port (default 9999). Must match the Windows config.</small></label>
           <label>Pre-roll (s)<input name="sharpcap.preBufferS" type="number" step="any" min="0">
-            <small class="field-hint">Start recording this many seconds <b>before</b> the predicted transit. Default 10.</small></label>
+            <small class="field-hint">Start recording this many seconds <b>before</b> the predicted closest approach. Default 5.</small></label>
           <label>Post-roll (s)<input name="sharpcap.postBufferS" type="number" step="any" min="0">
-            <small class="field-hint">Keep recording this many seconds <b>after</b> the predicted transit. Default 10.</small></label>
+            <small class="field-hint">Keep recording this many seconds <b>after</b> the predicted closest approach. Default 15.</small></label>
+          <label>Lead drift fraction<input name="sharpcap.leadDriftFrac" type="number" step="any" min="0" max="2">
+            <small class="field-hint">Extra symmetric pad that scales with how early we armed: <code>drift = min(leadSeconds × this, Max drift s)</code>. Default <b>0.5</b> — at 60 s lead → ±30 s. The closest-approach <i>time</i> prediction can drift as ADS-B fixes arrive, so the recording window widens proportionally so the transit doesn't fall outside the clip. <b>Set to 0 to disable</b> — Pre/Post-roll above is then the entire window. Cheaper but you must size Pre/Post generously to absorb prediction wobble (a manoeuvring jet at long lead can drift 20–40 s).</small></label>
+          <label>Max drift (s)<input name="sharpcap.maxDriftS" type="number" step="any" min="0">
+            <small class="field-hint">Hard cap on the symmetric drift pad above. Default <b>45 s</b> — at 90 s lead the cap kicks in instead of the fraction. Set to 0 with Lead drift fraction = 0 to completely flatten the window to Pre+Post.</small></label>
+          <label>Max clip (s)<input name="sharpcap.maxCaptureS" type="number" step="any" min="1" max="120">
+            <small class="field-hint">Hard ceiling on total clip length (Pre + Post + 2 × drift). Default <b>115 s</b> — keeps the request safely under the Windows-side listener's 120 s cap. Raise only if you've also raised <code>MAX_DURATION_S</code> in the listener config.</small></label>
           <label>Min elevation °<input name="sharpcap.minElevationDeg" type="number" step="any" min="0" max="90">
-            <small class="field-hint">Don't trigger when the target is below this (telescope can't see it). 0 = off.</small></label>
+            <small class="field-hint">Don't trigger when the target is below this (telescope can't see it). 0 = off. <b>Default for all rigs</b> — each rig in the list below inherits this unless its row overrides it.</small></label>
           <label>Max sep °<input name="sharpcap.maxSepDeg" type="number" step="any" min="0" max="10">
             <small class="field-hint">Projected angular separation below which the <b>main</b> rig (this Host/Port) arms a capture. <b>Default 0.5°</b> — a near-certain on-disc transit at the Sun/Moon disc radius (~0.27°) plus a safety margin. Long focal length wants this smaller (e.g. 0.2°); widefield can go larger (e.g. 1–2°). Each rig in the list below has its own <b>sep °</b> — those override this value. Tracker <i>Panel band °</i> auto-widens to the largest sep across all rigs so nothing gets filtered out before arming.</small></label>
           <label>Trigger body
@@ -519,9 +528,6 @@
               <option value="Moon">🌙 Moon</option>
             </select>
             <small class="field-hint">Which disc to record. One scope can only track one at a time, so this is Sun <b>or</b> Moon — not both.</small></label>
-          <label class="checkbox-row">
-            <input name="sharpcap.notifyOnTrigger" type="checkbox"> Push on trigger
-            <small class="field-hint">Send a Pushover with flight, separation, ETA and the −pre/+post window whenever a capture is armed.</small></label>
           <div class="checkbox-row">
             <button type="button" id="sharpcap-test-btn" class="btn">Test trigger (2 s)</button>
             <small id="sharpcap-test-msg" class="field-hint">Fires an immediate 2 s capture using the host/port above (no save needed).</small>
