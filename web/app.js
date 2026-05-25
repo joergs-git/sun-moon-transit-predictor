@@ -581,24 +581,23 @@ function renderIssPass(iss) {
 // visually replaces both the sketch and the plan/side/airframe stack.
 function renderTotalLive(state) {
   const section = document.getElementById('total-live-section');
-  const fovSection = document.getElementById('fov-section');
-  if (!section || !fovSection) return;
+  if (!section) return;
   const lifecycle = Array.isArray(state.lifecycle) ? state.lifecycle : [];
   const hasActive = lifecycle.some((e) =>
     e.status === 'radio' || e.status === 'candidate' || e.status === 'imminent',
   );
-  // A pinned row means the user explicitly asked to keep looking at it, so
-  // we keep the FOV stack up even when nothing else is active. typeof pin
-  // check stays cheap even if the variable hasn't been declared yet.
+  // A pinned row means the user explicitly asked to keep looking at it,
+  // so the plan/side/airframe cells should stay up even when nothing else
+  // is active. typeof check stays cheap if pin is still in TDZ at load.
   const isPinned = typeof pin !== 'undefined' && pin != null;
   if (hasActive || isPinned) {
     section.hidden = true;
-    fovSection.hidden = false;
     return;
   }
-  // Idle: take over.
+  // Idle: take over the .top-right column. The fov-map/fov-side/fov-acinfo
+  // cells are already self-hidden whenever there's no active/pinned data,
+  // so showing this section visually replaces them in place.
   section.hidden = false;
-  fovSection.hidden = true;
   const rows = Array.isArray(state.totalLive) ? state.totalLive : [];
   const tbody = section.querySelector('tbody');
   if (!tbody) return;

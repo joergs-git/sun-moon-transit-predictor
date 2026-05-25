@@ -400,31 +400,31 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
 .top-left > section,
 .top-right > section { margin: 0; }
 
-/* Total live trackings: full-width sibling of .top-left / .top-right that
-   only shows while no real candidate is in flight. Spans the whole top-row
-   grid so it visually replaces both the FOV preview and the plan/side/
-   airframe stack. Compact font because the user asked for a single
-   eight-column row of everything in the sky. */
-.total-live-section {
-  grid-column: 1 / -1;
-  margin: 0;
-}
+/* Total live trackings: sits INSIDE .top-right, parallel to sky-now/
+   detect/fov on the left. Replaces plan/side/airframe while no real
+   candidate is in flight. Column is narrow (min ~280 px) so the table
+   uses a small font + tight padding — the user explicitly OK'd this in
+   exchange for keeping the table in the right column instead of stealing
+   a full-width row below the page header. */
+.total-live-section { margin: 0; }
+.total-live-section .table-scroll { overflow-x: auto; }
 .total-live-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 11px;
 }
 .total-live-table th,
 .total-live-table td {
-  padding: 4px 8px;
+  padding: 3px 5px;
   text-align: left;
   border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
   white-space: nowrap;
 }
+.total-live-table th { font-size: 10px; opacity: 0.75; font-weight: 500; }
 .total-live-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
 .total-live-table .sep-cell { font-weight: 600; }
-.total-live-table .empty { text-align: center; color: #888; font-style: italic; }
-.total-live-table .body-icon { opacity: 0.7; margin-left: 4px; }
+.total-live-table .empty { text-align: center; color: #888; font-style: italic; padding: 10px; }
+.total-live-table .body-icon { opacity: 0.7; margin-left: 3px; }
 
 /* FOV preview panel. Same panel chrome as the tables so the page reads as
    one surface; SVG inside scales to the panel width. The fov-mode pill in

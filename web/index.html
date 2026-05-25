@@ -106,40 +106,39 @@
     </div>
     <aside class="top-right">
       <!-- RIGHT column: plan/side/airframe cells parallel to the left
-           column. Each hides itself when empty. -->
+           column. Each hides itself when empty. While no real candidate is
+           in flight, the #total-live-section below takes over this whole
+           column with a single compact table of every aircraft in range
+           sorted by current SEP — so the user always sees what's in the
+           sky and how close each contact is. -->
       <div id="fov-map" class="fov-aux-cell" hidden></div>
       <div id="fov-side" class="fov-aux-cell" hidden></div>
       <div id="fov-acinfo" class="fov-aux-right" hidden></div>
+      <section id="total-live-section" class="total-live-section" hidden>
+        <h2>
+          Total live trackings
+          <span class="th-sub">all in range · sorted by SEP</span>
+        </h2>
+        <p class="hint">Everything dump1090 currently sees, with each contact's current angular distance to the nearest body. Replaced by the FOV preview as soon as a real tracking starts.</p>
+        <div class="table-scroll">
+          <table id="total-live-table" class="total-live-table">
+            <thead>
+              <tr>
+                <th title="Current angular separation between this aircraft and the nearest observable body (Sun or Moon).">SEP</th>
+                <th>Flight</th>
+                <th>ICAO</th>
+                <th title="Origin → destination from the routes database (when available).">Route</th>
+                <th title="Slant range from observer to aircraft.">Dist</th>
+                <th title="Altitude MSL.">Alt</th>
+                <th title="Ground speed.">km/h</th>
+                <th title="Aircraft ground-track bearing (compass heading).">Brg</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
     </aside>
-    <!-- Total live trackings: takes over the FOV/plan/side area while no
-         real candidate is in flight, so the user always sees what's in the
-         sky right now and how far each contact is from the Sun/Moon.
-         Hidden the moment a radio/candidate/imminent row appears or a row
-         is pinned; restored when everything goes back to stale/empty. -->
-    <section id="total-live-section" class="total-live-section" hidden>
-      <h2>
-        Total live trackings
-        <span class="th-sub">all aircraft in range, sorted by current angular distance</span>
-      </h2>
-      <p class="hint">Everything dump1090 currently sees, with each contact's current angular distance to the nearest body. Shown while no FOV candidate is being followed; replaced by the preview as soon as a real tracking starts.</p>
-      <div class="table-scroll">
-        <table id="total-live-table" class="total-live-table">
-          <thead>
-            <tr>
-              <th title="Current angular separation between this aircraft and the nearest observable body (Sun or Moon).">SEP</th>
-              <th>Flight</th>
-              <th>ICAO</th>
-              <th title="Origin → destination from the routes database (when available).">Route</th>
-              <th title="Slant range from observer to aircraft.">Distance</th>
-              <th title="Altitude MSL.">Altitude</th>
-              <th title="Ground speed.">km/h</th>
-              <th title="Aircraft ground-track bearing (compass heading).">Bearing</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
   </div>
   <div id="fov-specs" class="fov-specs" hidden></div>
 
