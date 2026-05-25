@@ -511,6 +511,8 @@
             <small class="field-hint">Keep recording this many seconds <b>after</b> the predicted transit. Default 10.</small></label>
           <label>Min elevation °<input name="sharpcap.minElevationDeg" type="number" step="any" min="0" max="90">
             <small class="field-hint">Don't trigger when the target is below this (telescope can't see it). 0 = off.</small></label>
+          <label>Max sep °<input name="sharpcap.maxSepDeg" type="number" step="any" min="0" max="10">
+            <small class="field-hint">Projected angular separation below which the <b>main</b> rig (this Host/Port) arms a capture. <b>Default 0.5°</b> — a near-certain on-disc transit at the Sun/Moon disc radius (~0.27°) plus a safety margin. Long focal length wants this smaller (e.g. 0.2°); widefield can go larger (e.g. 1–2°). Each rig in the list below has its own <b>sep °</b> — those override this value. Tracker <i>Panel band °</i> auto-widens to the largest sep across all rigs so nothing gets filtered out before arming.</small></label>
           <label>Trigger body
             <select name="sharpcap.body">
               <option value="Sun">☀ Sun</option>
