@@ -206,6 +206,14 @@ export function updateLifecycle({
   //
   // staleGraceMs = 0 keeps the legacy behaviour: stale entries persist
   // until the cap below evicts them (oldest stale first).
+  // Build a set of icaos still present in the current ADS-B snapshot so we
+  // can tell "tracker dropped this BUT dump1090 still sees the plane" (the
+  // projected path moved out of band → 'faded') apart from "dump1090 lost
+  // the plane entirely" (no more squitters → 'lost-signal').
+  const liveIcaos = new Set();
+  if (Array.isArray(liveAircraft)) {
+    for (const ac of liveAircraft) if (ac?.icao) liveIcaos.add(ac.icao);
+  }
   for (const [key, prevEntry] of prev) {
     if (touched.has(key)) continue;
     // Don't downgrade a 'planned' entry — planned entries are forecast-only
@@ -224,10 +232,29 @@ export function updateLifecycle({
       continue;
     }
     if (staleGraceMs > 0 && ageMs > staleGraceMs) continue;
+    // Why did this go stale? Categorise so the UI can say WHY instead of a
+    // blanket "stale" badge:
+    //   past-eta    — predicted closest is already in the past; the transit
+    //                 window has come and gone (whether the flight actually
+    //                 crossed or not).
+    //   lost-signal — the airframe is no longer in dump1090's aircraft.json
+    //                 (transponder off, out of receiver range, switched off
+    //                 the squawk).
+    //   faded       — still in dump1090 but the projected min-sep moved
+    //                 outside the panel band, i.e. the flight changed track
+    //                 / altitude and no longer threatens a transit.
+    let staleReason = 'faded';
+    if (Number.isFinite(prevEntry.closestApproachAtMs)
+        && prevEntry.closestApproachAtMs + imminentWindowMs < nowMs) {
+      staleReason = 'past-eta';
+    } else if (prevEntry.icao && !liveIcaos.has(prevEntry.icao)) {
+      staleReason = 'lost-signal';
+    }
     next.set(key, {
       ...prevEntry,
       status: 'stale',
       coasting: false,
+      staleReason,
       lastUpdateMs: prevEntry.lastUpdateMs,
     });
   }

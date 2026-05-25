@@ -127,7 +127,11 @@
         <li><span class="status status-radio">📡 radio</span> in ADS-B range, projected to pass within the panel band (≤ 2°) of the body — early-warning.</li>
         <li><span class="status status-candidate">✈️ candidate</span> projected to pass within 0.3° (tight transit band); camera-prep.</li>
         <li><span class="status status-imminent">🎯 imminent</span> closest approach within ±30 s; press the shutter.</li>
-        <li><span class="status status-stale">❌ stale</span> contact lost — held while coasting through a brief gap, then ≤ 30 min before it drops.</li>
+        <li><span class="status status-stale">❌ stale</span> tracking ended — the row carries the WHY beside the badge:
+          <b>past ETA</b> (the predicted closest moment is over),
+          <b>lost signal</b> (no more squitters from this aircraft),
+          <b>faded</b> (still in dump1090 but the projected min-sep moved out of the panel band).
+          Stale rows leave the live panel 5 min after their ETA and reappear in History.</li>
       </ul>
     </details>
     <table id="tracking">
@@ -169,7 +173,7 @@
           <th title="Predicted closest-approach time — the camera-ready moment for this transit.">Transit<span class="th-sub">crossing clock</span></th>
           <th title="Wall-clock time of the FIRST stage that fired for this transit. The recorded-vs-transit gap shows how much advance warning the pipeline gave.">Recorded<span class="th-sub">first detection</span></th>
           <th title="Lead time = Transit - Recorded. How early the pipeline saw the transit coming. Big lead = good early detection.">Lead<span class="th-sub">Transit − Recorded</span></th>
-          <th title="Angular separation. Confirmed (from the imminent ±30 s stage) = what actually happened. Predicted (struck through) = a candidate prediction that never reached imminent — the flight diverged before the ETA.">Sep<span class="th-sub">confirmed / predicted</span></th>
+          <th title="Closest angular separation — the actual minimum distance the aircraft reached from the body disc. Confirmed (from the imminent ±30 s stage) = what really happened. Predicted (struck through) = a candidate-stage prediction that never reached imminent (the flight diverged before its ETA).">Sep<span class="th-sub">closest · confirmed / predicted</span></th>
           <th title="Highest stage reached for this transit: radio (early-warning, panel band ≤2°), candidate (tight band, ≤0.3°), or imminent (±30 s = time-confirmed).">Stage<span class="th-sub">highest reached</span></th>
           <th title="✅ confirmed = reached the imminent ±30 s window (really happened). ⚠️ predicted = candidate predicted but never confirmed (flight left/diverged before the ETA — same case that goes 'stale' in Live tracking). ➖ faded = only radio fired, never tightened.">Outcome<span class="th-sub">episode result</span></th>
           <th title="Line-of-sight distance from the observer to the aircraft at closest approach.">Dist<span class="th-sub">at closest</span></th>

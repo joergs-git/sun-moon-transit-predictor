@@ -252,6 +252,21 @@ const STATUS_LABELS = {
   imminent:  { icon: '🎯', label: 'imminent' },
   stale:     { icon: '❌', label: 'stale' },
 };
+// Concrete reason WHY a row went stale — set by the lifecycle. The plain
+// "stale" badge hid this: a row could be stale because the transit is over
+// (past-eta), because the receiver lost the squitter (lost-signal), or
+// because the projection no longer threatens a transit (faded). Each tells
+// a different story; the UI shows the reason next to the badge.
+const STALE_REASON_LABELS = {
+  'past-eta':    { short: 'past ETA',    tip: 'Predicted closest approach already passed; the transit window has gone (whether the flight actually crossed or not).' },
+  'lost-signal': { short: 'lost signal', tip: 'No more squitters from this aircraft — transponder off, out of receiver range, or it left coverage.' },
+  'faded':       { short: 'faded',       tip: 'Still in dump1090 but the projected min-sep moved outside the panel band — won\'t transit.' },
+};
+// Hand-off Live → History. A row leaves the live-tracking panel once its
+// predicted closest is more than this long in the past, and shows up in
+// History only past the same threshold. Net effect: no double display, the
+// row visibly migrates downward to History on its own.
+const LIVE_GRACE_AFTER_ETA_MS = 5 * 60_000;
 
 function renderTracking(state) {
   const tbody = $('#tracking tbody');
@@ -281,7 +296,12 @@ function renderTracking(state) {
     }
     return;
   }
+  let rowsRendered = 0;
   for (const [i, e] of rows.entries()) {
+    // Hand-off to History: once the predicted closest is older than the
+    // grace, the row moves out of the live panel and into History (which
+    // applies the inverse filter). Future + within-grace rows stay here.
+    if (Number.isFinite(e.etaMs) && -e.etaMs > LIVE_GRACE_AFTER_ETA_MS) continue;
     const tr = document.createElement('tr');
     const iss = e.isISS === true || e.icao === 'ISS';
     tr.className = `row-${e.status} sketchable${liveRowQuality(e)}${iss ? ' row-iss' : ''}`;
@@ -292,6 +312,16 @@ function renderTracking(state) {
     // into thinking it's an aircraft. Use the 🛰 satellite symbol for the
     // status icon regardless of stage; the label text still says the stage.
     const meta = iss ? { icon: '🛰', label: baseMeta.label } : baseMeta;
+    // For stale rows, append the concrete reason from the lifecycle so the
+    // user sees WHY (past ETA / lost signal / faded) instead of a blanket
+    // "stale". Tooltip explains each.
+    let statusLabel = meta.label;
+    let statusTip = meta.label;
+    if (e.status === 'stale' && e.staleReason && STALE_REASON_LABELS[e.staleReason]) {
+      const r = STALE_REASON_LABELS[e.staleReason];
+      statusLabel = `stale · ${r.short}`;
+      statusTip = `Stale — ${r.tip}`;
+    }
     const eta = e.etaMs > 0 ? fmtCountdownLong(e.etaMs)
               : Math.abs(e.etaMs) < 60_000 ? 'now'
               : `−${fmtCountdownLong(-e.etaMs)}`;
@@ -303,7 +333,7 @@ function renderTracking(state) {
     tr.innerHTML = `
       ${visCell(elDeg, isArmed(e.icao, e.body, e.closestApproachAtMs))}
       <td class="body-${e.body} td-icon" title="${e.body}">${bodyIcon}</td>
-      <td><span class="status status-${e.status}" title="${meta.label}">${meta.icon} ${meta.label}</span></td>
+      <td><span class="status status-${e.status}" title="${statusTip}">${meta.icon} ${statusLabel}</span></td>
       <td>${eta}</td>
       <td>${fmtTime(e.closestApproachAtMs)}</td>
       <td>${e.closestApproachSepDeg !== null ? fmtSep(e.closestApproachSepDeg) : '—'}</td>
@@ -417,11 +447,17 @@ function renderHistory(events) {
     return;
   }
 
+  // Live → History hand-off: skip events whose predicted closest is still
+  // inside the grace window — they are owned by the live-tracking table.
+  // This eliminates the "same flight in both tables" effect; a row visibly
+  // migrates from Live down to History once it crosses the threshold.
+  const handoffCutoff = Date.now() - LIVE_GRACE_AFTER_ETA_MS;
   const cutoff = recentCutoffMs();
   const recent = [];
   const older = [];
   lastHistory.forEach((e, i) => {
     const t = e.closest_at_ms ?? e.recorded_at_ms;
+    if (Number.isFinite(t) && t > handoffCutoff) return;     // still in Live panel
     (Number.isFinite(t) && t >= cutoff ? recent : older).push([i, e]);
   });
 
