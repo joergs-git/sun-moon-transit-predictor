@@ -57,6 +57,41 @@ const DEFAULT_REARM_SHIFT_S = 12;
  * @property {string[]} [bodies]           - which bodies to record (default Sun + Moon)
  */
 
+/**
+ * Pull a compact human-readable metadata bundle out of a tracker candidate.
+ * Shipped alongside the trigger payload so the SharpCap-side listener can
+ * print provenance to its scripting console AND append a structured line to
+ * its persistent logfile — answers "what was this clip OF?" months later.
+ * All fields are optional; the listener tolerates a missing meta entirely
+ * (backward compatible with pre-v0.30 servers).
+ */
+function buildTriggerMeta(c) {
+  if (!c) return undefined;
+  const meta = {};
+  if (c.callsign) meta.flight = String(c.callsign).trim().toUpperCase();
+  if (c.icao) meta.icao = String(c.icao).toUpperCase();
+  if (c.body) meta.body = c.body;
+  if (Number.isFinite(c.closestApproachSepDeg)) meta.sepDeg = c.closestApproachSepDeg;
+  if (Number.isFinite(c.closestApproachAtMs)) meta.closestAtMs = c.closestApproachAtMs;
+  const r = c.route;
+  if (r) {
+    if (r.airline?.name || r.airline?.iata) meta.airline = r.airline?.name ?? r.airline?.iata;
+    const oCode = r.origin?.iata ?? r.origin?.icao;
+    const dCode = r.destination?.iata ?? r.destination?.icao;
+    if (oCode) meta.origin = oCode;
+    if (dCode) meta.destination = dCode;
+  }
+  const ac = c.aircraftAtClosest;
+  if (ac) {
+    if (Number.isFinite(ac.altMmsl)) meta.altMmsl = ac.altMmsl;
+    if (Number.isFinite(ac.elevationDeg)) meta.elevationDeg = ac.elevationDeg;
+    if (Number.isFinite(ac.azimuthDeg)) meta.azimuthDeg = ac.azimuthDeg;
+  }
+  if (Number.isFinite(c.groundSpeedMs)) meta.groundSpeedMs = c.groundSpeedMs;
+  if (Number.isFinite(c.trackDeg)) meta.trackDeg = c.trackDeg;
+  return Object.keys(meta).length > 0 ? meta : undefined;
+}
+
 export class SharpCapTrigger {
   /**
    * @param {SharpCapConfig} config
@@ -135,6 +170,8 @@ export class SharpCapTrigger {
 
     const payload = { label: key, preRollS, durationS };
     if (this.config.token) payload.token = this.config.token;
+    const meta = buildTriggerMeta(c);
+    if (meta) payload.meta = meta;
 
     const result = await this._sendPayload(payload);
     if (result.sent) this.lastTriggered.set(key, nowMs);
@@ -230,6 +267,8 @@ export class SharpCapTrigger {
     const durationS = Math.max(1, Math.min(preBufferS + postBufferS + 2 * driftS, maxCaptureS));
     const payload = { label: key, preRollS, durationS };
     if (this.config.token) payload.token = this.config.token;
+    const meta = buildTriggerMeta(c);
+    if (meta) payload.meta = meta;
 
     // Claim the dedup slot BEFORE the await so two ticks in the same window
     // can't both fire; release it on failure so the next tick retries (the

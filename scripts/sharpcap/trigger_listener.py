@@ -543,6 +543,59 @@ def _handle_conn(conn, addr):
         capture_id = "{}+{}".format(label, int(time.time()))
         _log("accept from {}: {!r} preRoll={:.2f}s duration={:.2f}s".format(
             addr, label, pre_roll_s, duration_s))
+
+        # Optional metadata bundle from the predictor (v0.30.0+). Logged as
+        # a second human-readable line under the accept; answers "what was
+        # this capture OF?" later when browsing the listener logfile. ASCII
+        # only to stay safe across SharpCap console encodings (no degree
+        # sign, no arrow glyphs).
+        meta = req.get("meta") if isinstance(req.get("meta"), dict) else None
+        if meta:
+            parts = []
+            flight = meta.get("flight")
+            icao = meta.get("icao")
+            body = meta.get("body")
+            sep = meta.get("sepDeg")
+            origin = meta.get("origin")
+            destination = meta.get("destination")
+            airline = meta.get("airline")
+            closest_at_ms = meta.get("closestAtMs")
+            alt_m = meta.get("altMmsl")
+            gs_ms = meta.get("groundSpeedMs")
+            track_deg = meta.get("trackDeg")
+            el_deg = meta.get("elevationDeg")
+            az_deg = meta.get("azimuthDeg")
+            if flight: parts.append("flight=" + str(flight))
+            if icao: parts.append("ICAO=" + str(icao))
+            if airline: parts.append("airline=" + str(airline))
+            if body: parts.append("body=" + str(body))
+            if origin or destination:
+                parts.append("route={}->{}".format(origin or "?", destination or "?"))
+            if sep is not None:
+                try: parts.append("sep={:.3f}deg".format(float(sep)))
+                except Exception: pass
+            if closest_at_ms is not None:
+                try:
+                    secs = float(closest_at_ms) / 1000.0
+                    parts.append("closestAt=" + time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(secs)))
+                except Exception: pass
+            if alt_m is not None:
+                try: parts.append("alt={:.0f}m".format(float(alt_m)))
+                except Exception: pass
+            if gs_ms is not None:
+                try: parts.append("gs={:.0f}km/h".format(float(gs_ms) * 3.6))
+                except Exception: pass
+            if track_deg is not None:
+                try: parts.append("track={:.0f}deg".format(float(track_deg)))
+                except Exception: pass
+            if el_deg is not None or az_deg is not None:
+                try:
+                    el_str = "{:.1f}".format(float(el_deg)) if el_deg is not None else "?"
+                    az_str = "{:.1f}".format(float(az_deg)) if az_deg is not None else "?"
+                    parts.append("azel={}/{}deg".format(az_str, el_str))
+                except Exception: pass
+            if parts:
+                _log("meta  {!r}: {}".format(label, " ".join(parts)))
         try:
             conn.sendall(("{\"ok\": true, \"captureId\": \"" + capture_id + "\"}\n").encode("utf-8"))
         except Exception:
