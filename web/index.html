@@ -111,11 +111,40 @@
       <div id="fov-side" class="fov-aux-cell" hidden></div>
       <div id="fov-acinfo" class="fov-aux-right" hidden></div>
     </aside>
+    <!-- Total live trackings: takes over the FOV/plan/side area while no
+         real candidate is in flight, so the user always sees what's in the
+         sky right now and how far each contact is from the Sun/Moon.
+         Hidden the moment a radio/candidate/imminent row appears or a row
+         is pinned; restored when everything goes back to stale/empty. -->
+    <section id="total-live-section" class="total-live-section" hidden>
+      <h2>
+        Total live trackings
+        <span class="th-sub">all aircraft in range, sorted by current angular distance</span>
+      </h2>
+      <p class="hint">Everything dump1090 currently sees, with each contact's current angular distance to the nearest body. Shown while no FOV candidate is being followed; replaced by the preview as soon as a real tracking starts.</p>
+      <div class="table-scroll">
+        <table id="total-live-table" class="total-live-table">
+          <thead>
+            <tr>
+              <th title="Current angular separation between this aircraft and the nearest observable body (Sun or Moon).">SEP</th>
+              <th>Flight</th>
+              <th>ICAO</th>
+              <th title="Origin → destination from the routes database (when available).">Route</th>
+              <th title="Slant range from observer to aircraft.">Distance</th>
+              <th title="Altitude MSL.">Altitude</th>
+              <th title="Ground speed.">km/h</th>
+              <th title="Aircraft ground-track bearing (compass heading).">Bearing</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
   </div>
   <div id="fov-specs" class="fov-specs" hidden></div>
 
   <section>
-    <h2>LIVE-TRACKING-SIGNALS</h2>
+    <h2>Real candidates</h2>
     <p class="hint">
       Unified list, sorted by urgency. Status transitions in real time as
       flights are detected, projected, and either confirmed or dropped:
@@ -416,7 +445,7 @@
             <small class="field-hint">How far ahead each aircraft is projected. <b>900 = 15 min</b> (default): catches flights as they enter ADS-B range. Higher = earlier warning but more "faded" false alarms (linear projection degrades past ~10 min). Range 10–1800 s.</small></label>
           <label>
             Panel band °<input name="tracker.looseThresholdDeg" type="number" step="any" min="0.1">
-            <small class="field-hint">Max projected separation for a flight to appear in LIVE-TRACKING-SIGNALS at all (= the <i>radio</i> band). <b>Default 2°</b>; wider = more rows / noise.</small></label>
+            <small class="field-hint">Max projected separation for a flight to appear in Real candidates at all (= the <i>radio</i> band). <b>Default 2°</b>; wider = more rows / noise.</small></label>
           <label>
             Tight band °<input name="tracker.thresholdDeg" type="number" step="any" min="0.05">
             <small class="field-hint">≤ this counts as a real transit ("candidate"). Sun/Moon disc radius ≈ 0.27°, so <b>0.3°</b> (default) ≈ a graze. Must be ≤ Panel band.</small></label>

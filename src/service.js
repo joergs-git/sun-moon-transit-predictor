@@ -17,7 +17,13 @@ const PKG_VERSION = (() => {
 import { fetchAircraft } from './adsb.js';
 import { RouteLookup, AircraftLookup } from './adsbdb.js';
 import { AirnavClient } from './airnav.js';
-import { bodyAzEl, isObservable } from './geometry.js';
+import {
+  aircraftAzElFromObsEcef,
+  angularSeparationDeg,
+  bodyAzEl,
+  isObservable,
+  observerEcef,
+} from './geometry.js';
 import { lifecycleArray, updateLifecycle } from './lifecycle.js';
 import { Notifier } from './notifier.js';
 import {
@@ -1104,6 +1110,66 @@ export async function runService({
       return { ...c, route };
     }));
     state.candidates = enriched;
+
+    // ── Total live trackings ────────────────────────────────────────────────
+    // Per-tick snapshot of EVERY tracked aircraft's current angular distance
+    // to the nearest observable body (Sun/Moon). Powers the "Total live
+    // trackings" panel that fills the FOV-preview area when no real
+    // candidate is being followed. Cheap: O(aircraft × bodies), all done
+    // from already-fetched ADS-B fixes without the heavy track integration
+    // the tracker does for transit prediction.
+    const obsEcef = observerEcef(observer);
+    const undulationM = observer.geoidUndulationM ?? config.tracker.geoidUndulationM ?? 0;
+    const bodyAzEls = [];
+    for (const [name, body] of Object.entries(state.bodies)) {
+      if (!body) continue;
+      if (!Number.isFinite(body.azimuthDeg) || !Number.isFinite(body.elevationDeg)) continue;
+      bodyAzEls.push({ name, azimuthDeg: body.azimuthDeg, elevationDeg: body.elevationDeg });
+    }
+    const totalLive = [];
+    for (const ac of aircraft) {
+      if (!Number.isFinite(ac.lat) || !Number.isFinite(ac.lon) || !Number.isFinite(ac.altMmsl)) continue;
+      // Same HAE conversion the tracker uses: alt_baro adds geoid N, alt_geom
+      // is already ellipsoidal.
+      const altHae = ac.altSource === 'barometric'
+        ? ac.altMmsl + undulationM
+        : ac.altMmsl;
+      const azEl = aircraftAzElFromObsEcef(
+        obsEcef, observer.latitudeDeg, observer.longitudeDeg,
+        ac.lat, ac.lon, altHae,
+      );
+      let best = null;
+      for (const b of bodyAzEls) {
+        const sep = angularSeparationDeg(azEl, b);
+        if (!best || sep < best.sepDeg) best = { body: b.name, sepDeg: sep };
+      }
+      if (!best) continue;
+      totalLive.push({
+        icao: ac.icao,
+        callsign: ac.callsign,
+        body: best.body,
+        sepDeg: best.sepDeg,
+        rangeM: azEl.rangeM,
+        azimuthDeg: azEl.azimuthDeg,
+        elevationDeg: azEl.elevationDeg,
+        altMmsl: ac.altMmsl,
+        groundSpeedMs: ac.groundSpeedMs,
+        trackDeg: ac.trackDeg,
+      });
+    }
+    totalLive.sort((a, b) => a.sepDeg - b.sepDeg);
+    // Cap to keep /api/state lean in busy airspace — the panel only displays
+    // the closest few anyway.
+    const cappedTotalLive = totalLive.slice(0, 30);
+    // Share the same RouteLookup cache the candidate enricher uses, so we
+    // don't double-fetch. Cached hits return instantly; first-seen callsigns
+    // pick up their route on the next tick.
+    await Promise.all(cappedTotalLive.map(async (entry) => {
+      if (!entry.callsign) return;
+      try { entry.route = await routeLookup.lookup(entry.callsign); } catch { /* ignore */ }
+    }));
+    state.totalLive = cappedTotalLive;
+
     state.lastUpdateMs = nowMs;
 
     // Click-to-update self-diagnostic. The endpoint only drops a trigger

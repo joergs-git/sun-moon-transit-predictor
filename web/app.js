@@ -296,7 +296,6 @@ function renderTracking(state) {
     }
     return;
   }
-  let rowsRendered = 0;
   for (const [i, e] of rows.entries()) {
     // Hand-off to History: once the predicted closest is older than the
     // grace, the row moves out of the live panel and into History (which
@@ -572,6 +571,62 @@ function renderIssPass(iss) {
     + 'site. Both are offline SGP4 predictions; refresh with the TLE.';
 }
 
+// "Total live trackings" — single sorted-by-SEP table of EVERY aircraft in
+// dump1090 range, with each one's current angular distance to the nearest
+// observable body. Visible only while no real candidate is being followed
+// AND nothing is pinned (so the user is genuinely "idle" — staring at the
+// sky waiting for something interesting). The moment a radio/candidate/
+// imminent row appears, this panel hides and the FOV preview takes over.
+// Layout-wise the section spans the entire .top-row grid (see CSS), so it
+// visually replaces both the sketch and the plan/side/airframe stack.
+function renderTotalLive(state) {
+  const section = document.getElementById('total-live-section');
+  const fovSection = document.getElementById('fov-section');
+  if (!section || !fovSection) return;
+  const lifecycle = Array.isArray(state.lifecycle) ? state.lifecycle : [];
+  const hasActive = lifecycle.some((e) =>
+    e.status === 'radio' || e.status === 'candidate' || e.status === 'imminent',
+  );
+  // A pinned row means the user explicitly asked to keep looking at it, so
+  // we keep the FOV stack up even when nothing else is active. typeof pin
+  // check stays cheap even if the variable hasn't been declared yet.
+  const isPinned = typeof pin !== 'undefined' && pin != null;
+  if (hasActive || isPinned) {
+    section.hidden = true;
+    fovSection.hidden = false;
+    return;
+  }
+  // Idle: take over.
+  section.hidden = false;
+  fovSection.hidden = true;
+  const rows = Array.isArray(state.totalLive) ? state.totalLive : [];
+  const tbody = section.querySelector('tbody');
+  if (!tbody) return;
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No tracked aircraft in range right now</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map((r) => {
+    const bodyIcon = r.body === 'sun' ? '☀' : r.body === 'moon' ? '☾' : '·';
+    const route = r.route
+      ? fmtRoute(r.route.origin?.iata ?? r.route.origin?.icao,
+                 r.route.destination?.iata ?? r.route.destination?.icao)
+      : '—';
+    const flight = r.callsign ? r.callsign : '—';
+    const bearing = Number.isFinite(r.trackDeg) ? `${Math.round(r.trackDeg)}°` : '—';
+    return '<tr>'
+      + `<td class="sep-cell">${fmtSep(r.sepDeg)}<span class="body-icon">${bodyIcon}</span></td>`
+      + `<td class="flight-cell" data-hex="${r.icao ?? ''}" data-cs="${r.callsign ?? ''}">${flight}</td>`
+      + `<td>${icaoCellInner(r.icao, false)}</td>`
+      + `<td>${route}</td>`
+      + `<td>${fmtDistance(r.rangeM)}</td>`
+      + `<td>${fmtAlt(r.altMmsl)}</td>`
+      + `<td>${Number.isFinite(r.groundSpeedMs) ? Math.round(r.groundSpeedMs * 3.6) : '—'}</td>`
+      + `<td>${bearing}</td>`
+      + '</tr>';
+  }).join('');
+}
+
 async function pollState() {
   try {
     const res = await fetch('/api/state');
@@ -583,6 +638,7 @@ async function pollState() {
     renderSky(state);
     renderIssPass(state.iss);
     renderTracking(state);
+    renderTotalLive(state);
     renderDetectFunnel(state.detectStats);
     // Push live optics into the FOV sketch module so a Settings edit is
     // reflected on the next render of the inline preview pane.
