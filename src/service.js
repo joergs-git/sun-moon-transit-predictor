@@ -1556,24 +1556,49 @@ export async function runService({
     // landed in an ADS-B gap. Fire-and-forget; dedup keeps it to one capture
     // per (icao|body) episode.
     //
-    // v0.30.10: also re-arm from lifecycle entries that went stale-'no-fix'.
-    // findTransits stops emitting an aircraft the moment its ADS-B fix
-    // loses groundSpeedMs / trackDeg — but if the LAST projection was tight
-    // (< 0.5°, which is what classifies the entry as no-fix instead of
-    // 'faded' in lifecycle.js), we still want SharpCap to record. Re-use
-    // the last live candidate stored on the lifecycle entry so the per-rig
-    // arming gates re-run with the most recent known geometry. Per-rig
-    // (icao|body) dedup keeps repeat ticks from spamming the listener.
-    const noFixCandidates = [];
+    // v0.30.11: re-arm SharpCap from any lifecycle entry whose stored
+    // last-emitted candidate STILL deserves a recording, even when the
+    // tracker isn't actively emitting it this tick. Otherwise an ADS-B
+    // gap inside the arming window means the trigger never fires —
+    // exactly the missed-W640LC pattern. armForCandidate's per-rig
+    // gates (body, sep, elev, time, dedup) run unchanged against these
+    // fallback candidates, so the rig itself decides; the worst case is
+    // one wasted recording slot on a flight that genuinely diverged.
+    //
+    // Three "tracker-silent" cases get fed in:
+    //   1. coasting        — entry still has its live status but the
+    //                        tracker didn't emit this tick (fix gap
+    //                        inside the 25 s coastMs grace). Without
+    //                        this the brief gap could swallow the
+    //                        arming opportunity entirely.
+    //   2. stale 'no-fix'  — gap exceeded coastMs; aircraft still in
+    //                        dump1090 with a tight last projection
+    //                        (< 0.5° by definition of this reason).
+    //   3. stale 'lost-sig'— ICAO gone from dump1090. For commercial
+    //                        traffic that's almost always a receiver
+    //                        gap, not transponder-off + diversion;
+    //                        re-arm if the last projection was inside
+    //                        any reasonable rig's recording band (5°).
+    const fallbackCandidates = [];
     for (const e of lifecycleMap.values()) {
-      if (e.status !== 'stale' || e.staleReason !== 'no-fix') continue;
       if (!e.candidate) continue;
       if (!Number.isFinite(e.closestApproachAtMs)) continue;
-      noFixCandidates.push(e.candidate);
+      if (e.coasting && e.status !== 'planned' && e.status !== 'stale') {
+        fallbackCandidates.push(e.candidate);
+        continue;
+      }
+      if (e.status !== 'stale') continue;
+      if (e.staleReason === 'no-fix') {
+        fallbackCandidates.push(e.candidate);
+      } else if (e.staleReason === 'lost-signal'
+                 && Number.isFinite(e.closestApproachSepDeg)
+                 && e.closestApproachSepDeg < 5.0) {
+        fallbackCandidates.push(e.candidate);
+      }
     }
     const armList = (issForLifecycle.length
       ? enriched.concat(issForLifecycle)
-      : enriched).concat(noFixCandidates);
+      : enriched).concat(fallbackCandidates);
     armSharpcapForCandidates(armList, nowMs);
 
     // Header status readout: are any rigs live, for which bodies, how many
