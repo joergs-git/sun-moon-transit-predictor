@@ -66,6 +66,27 @@ function sepCellLive(e) {
   }
   return fmtSep(curr);
 }
+
+// History counterpart to sepCellLive. The consolidated History view stores
+// the BEST (= closest) projected sep in closest_sep_deg and — when the
+// entry later went stale-faded — the final drifted value in last_sep_deg
+// (v0.30.8). Same dual-value display as the live panel:
+//   ~~0.68°~~  (2.00°)
+// Preserves the existing strike-through-when-unconfirmed semantics: if the
+// episode never reached an imminent stage, the whole cell is still struck
+// through via .sep-unconfirmed, so a confirmed→faded mix can't happen by
+// construction (a confirmed row IS the closest approach, no drift left).
+function sepCellHistory(e) {
+  const tightest = e.closest_sep_deg;
+  const last = e.last_sep_deg;
+  const wrap = (inner) => `<span class="${e.sepConfirmed ? 'sep-confirmed' : 'sep-unconfirmed'}" title="${e.sepConfirmed
+    ? 'Sep at the real closest approach (imminent stage).'
+    : 'PREDICTED sep only — no imminent confirmation; the flight diverged before the ETA, so this never actually happened.'}">${inner}</span>`;
+  if (Number.isFinite(tightest) && Number.isFinite(last) && tightest + SEP_DIVERGED_DEG < last) {
+    return wrap(`<span class="sep-was" title="Closest projected separation reached during the episode.">${fmtSep(tightest)}</span> <span class="sep-now" title="Final projected separation at the moment the lifecycle entry went stale-faded.">(${fmtSep(last)})</span>`);
+  }
+  return wrap(fmtSep(tightest));
+}
 function fmtDuration(ms)  { return ms == null ? '—' : `${(ms / 1000).toFixed(1)}s`; }
 
 // Live telescope focal length (mm), refreshed from /api/state every poll so
@@ -435,9 +456,7 @@ function historyTr(e, absIdx) {
     <td class="stage-${e.stage}">${fmtDateTime(e.closest_at_ms)}</td>
     <td>${fmtDateTime(e.recorded_at_ms)}</td>
     <td title="Lead time = ${leadMs} ms">${fmtLead(leadMs)}</td>
-    <td><span class="${e.sepConfirmed ? 'sep-confirmed' : 'sep-unconfirmed'}" title="${e.sepConfirmed
-      ? 'Sep at the real closest approach (imminent stage).'
-      : 'PREDICTED sep only — no imminent confirmation; the flight diverged before the ETA, so this never actually happened.'}">${fmtSep(e.closest_sep_deg)}</span></td>
+    <td>${sepCellHistory(e)}</td>
     <td class="stage-${e.stage}">${e.stage}</td>
     <td>${outcomeCell}</td>
     <td>${fmtDistance(e.range_m)}</td>

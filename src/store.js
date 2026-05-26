@@ -110,6 +110,15 @@ export class HistoryStore {
     // History table can show distance. Idempotent — only adds the column
     // when the running DB doesn't already have it.
     ensureColumn(this.db, 'transit_history', 'range_m', 'REAL');
+    // v0.30.8: last_sep_deg = projected separation observed at the moment
+    // the lifecycle entry transitioned to stale-faded (i.e. the value
+    // that drifted out from its best). Lets History show the same
+    // "was best, now drifted" pair as the live "Real candidates" panel:
+    //   ~~0.68°~~  (2.00°)
+    // Filled by an UPDATE across the episode's transit_history rows from
+    // service.js's stale-detection diff; legacy rows stay NULL → no
+    // change in display.
+    ensureColumn(this.db, 'transit_history', 'last_sep_deg', 'REAL');
     this.insertStmt = this.db.prepare(`
       INSERT INTO transit_history (
         recorded_at_ms, closest_at_ms, stage, body, icao, callsign,
@@ -513,6 +522,30 @@ export class HistoryStore {
    * @param {object|null} route
    * @param {number} recordedAtMs
    */
+  /**
+   * Record the projected sep at the moment a live entry transitioned to
+   * stale-faded. Updates ALL transit_history rows for this (icao, body,
+   * closest_at_ms) episode in one go so the consolidated history view
+   * can show "was best (now last)" alongside the existing stage rows.
+   *
+   * No-op when the entry has no DB rows yet (e.g. went stale before any
+   * stage transition was emitted) — that's fine, then there's nothing
+   * to annotate either.
+   *
+   * @param {string} icao
+   * @param {string} body
+   * @param {number} closestAtMs
+   * @param {number} lastSepDeg   - the value at fade time
+   */
+  recordFinalSep(icao, body, closestAtMs, lastSepDeg) {
+    if (!icao || !body || !Number.isFinite(closestAtMs) || !Number.isFinite(lastSepDeg)) return;
+    this.db.prepare(
+      `UPDATE transit_history
+       SET last_sep_deg = ?
+       WHERE icao = ? AND body = ? AND closest_at_ms = ?`,
+    ).run(lastSepDeg, icao, body, closestAtMs);
+  }
+
   recordEvent(stage, candidate, route, recordedAtMs) {
     const ac = candidate.aircraft;
     this.insertStmt.run(

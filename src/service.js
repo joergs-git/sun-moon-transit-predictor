@@ -1488,6 +1488,7 @@ export async function runService({
     // tick's contacts. The notifier still drives Pushover; the lifecycle
     // adds visibility for 'planned' and 'stale' states which never push but
     // matter in the UI.
+    const lifecyclePrev = lifecycleMap;
     lifecycleMap = updateLifecycle({
       prev: lifecycleMap,
       nowMs,
@@ -1500,6 +1501,28 @@ export async function runService({
       maxEntries: config.lifecycle.maxEntries,
       coastMs: config.lifecycle.coastMs,
     });
+
+    // Detect newly stale-faded transitions and stamp their final sep into
+    // transit_history so the History panel can show the "~~best~~ (last)"
+    // pair just like the live "Real candidates" table. We only act on the
+    // *transition* (prev wasn't stale → now is), and only when the
+    // divergence is meaningful (> 0.1° so sub-noise wobble doesn't clutter
+    // history). Other stale reasons (past-eta, lost-signal) carry no
+    // surprise about a degraded prediction — skip those.
+    for (const [key, e] of lifecycleMap) {
+      if (e.status !== 'stale' || e.staleReason !== 'faded') continue;
+      const prevE = lifecyclePrev.get(key);
+      if (prevE && prevE.status === 'stale') continue;          // already stale last tick
+      if (!Number.isFinite(e.bestSepDeg) || !Number.isFinite(e.closestApproachSepDeg)) continue;
+      if (e.bestSepDeg + 0.1 >= e.closestApproachSepDeg) continue;
+      if (!e.icao || !e.body || !Number.isFinite(e.closestApproachAtMs)) continue;
+      try {
+        store.recordFinalSep(e.icao, e.body, e.closestApproachAtMs, e.closestApproachSepDeg);
+      } catch (err) {
+        logger.warn?.('recordFinalSep failed:', err?.message ?? err);
+      }
+    }
+
     state.lifecycle = lifecycleArray(lifecycleMap, nowMs);
 
     // Persist lifecycle on a slow cadence so a restart can repopulate the UI.
