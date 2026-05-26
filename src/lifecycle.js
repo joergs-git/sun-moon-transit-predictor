@@ -252,15 +252,28 @@ export function updateLifecycle({
     //   lost-signal — the airframe is no longer in dump1090's aircraft.json
     //                 (transponder off, out of receiver range, switched off
     //                 the squawk).
+    //   no-fix      — still in dump1090 AND its LAST projection was tight
+    //                 (< 0.5°), but the tracker has stopped emitting for it
+    //                 — typically because groundSpeedMs / trackDeg dropped
+    //                 out of the fix for a few ticks. The projection didn't
+    //                 fade out; the fix did. Re-emerges automatically when
+    //                 the fix is complete again. v0.30.9.
     //   faded       — still in dump1090 but the projected min-sep moved
     //                 outside the panel band, i.e. the flight changed track
     //                 / altitude and no longer threatens a transit.
     let staleReason = 'faded';
+    const lastSep = prevEntry.closestApproachSepDeg;
     if (Number.isFinite(prevEntry.closestApproachAtMs)
         && prevEntry.closestApproachAtMs + imminentWindowMs < nowMs) {
       staleReason = 'past-eta';
     } else if (prevEntry.icao && !liveIcaos.has(prevEntry.icao)) {
       staleReason = 'lost-signal';
+    } else if (Number.isFinite(lastSep) && lastSep < 0.5) {
+      // Last emission was well inside the imminent-worthy band, so the
+      // projection didn't drift out — the tracker just isn't getting the
+      // ADS-B fields it needs to recompute. Re-checks every tick; pops
+      // straight back to radio/candidate the moment a complete fix arrives.
+      staleReason = 'no-fix';
     }
     next.set(key, {
       ...prevEntry,

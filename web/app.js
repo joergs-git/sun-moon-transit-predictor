@@ -301,6 +301,7 @@ const STATUS_LABELS = {
 const STALE_REASON_LABELS = {
   'past-eta':    { short: 'past ETA',    tip: 'Predicted closest approach already passed; the transit window has gone (whether the flight actually crossed or not).' },
   'lost-signal': { short: 'lost signal', tip: 'No more squitters from this aircraft — transponder off, out of receiver range, or it left coverage.' },
+  'no-fix':      { short: 'no fix',      tip: 'Still in dump1090 and the last projection was tight (< 0.5°), but the tracker needs groundSpeed + track in the fix to recompute and one of those dropped out for a few ticks. Re-emerges automatically when the fix is complete again — no action needed.' },
   'faded':       { short: 'faded',       tip: 'Still in dump1090 but the projected min-sep moved outside the panel band — won\'t transit.' },
 };
 // Hand-off Live → History. A row leaves the live-tracking panel once its
