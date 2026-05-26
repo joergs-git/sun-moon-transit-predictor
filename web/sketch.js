@@ -130,6 +130,21 @@ export function fromLifecycleEntry(entry) {
   const c = entry?.candidate;
   if (!c?.aircraftAtClosest || !c?.bodyAtClosest) return null;
   const route = entry.route ?? c?.route ?? null;
+  // v0.30.19: surface the FROZEN first-emission geometry alongside the
+  // current one so buildSketchSvg can paint a grey "where we initially
+  // thought it would go" overlay under the white current path. The
+  // overlay is rendered only when the initial geometry differs
+  // meaningfully from the current — see buildSketchSvg.
+  const ic = entry.initialCandidate;
+  const initialAircraftAt = ic?.aircraftAtClosest && ic !== c ? {
+    az: ic.aircraftAtClosest.azimuthDeg,
+    el: ic.aircraftAtClosest.elevationDeg,
+    rangeM: ic.aircraftAtClosest.rangeM ?? null,
+  } : null;
+  const initialBodyAt = ic?.bodyAtClosest && ic !== c ? {
+    az: ic.bodyAtClosest.azimuthDeg,
+    el: ic.bodyAtClosest.elevationDeg,
+  } : null;
   return {
     body: entry.body,
     bodyAt: { az: c.bodyAtClosest.azimuthDeg, el: c.bodyAtClosest.elevationDeg },
@@ -150,6 +165,12 @@ export function fromLifecycleEntry(entry) {
     isISS: c.isISS === true || c.aircraft?.typeCode === 'ISS',
     ...dimsFromType(c.aircraft?.typeCode),
     transitPath: Array.isArray(c.transitPath) ? c.transitPath : [],
+    initialAircraftAt,
+    initialBodyAt,
+    initialSepDeg: Number.isFinite(ic?.closestApproachSepDeg) && ic !== c
+      ? ic.closestApproachSepDeg : null,
+    initialTransitPath: ic && ic !== c && Array.isArray(ic.transitPath)
+      ? ic.transitPath : [],
   };
 }
 
@@ -562,6 +583,60 @@ export function buildSketchSvg(d) {
     glyph +
     `</g>`;
 
+  // v0.30.19 — "initial guess" overlay. When the lifecycle entry has
+  // carried forward a frozen first-emission geometry that's measurably
+  // different from the current one, paint that geometry under the white
+  // current silhouette in grey + dotted line so the user can see at a
+  // glance how much the prediction has drifted between first contact and
+  // now. Same path/anchor/heading math as above, just for the initial
+  // values; only rendered when the two anchors are far enough apart to
+  // actually be distinguishable (< ~half a silhouette length and they
+  // just look like noise).
+  let initialPathSvg = '';
+  let initialGlyphSvg = '';
+  if (d.initialAircraftAt && d.initialBodyAt) {
+    const initialPathPts = (d.initialTransitPath ?? []).map(p => {
+      const { dx, dy } = relOffsetDeg(p, refEl);
+      return {
+        ...degToPx(dx, dy, cx, cy, pxPerDeg),
+        tOffsetMs: p.tOffsetMs,
+        degOff: Math.hypot(dx, dy),
+      };
+    });
+    const initialVisible = initialPathPts.filter(p => p.degOff <= viewMaxDeg);
+    let initialAnchor;
+    const initialMid = initialPathPts.find(p => p.tOffsetMs === 0);
+    if (initialMid) {
+      initialAnchor = { x: initialMid.x, y: initialMid.y };
+    } else {
+      const dxi = (d.initialAircraftAt.az - d.initialBodyAt.az) * Math.cos(refEl * DEG);
+      const dyi = d.initialAircraftAt.el - d.initialBodyAt.el;
+      initialAnchor = degToPx(dxi, dyi, cx, cy, pxPerDeg);
+    }
+    const overlayDistPx = Math.hypot(initialAnchor.x - anchor.x, initialAnchor.y - anchor.y);
+    const OVERLAY_MIN_PX = 6;     // half a silhouette length-ish; below this it just clutters
+    if (overlayDistPx >= OVERLAY_MIN_PX) {
+      let initialHeadingRad = headingRad;
+      if (initialVisible.length >= 2) {
+        const a = initialVisible[0];
+        const b = initialVisible[initialVisible.length - 1];
+        initialHeadingRad = Math.atan2(b.y - a.y, b.x - a.x);
+      }
+      if (initialVisible.length >= 2) {
+        const poly = initialVisible
+          .map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+        initialPathSvg = `<polyline points="${poly}" fill="none" stroke="#7a7d83" stroke-width="1" stroke-opacity="0.55" stroke-dasharray="3 4"/>`;
+      }
+      const initialGlyph = d.isISS
+        ? issGlyph(Math.max(lenPx, 7), Math.max(wingPx, 14))
+        : `<path d="${aircraftPath(lenPx, wingPx)}" fill="#7a7d83" stroke="#9aa0a6" stroke-width="0.4" opacity="0.6"/>`;
+      initialGlyphSvg =
+        `<g transform="translate(${initialAnchor.x.toFixed(1)} ${initialAnchor.y.toFixed(1)}) rotate(${(initialHeadingRad * RAD).toFixed(1)})">` +
+        initialGlyph +
+        `</g>`;
+    }
+  }
+
   // Axis labels (AZ on bottom, EL on left side). Helps users tell which
   // way the disc would drift on a fixed altaz mount. Anchored to the
   // widget edges as of v0.20.0 — the FOV box is no longer the reference
@@ -717,6 +792,8 @@ export function buildSketchSvg(d) {
     cross +
     bodyDisc +
     fovRect +
+    initialPathSvg +
+    initialGlyphSvg +
     pathSvg +
     acGroup +
     nowMarker +

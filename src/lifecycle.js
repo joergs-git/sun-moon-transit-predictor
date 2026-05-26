@@ -138,6 +138,18 @@ export function updateLifecycle({
     const bestSepDeg = Number.isFinite(currSep)
       ? (Number.isFinite(prevBest) ? Math.min(prevBest, currSep) : currSep)
       : (Number.isFinite(prevBest) ? prevBest : null);
+
+    // initialCandidate: the very first tracker emission for this lifecycle
+    // key. Kept frozen across ticks so the FOV sketch can render the
+    // ORIGINAL projected path in grey under the current (white) one — the
+    // user sees at a glance how much the prediction has drifted between
+    // first contact and now. Resets when the entry comes back from stale
+    // (= same icao+body but a NEW transit episode, not the continuation
+    // of the previous one). v0.30.19.
+    const prevWasLive = prevEntry && prevEntry.status !== 'stale';
+    const initialCandidate = (prevWasLive && prevEntry.initialCandidate)
+      ? prevEntry.initialCandidate
+      : c;
     next.set(key, {
       key,
       status,
@@ -153,6 +165,7 @@ export function updateLifecycle({
       highestStatusReached: highest,
       route: c.route ?? prevEntry?.route ?? null,
       candidate: c,
+      initialCandidate,
       watchlistEntry: prevEntry?.watchlistEntry ?? null,
       coasting: false,   // live this tick — explicitly not coasting
       isISS: c.isISS === true,
