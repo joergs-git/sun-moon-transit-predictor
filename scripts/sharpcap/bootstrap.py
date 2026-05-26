@@ -65,9 +65,22 @@ def _download_latest():
     if "trigger_listener" not in source:
         _log("download returned unexpected content; ignoring")
         return None
+    # Open the cache for writing in UTF-8 explicitly. On Windows Python's
+    # default text-mode encoding is cp1252; the moment the listener source
+    # carries a non-cp1252 char (e.g. >= or arrow glyph in a comment) the
+    # default-encoding write raises UnicodeEncodeError and we lose the
+    # cache. UTF-8 happily round-trips anything; on the next start we
+    # also have to READ as UTF-8, see _load_cached() below.
     try:
-        with open(CACHE_PATH, "w") as f:
+        try:
+            f = open(CACHE_PATH, "w", encoding="utf-8")        # Python 3
+        except TypeError:
+            import io
+            f = io.open(CACHE_PATH, "w", encoding="utf-8")     # very old Python 2 / IronPython
+        try:
             f.write(source)
+        finally:
+            f.close()
     except Exception:
         _log("warning: could not write cache file:\n" + traceback.format_exc())
     _log("downloaded latest listener from {}".format(RAW_URL))
@@ -112,9 +125,29 @@ def _download_webclient():
 def _load_cached():
     try:
         if os.path.exists(CACHE_PATH):
-            with open(CACHE_PATH, "r") as f:
+            # Read as UTF-8 to match _download_latest's write (any non-cp1252
+            # char in a comment would crash a default-encoding read on
+            # Windows). Fallback to default-encoding handles caches written
+            # by pre-v0.30.15 bootstraps.
+            try:
+                f = open(CACHE_PATH, "r", encoding="utf-8")
+            except TypeError:
+                f = open(CACHE_PATH, "r")
+            try:
                 _log("using cached listener {}".format(CACHE_PATH))
                 return f.read()
+            finally:
+                f.close()
+    except UnicodeDecodeError:
+        try:
+            f = open(CACHE_PATH, "r")
+            try:
+                _log("using cached listener {} (default encoding fallback)".format(CACHE_PATH))
+                return f.read()
+            finally:
+                f.close()
+        except Exception:
+            _log("reading cache failed (both encodings):\n" + traceback.format_exc())
     except Exception:
         _log("reading cache failed:\n" + traceback.format_exc())
     return None

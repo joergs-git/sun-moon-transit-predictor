@@ -307,8 +307,8 @@ def _robocopy_transfer(src, dest, move):
       /NJH /NJS /NP /NDL — quieter output (no header/summary, no progress,
                             no directory list).
       /MOV    — only when move=True; deletes source after success.
-    Exit codes: 0..3 = success (0 = nothing copied, ≥ 1 = files copied,
-    ≥ 4 = error).
+    Exit codes: 0..3 = success (0 = nothing copied, >= 1 = files copied,
+    >= 4 = error).
     """
     try:
         src_dir = os.path.dirname(src)
