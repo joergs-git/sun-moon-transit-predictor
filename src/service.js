@@ -1555,10 +1555,26 @@ export async function runService({
     // transit is never missed because the notifier's single 'imminent' event
     // landed in an ADS-B gap. Fire-and-forget; dedup keeps it to one capture
     // per (icao|body) episode.
-    armSharpcapForCandidates(
-      issForLifecycle.length ? enriched.concat(issForLifecycle) : enriched,
-      nowMs,
-    );
+    //
+    // v0.30.10: also re-arm from lifecycle entries that went stale-'no-fix'.
+    // findTransits stops emitting an aircraft the moment its ADS-B fix
+    // loses groundSpeedMs / trackDeg — but if the LAST projection was tight
+    // (< 0.5°, which is what classifies the entry as no-fix instead of
+    // 'faded' in lifecycle.js), we still want SharpCap to record. Re-use
+    // the last live candidate stored on the lifecycle entry so the per-rig
+    // arming gates re-run with the most recent known geometry. Per-rig
+    // (icao|body) dedup keeps repeat ticks from spamming the listener.
+    const noFixCandidates = [];
+    for (const e of lifecycleMap.values()) {
+      if (e.status !== 'stale' || e.staleReason !== 'no-fix') continue;
+      if (!e.candidate) continue;
+      if (!Number.isFinite(e.closestApproachAtMs)) continue;
+      noFixCandidates.push(e.candidate);
+    }
+    const armList = (issForLifecycle.length
+      ? enriched.concat(issForLifecycle)
+      : enriched).concat(noFixCandidates);
+    armSharpcapForCandidates(armList, nowMs);
 
     // Header status readout: are any rigs live, for which bodies, how many
     // captures armed this session, and a per-rig breakdown for the tooltip.
