@@ -44,7 +44,7 @@ SHARED_TOKEN = ""              # set to a string to require token == this
 def _default_log_path():
     """Resolve a deterministic, writable log path.
 
-    A bare relative name lands in SharpCap.exe's current working directory —
+    A bare relative name lands in SharpCap.exe's current working directory --
     for a Program Files install that is admin-only, so the write fails
     silently (see _log's except: pass) and the log appears to vanish. So:
       1. STP_LOG_PATH injected by bootstrap.py (the install dir, writable).
@@ -63,7 +63,7 @@ def _default_log_path():
 
 LOG_PATH = _default_log_path()
 
-# Maximum allowed values — guard against a buggy client asking for an hour-long
+# Maximum allowed values -- guard against a buggy client asking for an hour-long
 # capture or a half-hour pre-roll that would block subsequent triggers.
 MAX_DURATION_S = 120
 MAX_PRE_ROLL_S = 90
@@ -92,7 +92,7 @@ _state_lock = threading.Lock()
 _capture_active = False
 # Re-arm support: a fresh trigger for the SAME target that arrives while the
 # previous one is still in its pre-roll wait (not yet recording) replaces it
-# with the updated time. Generation guards the handoff — the superseded
+# with the updated time. Generation guards the handoff -- the superseded
 # pre-roll thread sees a newer generation and aborts without touching state.
 _capture_gen = 0
 _active_label = None
@@ -102,7 +102,7 @@ _cancel_event = None   # threading.Event for the in-flight capture's pre-roll
 # Reject non-finite trigger numbers (NaN / +/-inf). float("nan") does NOT
 # raise, so a malformed packet like {"durationS": NaN} would otherwise slip
 # past the <= 0 and > MAX guards (every comparison with NaN is False) and
-# reach time.sleep(NaN) in _do_capture — which raises AFTER RunCapture() but
+# reach time.sleep(NaN) in _do_capture -- which raises AFTER RunCapture() but
 # BEFORE StopCapture(), leaving the camera recording until manual stop.
 # Implemented without math.isfinite so it also runs on the older IronPython
 # bundled with some SharpCap builds: NaN is the only value not equal to
@@ -131,7 +131,7 @@ def _log(line):
 
 # Friendly JSON config key -> module constant. The constants above are only
 # fallback defaults; the machine-specific values (which folders to watch, where
-# to copy to) live in a local JSON file so they SURVIVE the auto-update — the
+# to copy to) live in a local JSON file so they SURVIVE the auto-update -- the
 # listener body is re-pulled from GitHub on every start, but this config is not.
 _CONFIG_KEY_MAP = {
     "port": "PORT",
@@ -208,7 +208,7 @@ def _apply_local_config():
         g["TRANSFER_ENABLED"], g["SER_SOURCE_DIR"], g["SER_DEST_DIR"], g["TRANSFER_MOVE"]))
 
 
-# Signatures (abspath, size, int mtime) we have already transferred — guards
+# Signatures (abspath, size, int mtime) we have already transferred -- guards
 # against ever sending the same file twice, e.g. across two close captures in
 # copy mode where the original stays in the source folder.
 _transferred_lock = threading.Lock()
@@ -296,17 +296,17 @@ def _robocopy_transfer(src, dest, move):
 
     robocopy can't rename during transfer, so we copy/move to <src basename>
     in the dest dir and then os.rename(...) to the desired (port-tagged)
-    dest name locally on the NAS — a cheap metadata op.
+    dest name locally on the NAS -- a cheap metadata op.
 
     Flags:
-      /MT:4   — 4 worker threads (Windows Explorer is single-threaded; this
+      /MT:4   -- 4 worker threads (Windows Explorer is single-threaded; this
                 alone usually beats shutil 2-3x over SMB).
-      /Z      — restartable mode (resumes on a brief network glitch).
-      /R:2    — retry twice on transient errors.
-      /W:5    — wait 5 s between retries.
-      /NJH /NJS /NP /NDL — quieter output (no header/summary, no progress,
+      /Z      -- restartable mode (resumes on a brief network glitch).
+      /R:2    -- retry twice on transient errors.
+      /W:5    -- wait 5 s between retries.
+      /NJH /NJS /NP /NDL -- quieter output (no header/summary, no progress,
                             no directory list).
-      /MOV    — only when move=True; deletes source after success.
+      /MOV    -- only when move=True; deletes source after success.
     Exit codes: 0..3 = success (0 = nothing copied, >= 1 = files copied,
     >= 4 = error).
     """
@@ -334,12 +334,12 @@ def _robocopy_transfer(src, dest, move):
             try:
                 os.rename(landed, dest)
             except OSError:
-                # Best effort — if the rename fails (e.g. dest_name exists),
+                # Best effort -- if the rename fails (e.g. dest_name exists),
                 # leave the file at <landed> rather than abort the transfer.
                 pass
         return True
     except (FileNotFoundError, OSError):
-        # robocopy not on PATH or some other invocation failure → fallback.
+        # robocopy not on PATH or some other invocation failure -> fallback.
         return False
 
 
@@ -377,7 +377,7 @@ def _transfer_new_files(pre_snapshot, label):
     for src in files:
         try:
             # Block until SharpCap has stopped growing the file (handle freed)
-            # before we touch it — never transfer a half-written capture.
+            # before we touch it -- never transfer a half-written capture.
             if not _wait_until_stable(src):
                 _log("transfer {!r}: {} vanished before transfer".format(label, src))
                 continue
@@ -501,7 +501,7 @@ def _do_capture(label, pre_roll_s, duration_s, my_gen, cancel_event):
     try:
         if pre_roll_s > 0:
             _log("capture {!r}: waiting pre-roll {:.2f}s".format(label, pre_roll_s))
-            # Interruptible wait — returns True if cancelled (re-armed).
+            # Interruptible wait -- returns True if cancelled (re-armed).
             if cancel_event.wait(pre_roll_s):
                 _log("capture {!r}: pre-roll cancelled (re-armed with a fresher time)".format(label))
                 return
@@ -513,7 +513,7 @@ def _do_capture(label, pre_roll_s, duration_s, my_gen, cancel_event):
         if cam is None:
             _log("capture {!r}: SelectedCamera is None, aborting".format(label))
             return
-        # A replacement may have arrived in the instant before we locked in —
+        # A replacement may have arrived in the instant before we locked in --
         # if a newer generation exists, yield to it without recording.
         with _state_lock:
             if my_gen != _capture_gen:
@@ -521,7 +521,7 @@ def _do_capture(label, pre_roll_s, duration_s, my_gen, cancel_event):
                 return
             _recording = True
         # Snapshot the capture folder BEFORE recording so the post-capture diff
-        # transfers only the file(s) this capture produces — never leftovers.
+        # transfers only the file(s) this capture produces -- never leftovers.
         pre_snapshot = _scan_capture_dir() if TRANSFER_ENABLED else {}
         # SharpCap builds the capture-file writer in PrepareToCapture(); calling
         # RunCapture() without it fails with "No writer object when trying to
@@ -556,7 +556,7 @@ def _do_capture(label, pre_roll_s, duration_s, my_gen, cancel_event):
         # doesn't touch the recorder. Pre-v0.30.12 the listener stayed
         # 'busy' for the entire transfer duration (often 30-60 s over
         # SMB), so a back-to-back transit landing in that window was
-        # rejected — the recording was free but the gate was closed.
+        # rejected -- the recording was free but the gate was closed.
         #
         # Safe because each new capture takes its OWN pre_snapshot at
         # _do_capture entry; even if a follow-up capture starts mid-
@@ -614,7 +614,7 @@ def _handle_conn(conn, addr):
             duration_s = 0.0
         label = str(req.get("label", "unlabeled"))
 
-        # Reject NaN/inf before any range check — see _is_finite above.
+        # Reject NaN/inf before any range check -- see _is_finite above.
         if not _is_finite(duration_s) or not _is_finite(pre_roll_s):
             conn.sendall(b'{"ok": false, "error": "bad-number"}\n')
             return
@@ -629,8 +629,8 @@ def _handle_conn(conn, addr):
             if _capture_active:
                 # Re-arm: a fresh trigger for the SAME target that is still in
                 # its pre-roll (not yet recording) replaces the pending one with
-                # the updated time. Anything else — a different target, or one
-                # that is already recording — is rejected busy (never interrupt
+                # the updated time. Anything else -- a different target, or one
+                # that is already recording -- is rejected busy (never interrupt
                 # a recording in progress).
                 if _recording or _active_label != label:
                     _log("reject from {} ({!r}): busy".format(addr, label))
