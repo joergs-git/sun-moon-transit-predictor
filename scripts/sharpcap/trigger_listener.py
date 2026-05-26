@@ -291,8 +291,14 @@ def _signature(path):
 
 def _robocopy_transfer(src, dest, move):
     """Faster Windows-native transfer than shutil over SMB. Returns True on
-    success, False if robocopy was unusable (missing, errored, etc.) so the
-    caller can fall back to shutil.
+    success, False (with the shutil fallback running) on any failure mode.
+
+    Uses subprocess.Popen + communicate() instead of the newer
+    subprocess.run() so this also works on the older Python 3 that some
+    SharpCap builds embed (subprocess.run is Python 3.5+, capture_output
+    is 3.7+, text= is 3.7+). Catches every exception class as a safety
+    net for stripped-down embedded Python builds (e.g. SharpCap.NET) --
+    a broken robocopy path must NEVER swallow the .ser file.
 
     robocopy can't rename during transfer, so we copy/move to <src basename>
     in the dest dir and then os.rename(...) to the desired (port-tagged)
@@ -322,11 +328,23 @@ def _robocopy_transfer(src, dest, move):
                "/NJH", "/NJS", "/NP", "/NDL"]
         if move:
             cmd.append("/MOV")
-        completed = subprocess.run(cmd, capture_output=True, text=True,
-                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        if completed.returncode >= 4:
+        # Popen + communicate is the lowest-common-denominator API that
+        # works on every Python 3.x SharpCap might embed.
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        _stdout_b, stderr_b = proc.communicate()
+        rc = proc.returncode
+        if rc is None or rc >= 4:
+            try:
+                stderr_s = stderr_b.decode("utf-8", "replace").strip()[:200] if stderr_b else ""
+            except Exception:
+                stderr_s = ""
             _log("robocopy returncode {} for {!r}; stderr: {}".format(
-                completed.returncode, src_name, (completed.stderr or "").strip()[:200]))
+                rc, src_name, stderr_s))
             return False
         # Rename to the port-tagged destination, locally on the NAS.
         landed = os.path.join(dest_dir, src_name)
@@ -338,8 +356,14 @@ def _robocopy_transfer(src, dest, move):
                 # leave the file at <landed> rather than abort the transfer.
                 pass
         return True
-    except (FileNotFoundError, OSError):
-        # robocopy not on PATH or some other invocation failure -> fallback.
+    except Exception:
+        # ANY failure (subprocess missing attributes, robocopy not on PATH,
+        # OS errors, encoding issues, etc.) -> fall back to shutil. We log
+        # once at info-ish level so the user can tell why robocopy is
+        # disabled, but the recording is never lost over a transfer-tool
+        # quirk.
+        _log("robocopy attempt failed for {!r}, falling back to shutil:\n{}".format(
+            os.path.basename(src), traceback.format_exc()))
         return False
 
 
