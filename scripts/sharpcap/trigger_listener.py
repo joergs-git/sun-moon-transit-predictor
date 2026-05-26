@@ -31,6 +31,7 @@ import json
 import os
 import shutil
 import socket
+import subprocess
 import threading
 import time
 import traceback
@@ -288,6 +289,60 @@ def _signature(path):
     return (os.path.abspath(path), st.st_size, int(st.st_mtime))
 
 
+def _robocopy_transfer(src, dest, move):
+    """Faster Windows-native transfer than shutil over SMB. Returns True on
+    success, False if robocopy was unusable (missing, errored, etc.) so the
+    caller can fall back to shutil.
+
+    robocopy can't rename during transfer, so we copy/move to <src basename>
+    in the dest dir and then os.rename(...) to the desired (port-tagged)
+    dest name locally on the NAS — a cheap metadata op.
+
+    Flags:
+      /MT:4   — 4 worker threads (Windows Explorer is single-threaded; this
+                alone usually beats shutil 2-3x over SMB).
+      /Z      — restartable mode (resumes on a brief network glitch).
+      /R:2    — retry twice on transient errors.
+      /W:5    — wait 5 s between retries.
+      /NJH /NJS /NP /NDL — quieter output (no header/summary, no progress,
+                            no directory list).
+      /MOV    — only when move=True; deletes source after success.
+    Exit codes: 0..3 = success (0 = nothing copied, ≥ 1 = files copied,
+    ≥ 4 = error).
+    """
+    try:
+        src_dir = os.path.dirname(src)
+        src_name = os.path.basename(src)
+        dest_dir = os.path.dirname(dest)
+        dest_name = os.path.basename(dest)
+        if not src_dir or not dest_dir:
+            return False
+        cmd = ["robocopy", src_dir, dest_dir, src_name,
+               "/MT:4", "/Z", "/R:2", "/W:5",
+               "/NJH", "/NJS", "/NP", "/NDL"]
+        if move:
+            cmd.append("/MOV")
+        completed = subprocess.run(cmd, capture_output=True, text=True,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if completed.returncode >= 4:
+            _log("robocopy returncode {} for {!r}; stderr: {}".format(
+                completed.returncode, src_name, (completed.stderr or "").strip()[:200]))
+            return False
+        # Rename to the port-tagged destination, locally on the NAS.
+        landed = os.path.join(dest_dir, src_name)
+        if src_name != dest_name and os.path.isfile(landed):
+            try:
+                os.rename(landed, dest)
+            except OSError:
+                # Best effort — if the rename fails (e.g. dest_name exists),
+                # leave the file at <landed> rather than abort the transfer.
+                pass
+        return True
+    except (FileNotFoundError, OSError):
+        # robocopy not on PATH or some other invocation failure → fallback.
+        return False
+
+
 def _transfer_new_files(pre_snapshot, label):
     """Copy/move the file(s) SharpCap created during this capture to the
     network destination. `pre_snapshot` is {path: mtime} captured BEFORE
@@ -338,12 +393,39 @@ def _transfer_new_files(pre_snapshot, label):
             base, ext = os.path.splitext(src_base)
             tagged = "{}_p{}{}".format(base, PORT, ext)
             dest = _unique_dest(tagged)
-            if TRANSFER_MOVE:
-                shutil.move(src, dest)
-                _log("transfer {!r}: moved {} -> {}".format(label, src, dest))
-            else:
-                shutil.copy2(src, dest)
-                _log("transfer {!r}: copied {} -> {}".format(label, src, dest))
+            verb = "moved" if TRANSFER_MOVE else "copied"
+            t0 = time.time()
+            try_robocopy_first = (os.name == "nt"
+                                  and SER_DEST_DIR
+                                  and os.path.isabs(dest))
+            done = False
+            if try_robocopy_first:
+                # v0.30.12: prefer robocopy over shutil for the actual
+                # bytes-on-the-wire move. Python's shutil.copyfile uses a
+                # ~1 MB userspace loop on Windows; over SMB to a NAS that
+                # leaves significant bandwidth on the table compared to
+                # CopyFileEx-based tools. robocopy is Windows-native,
+                # multi-threaded (/MT), restartable (/Z) and quieter
+                # (/NJH /NJS /NP). It cannot rename during transfer, so
+                # the port-tag rename happens as a cheap local os.rename
+                # against the just-arrived file.
+                done = _robocopy_transfer(src, dest, TRANSFER_MOVE)
+            if not done:
+                # shutil fallback (non-Windows, or robocopy unavailable
+                # for any reason). Same semantics, just slower over SMB.
+                if TRANSFER_MOVE:
+                    shutil.move(src, dest)
+                else:
+                    shutil.copy2(src, dest)
+            dt = time.time() - t0
+            try:
+                size_mb = os.path.getsize(dest) / (1024.0 * 1024.0)
+                rate = (size_mb / dt) if dt > 0 else 0.0
+                _log("transfer {!r}: {} {} -> {} ({:.1f} MB, {:.1f} s, {:.1f} MB/s)".format(
+                    label, verb, src, dest, size_mb, dt, rate))
+            except OSError:
+                _log("transfer {!r}: {} {} -> {} ({:.1f} s)".format(
+                    label, verb, src, dest, dt))
             with _transferred_lock:
                 _transferred.add(sig)
         except Exception:
@@ -467,13 +549,33 @@ def _do_capture(label, pre_roll_s, duration_s, my_gen, cancel_event):
         except Exception:
             _log("capture {!r}: StopCapture failed:\n{}".format(label, traceback.format_exc()))
             return
-        # Transfer runs only here, i.e. strictly after StopCapture has returned.
-        _transfer_new_files(pre_snapshot, label)
-    finally:
-        # Only the current generation owns the shared state; a superseded
-        # thread must not clear the flags the replacement set.
+        # v0.30.12: release _capture_active BEFORE the transfer so the
+        # listener can accept the next trigger while the SMB copy is
+        # still running. The camera is idle as soon as StopCapture
+        # returns; the file move/copy is pure disk + network I/O that
+        # doesn't touch the recorder. Pre-v0.30.12 the listener stayed
+        # 'busy' for the entire transfer duration (often 30-60 s over
+        # SMB), so a back-to-back transit landing in that window was
+        # rejected — the recording was free but the gate was closed.
+        #
+        # Safe because each new capture takes its OWN pre_snapshot at
+        # _do_capture entry; even if a follow-up capture starts mid-
+        # transfer, their file diffs don't overlap (this transfer's
+        # source files predate the next capture's RunCapture). Exception
+        # in transfer still hits the finally below cleanly.
         with _state_lock:
             if my_gen == _capture_gen:
+                _capture_active = False
+                _recording = False
+        # Transfer runs strictly after StopCapture has returned. Errors
+        # are logged but never raised.
+        _transfer_new_files(pre_snapshot, label)
+    finally:
+        # Belt-and-braces: clear the flags if for some reason they
+        # haven't been cleared above (e.g. an exception escaped from
+        # the capture phase before we got to the early release).
+        with _state_lock:
+            if my_gen == _capture_gen and (_capture_active or _recording):
                 _capture_active = False
                 _recording = False
 
