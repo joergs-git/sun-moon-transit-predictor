@@ -201,12 +201,21 @@ function candidateForBody(ac, body, acTrajectory, bodySamples, thresholdDeg, loo
   let tightLeaves = -1;
   let looseEnters = -1;
   let looseLeaves = -1;
+  // v0.30.13 — diagnostic counters so the caller can tell WHY a body
+  // produced no candidate (used by service.js to log "tracker skip ..."
+  // lines for previously-tracked aircraft that suddenly drop out).
+  let bodyObservableCount = 0;
+  let acAboveHorizonCount = 0;
+  let evaluatedSampleCount = 0;
 
   // bodySamples and acTrajectory share the same indexing (same step + horizon).
   for (let i = 0; i < bodySamples.length; i++) {
     if (!isObservable(bodySamples[i].azel)) continue;
+    bodyObservableCount += 1;
     const ac_i = acTrajectory[i];
     if (!ac_i || ac_i.acAzEl.elevationDeg <= 0) continue;
+    acAboveHorizonCount += 1;
+    evaluatedSampleCount += 1;
     const sep = angularSeparationDeg(ac_i.acAzEl, bodySamples[i].azel);
     if (sep < minSep) { minSep = sep; minIdx = i; }
     if (sep <= thresholdDeg) {
@@ -222,7 +231,17 @@ function candidateForBody(ac, body, acTrajectory, bodySamples, thresholdDeg, loo
   const level = tightEnters !== -1 ? 'candidate'
               : looseEnters !== -1 ? 'radio'
               : null;
-  if (!level) return null;
+  if (!level) {
+    // v0.30.13: tag the no-candidate result with WHY so service.js can
+    // log a readable skip line for actively-tracked aircraft. Wrap in a
+    // plain object that findTransits unwraps internally — keeps the
+    // public findTransits() return signature unchanged.
+    return { _skip: bodyObservableCount === 0
+      ? { reason: 'body-unobservable' }
+      : acAboveHorizonCount === 0
+        ? { reason: 'aircraft-below-horizon' }
+        : { reason: 'out-of-band', detail: { minSep, looseThresholdDeg } } };
+  }
 
   // Window timestamps reported at the effective level: tight band for
   // 'candidate', looser band for 'radio'. The closest-approach time itself is
@@ -300,6 +319,18 @@ export function findTransits(observer, aircraftList, nowMs, opts = {}) {
   // to surface flights from first ADS-B contact at the cost of more
   // "faded" episodes.
   const horizonS = Math.min(1800, Math.max(10, opts.horizonS ?? 900));
+  // v0.30.13 — optional diagnostic callback for "tracker skip" logging.
+  // Called with { icao, body|null, reason, detail? } whenever an aircraft
+  // (or one body of an aircraft) is filtered out. `trackedIcaos` (a Set)
+  // narrows the firehose to only currently-followed airframes so the
+  // service log doesn't drown in distant-traffic skips.
+  const onSkip = typeof opts.onSkip === 'function' ? opts.onSkip : null;
+  const trackedIcaos = opts.trackedIcaos instanceof Set ? opts.trackedIcaos : null;
+  const skip = onSkip ? (icao, body, reason, detail) => {
+    if (!icao) return;
+    if (trackedIcaos && !trackedIcaos.has(icao)) return;
+    onSkip({ icao, body, reason, detail });
+  } : () => {};
 
   // Body trajectories — geometric (un-refracted) for like-for-like comparison.
   const trajectories = new Map();
@@ -320,10 +351,20 @@ export function findTransits(observer, aircraftList, nowMs, opts = {}) {
   const candidates = [];
 
   for (const ac of aircraftList) {
-    if (typeof ac.groundSpeedMs !== 'number' || typeof ac.trackDeg !== 'number') continue;
+    if (typeof ac.groundSpeedMs !== 'number') {
+      skip(ac.icao, null, 'missing-gs');
+      continue;
+    }
+    if (typeof ac.trackDeg !== 'number') {
+      skip(ac.icao, null, 'missing-track');
+      continue;
+    }
     // Altitude gate (m MSL). Unknown altitude → skip when the gate is on.
     if (minAltitudeM > 0
-        && (!Number.isFinite(ac.altMmsl) || ac.altMmsl < minAltitudeM)) continue;
+        && (!Number.isFinite(ac.altMmsl) || ac.altMmsl < minAltitudeM)) {
+      skip(ac.icao, null, 'below-altitude', { altMmsl: ac.altMmsl, minAltitudeM });
+      continue;
+    }
 
     // Project aircraft from the *fix time*, not from nowMs. The body sampling
     // step at index i is at "nowMs + i*stepS", so the elapsed time since the
@@ -347,11 +388,13 @@ export function findTransits(observer, aircraftList, nowMs, opts = {}) {
         ac, body, acTrajectory, samples,
         thresholdDeg, looseThresholdDeg, nowMs, stepS,
       );
-      if (cand) {
+      if (cand && !cand._skip) {
         cand.transitPath = sampleTransitPath(
           observer, obsEcef, ac, body, cand.closestApproachAtMs, geoidUndulationM,
         );
         candidates.push(cand);
+      } else if (cand && cand._skip) {
+        skip(ac.icao, body, cand._skip.reason, cand._skip.detail);
       }
     }
   }

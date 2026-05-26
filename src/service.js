@@ -544,6 +544,12 @@ export async function runService({
   const HIGH_ELEV_THRESHOLD_DEG = 30;
   const highElevIcaos = store ? store.loadHighElevSet() : new Set();
 
+  // Tracker-skip diagnostic dedup. Key = `${icao}|${body ?? ''}` → last
+  // reason we logged for it. We only re-log when the reason changes (or
+  // when the aircraft is emitted again and the key is cleared), so a
+  // long gap doesn't generate a log line every 2 s.
+  const lastSkipReason = new Map();
+
   // ISS prediction cache. Recomputed on a slow cadence (config.iss.recomputeMs)
   // and whenever the TLE file changes on disk. The notifier de-dupes the
   // Pushover + History rows per (icao,body), so no extra bookkeeping here.
@@ -1171,12 +1177,45 @@ export async function runService({
       const m = Number(trigger.config.maxSepDeg);
       if (Number.isFinite(m) && m > effectiveLooseDeg) effectiveLooseDeg = m;
     }
+    // Tracker-skip diagnostic: only emit for currently-followed ICAOs so
+    // the log doesn't drown in distant-traffic skips. "Followed" = the
+    // lifecycle map has an active (not stale/planned) entry for it. The
+    // skip lines explain WHY a previously-emitting flight suddenly drops
+    // out — exactly the "lt. dump ist der doch voll da" question.
+    const trackedIcaos = new Set();
+    for (const e of lifecycleMap.values()) {
+      if (!e.icao) continue;
+      if (e.status === 'stale' || e.status === 'planned') continue;
+      trackedIcaos.add(e.icao);
+    }
     const trackerOpts = {
       ...config.tracker,
       looseThresholdDeg: effectiveLooseDeg || config.tracker.looseThresholdDeg,
       geoidUndulationM: observer.geoidUndulationM ?? config.tracker.geoidUndulationM ?? 0,
+      trackedIcaos,
+      onSkip: ({ icao, body, reason, detail }) => {
+        const key = `${icao}|${body ?? ''}`;
+        if (lastSkipReason.get(key) === reason) return;     // same reason as last log → quiet
+        lastSkipReason.set(key, reason);
+        let line = `tracker skip ${icao}${body ? '|' + body : ''}: ${reason}`;
+        if (detail) {
+          if (Number.isFinite(detail.minSep) && Number.isFinite(detail.looseThresholdDeg)) {
+            line += ` (projected minSep=${detail.minSep.toFixed(2)}°, panelBand=${detail.looseThresholdDeg.toFixed(2)}°)`;
+          } else if (Number.isFinite(detail.altMmsl) || Number.isFinite(detail.minAltitudeM)) {
+            const a = Number.isFinite(detail.altMmsl) ? `${Math.round(detail.altMmsl)} m` : 'unknown';
+            line += ` (altMmsl=${a}, gate=${detail.minAltitudeM} m)`;
+          }
+        }
+        logger.info?.(line);
+      },
     };
     const candidates = findTransits(observer, aircraft, nowMs, trackerOpts);
+    // Clear the skip-reason cache for everything that DID emit — so the
+    // next gap on the same key relogs instead of staying silent forever.
+    for (const c of candidates) {
+      lastSkipReason.delete(`${c.icao}|${c.body}`);
+      lastSkipReason.delete(`${c.icao}|`);              // also the per-aircraft (body-less) variant
+    }
 
     // Single route lookup per candidate, shared by /api/state and notifier.
     const enriched = await Promise.all(candidates.map(async (c) => {
