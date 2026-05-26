@@ -330,10 +330,26 @@ def _robocopy_transfer(src, dest, move):
             cmd.append("/MOV")
         # Popen + communicate is the lowest-common-denominator API that
         # works on every Python 3.x SharpCap might embed.
+        # v0.30.18: also suppress the brief robocopy console window. The
+        # CREATE_NO_WINDOW creationflag is Python 3.7+; older 3.x falls
+        # back to 0 and a console flashes for ~1 s. STARTUPINFO with
+        # STARTF_USESHOWWINDOW + SW_HIDE is the pre-3.7 way and has been
+        # in subprocess since Python 2.x -- combining both keeps every
+        # version quiet.
+        startupinfo = None
+        if os.name == "nt":
+            try:
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = 0   # SW_HIDE
+                startupinfo = si
+            except AttributeError:
+                startupinfo = None
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            startupinfo=startupinfo,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         _stdout_b, stderr_b = proc.communicate()
