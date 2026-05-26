@@ -1541,15 +1541,19 @@ export async function runService({
       coastMs: config.lifecycle.coastMs,
     });
 
-    // Detect newly stale-faded transitions and stamp their final sep into
-    // transit_history so the History panel can show the "~~best~~ (last)"
-    // pair just like the live "Real candidates" table. We only act on the
-    // *transition* (prev wasn't stale → now is), and only when the
-    // divergence is meaningful (> 0.1° so sub-noise wobble doesn't clutter
-    // history). Other stale reasons (past-eta, lost-signal) carry no
-    // surprise about a degraded prediction — skip those.
+    // Detect newly-stale transitions (ANY reason) where best ≠ current and
+    // stamp the final sep into transit_history so the History panel can
+    // show the "~~best~~ (last)" pair just like the live "Real candidates"
+    // table. Pre-v0.30.14 this only fired on staleReason='faded', which
+    // missed the common case of a prediction that tightened (best small)
+    // then drifted (current wider) right before going past-ETA — the
+    // single-value history row hid that the projection had degraded.
+    //
+    // The 0.1° divergence threshold filters sub-noise wobble (matches
+    // SEP_DIVERGED_DEG on the frontend, so the live and history displays
+    // agree on what counts as "actually divergent").
     for (const [key, e] of lifecycleMap) {
-      if (e.status !== 'stale' || e.staleReason !== 'faded') continue;
+      if (e.status !== 'stale') continue;
       const prevE = lifecyclePrev.get(key);
       if (prevE && prevE.status === 'stale') continue;          // already stale last tick
       if (!Number.isFinite(e.bestSepDeg) || !Number.isFinite(e.closestApproachSepDeg)) continue;
