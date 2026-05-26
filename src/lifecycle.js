@@ -127,6 +127,17 @@ export function updateLifecycle({
     }
     const prevEntry = prev.get(key);
     const highest = bestStatus(prevEntry?.highestStatusReached, status);
+    // Track the BEST (minimum) projected sep ever seen for this entry.
+    // When the prediction later degrades (e.g. drifts from 0.68° to 2°
+    // and the entry goes stale → 'faded'), the UI shows the original
+    // best struck through next to the current value — so the user can
+    // tell "this was a real-looking close approach that fell apart" at
+    // a glance, instead of just seeing a misleadingly wide stale sep.
+    const currSep = c.closestApproachSepDeg;
+    const prevBest = prevEntry?.bestSepDeg;
+    const bestSepDeg = Number.isFinite(currSep)
+      ? (Number.isFinite(prevBest) ? Math.min(prevBest, currSep) : currSep)
+      : (Number.isFinite(prevBest) ? prevBest : null);
     next.set(key, {
       key,
       status,
@@ -136,6 +147,7 @@ export function updateLifecycle({
       callsign: c.callsign ?? null,
       closestApproachAtMs: c.closestApproachAtMs,
       closestApproachSepDeg: c.closestApproachSepDeg,
+      bestSepDeg,
       firstSeenMs: prevEntry?.firstSeenMs ?? nowMs,
       lastUpdateMs: nowMs,
       highestStatusReached: highest,

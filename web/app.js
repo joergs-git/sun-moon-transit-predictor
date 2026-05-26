@@ -46,6 +46,26 @@ function fmtAlt(m)        { return m  == null ? '—' : `${Math.round(m / 100) *
 function fmtSpeed(ms)     { return ms == null ? '—' : `${Math.round(ms * 3.6)} km/h`; }
 function fmtDistance(m)   { return m  == null ? '—' : `${(m / 1000).toFixed(1)} km`; }
 function fmtSep(d)        { return d  == null ? '—' : `${d.toFixed(2)}°`; }
+
+// SEP cell for the live "Real candidates" table. When the entry's best
+// (= minimum ever seen) projected sep is meaningfully better than the
+// current one — typically the case for a stale → 'faded' row whose
+// prediction degraded over time — show the original best struck through
+// next to the current value, e.g.  ~~0.68°~~ (2.00°).  This makes "this
+// looked like a real close approach but fell apart" obvious at a glance,
+// instead of a misleadingly wide stale number with no context.
+const SEP_DIVERGED_DEG = 0.10;   // ignore sub-noise wobble (anything ≤ this stays single-value)
+function sepCellLive(e) {
+  const curr = e.closestApproachSepDeg;
+  const best = e.bestSepDeg;
+  if (!Number.isFinite(curr)) {
+    return Number.isFinite(best) ? fmtSep(best) : '—';
+  }
+  if (Number.isFinite(best) && best + SEP_DIVERGED_DEG < curr) {
+    return `<span class="sep-was" title="Best projected separation while the tracker was following this flight — closer than the current value, which has since drifted.">${fmtSep(best)}</span> <span class="sep-now" title="Current projected separation. The prediction has drifted away from the best (and into the 'faded' stale reason for an inactive row).">(${fmtSep(curr)})</span>`;
+  }
+  return fmtSep(curr);
+}
 function fmtDuration(ms)  { return ms == null ? '—' : `${(ms / 1000).toFixed(1)}s`; }
 
 // Live telescope focal length (mm), refreshed from /api/state every poll so
@@ -335,7 +355,7 @@ function renderTracking(state) {
       <td><span class="status status-${e.status}" title="${statusTip}">${meta.icon} ${statusLabel}</span></td>
       <td>${eta}</td>
       <td>${fmtTime(e.closestApproachAtMs)}</td>
-      <td>${e.closestApproachSepDeg !== null ? fmtSep(e.closestApproachSepDeg) : '—'}</td>
+      <td>${sepCellLive(e)}</td>
       <td>${fmtDistance(rangeM)}</td>
       <td>${iss ? '—' : fmtSpeed(ac?.groundSpeedMs)}</td>
       <td>${iss ? 'LEO' : fmtAlt(ac?.altMmsl)}</td>

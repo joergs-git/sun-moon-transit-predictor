@@ -281,6 +281,12 @@ tr.empty td { color: var(--muted); text-align: center; padding: 16px; }
 .status-candidate { background: #2f3c1c; color: #c0e890; }
 .status-imminent  { background: #5a2b0a; color: #ffba70; font-weight: 700; }
 .status-stale     { background: #3a2226; color: #ff9090; text-decoration: line-through; }
+/* SEP cell "was X, now Y" display — used when an entry's best-ever
+   projected sep is meaningfully smaller than its current sep (typically
+   a stale-faded row whose prediction degraded over time). The history
+   table uses the same pair of classes too. */
+.sep-was { text-decoration: line-through; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.sep-now { opacity: 0.85; font-variant-numeric: tabular-nums; }
 
 tr.row-imminent  { background: rgba(240, 160, 32, 0.08); }
 tr.row-candidate { background: rgba(95, 208, 127, 0.04); }
