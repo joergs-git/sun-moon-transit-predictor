@@ -593,8 +593,19 @@ export async function runService({
   const DRIFT_CAP = 4000;                     // hard cap so memory stays bounded
   const DRIFT_MIN_DT_S = 0.5;                 // ignore back-to-back ADS-B updates
   const DRIFT_MAX_DT_S = 30;                  // skip long gaps (extrapolation breaks)
-  const DRIFT_OUTLIER_MS = 15;                // clamp aggressive maneuvers / ATC vectors (v0.30.29: was 30 m/s — too permissive, σE was ~9× the mean)
-  const DRIFT_MIN_ELEV_DEG = 30;              // user's "above 30°" gate
+  // v0.30.30 — tuned for faster bias convergence at the price of slightly
+  // more noise per sample. Justification:
+  //   * Lower elevation gate: doubles the visible-sky cone, roughly
+  //     doubles the per-tick sample rate. At 20° elevation atmospheric
+  //     refraction stays under ~0.06° and ADS-B precision is still
+  //     workable for residual-rate measurements.
+  //   * Looser outlier clip: σE was 6.7 m/s under the 15 m/s clip, so
+  //     the threshold sat at ~2.2σ. Standard outlier convention is ±3σ;
+  //     bumping to 25 m/s aligns with that. Real wind shifts between
+  //     ADS-B updates rarely exceed 5-10 m/s residual rate, so we still
+  //     cut aggressive ATC manoeuvres / autopilot hunting.
+  const DRIFT_OUTLIER_MS = 25;
+  const DRIFT_MIN_ELEV_DEG = 20;
   const previousFixes = new Map();            // icao -> last seen ac object
   /** @type {Array<{tMs:number, dNorthMs:number, dEastMs:number, dUpMs:number}>} */
   const driftSamples = [];
