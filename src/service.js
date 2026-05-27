@@ -121,6 +121,14 @@ export const DEFAULT_CONFIG = {
     path: './data/lifecycle.json',
     snapshotIntervalMs: 30_000,
   },
+  // Drift-bias ring buffer snapshot — same dir as lifecyclePersist, so the
+  // 4-hour wind/ATC residual estimate survives a service restart instead of
+  // having to re-accumulate 25+ samples from scratch every time. Same
+  // disable-with-'' semantic. v0.30.25.
+  driftPersist: {
+    path: './data/drift-samples.json',
+    snapshotIntervalMs: 30_000,
+  },
   // Click-to-update from the version badge. The HTTP layer only ever drops
   // `triggerPath` (no shell/sudo); a privileged systemd stp-update.path unit
   // watches it and runs stp-update.service. Path sits under data/ which the
@@ -282,6 +290,7 @@ function mergeConfig(user) {
     optics:    { ...DEFAULT_CONFIG.optics,    ...(user.optics    ?? {}) },
     sharpcap:  { ...DEFAULT_CONFIG.sharpcap,  ...(user.sharpcap  ?? {}) },
     lifecyclePersist: { ...DEFAULT_CONFIG.lifecyclePersist, ...(user.lifecyclePersist ?? {}) },
+    driftPersist: { ...DEFAULT_CONFIG.driftPersist, ...(user.driftPersist ?? {}) },
   };
 }
 
@@ -580,6 +589,53 @@ export async function runService({
   const previousFixes = new Map();            // icao -> last seen ac object
   /** @type {Array<{tMs:number, dNorthMs:number, dEastMs:number, dUpMs:number}>} */
   const driftSamples = [];
+  let lastDriftSnapshotMs = 0;
+
+  // Bootstrap the ring buffer from disk so a service restart doesn't lose
+  // the 4-hour rolling window (and the 'building...' state doesn't have
+  // to re-accumulate 25 samples every time). Anything older than the
+  // window is dropped on load.
+  if (config.driftPersist?.path) {
+    try {
+      if (existsSync(config.driftPersist.path)) {
+        const raw = await fsp.readFile(config.driftPersist.path, 'utf8');
+        const snap = JSON.parse(raw);
+        if (Array.isArray(snap?.samples)) {
+          const cutoff = Date.now() - DRIFT_WINDOW_MS;
+          for (const s of snap.samples) {
+            if (!s || !Number.isFinite(s.tMs) || s.tMs < cutoff) continue;
+            if (!Number.isFinite(s.dNorthMs) || !Number.isFinite(s.dEastMs)) continue;
+            driftSamples.push({
+              tMs: s.tMs,
+              dNorthMs: s.dNorthMs,
+              dEastMs: s.dEastMs,
+              dUpMs: Number.isFinite(s.dUpMs) ? s.dUpMs : 0,
+            });
+            if (driftSamples.length >= DRIFT_CAP) break;
+          }
+          logger.info?.(`drift: restored ${driftSamples.length} samples from ${config.driftPersist.path}`);
+        }
+      }
+    } catch (e) {
+      logger.warn?.('drift snapshot load failed:', e?.message ?? e);
+    }
+  }
+
+  async function snapshotDrift() {
+    if (!config.driftPersist?.path) return;
+    try {
+      const dir = dirname(config.driftPersist.path);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      const payload = {
+        savedAtMs: Date.now(),
+        windowMs: DRIFT_WINDOW_MS,
+        samples: driftSamples,
+      };
+      await fsp.writeFile(config.driftPersist.path, JSON.stringify(payload), 'utf8');
+    } catch (e) {
+      logger.warn?.('drift snapshot save failed:', e?.message ?? e);
+    }
+  }
 
   // ISS prediction cache. Recomputed on a slow cadence (config.iss.recomputeMs)
   // and whenever the TLE file changes on disk. The notifier de-dupes the
@@ -1735,6 +1791,14 @@ export async function runService({
       snapshotLifecycle();
     }
 
+    // Persist drift ring buffer on the same cadence — same fire-and-forget
+    // pattern. Typical payload at a busy site after 4 h: ~50-200 KB JSON.
+    if (config.driftPersist?.path
+        && nowMs - lastDriftSnapshotMs >= (config.driftPersist.snapshotIntervalMs ?? 30_000)) {
+      lastDriftSnapshotMs = nowMs;
+      snapshotDrift();
+    }
+
     // When the SharpCap trigger is armed, the other (un-armed) disc's aircraft
     // Pushovers are just noise — suppress them. The allow-list is the UNION of
     // bodies across all enabled rigs: Sun-rig + Moon-rig → both push; only a
@@ -1854,6 +1918,7 @@ export async function runService({
       // Flush lifecycle snapshot before tearing down so SIGTERM right after
       // a tick still leaves a fresh tracking list on disk for the next start.
       await snapshotLifecycle();
+      await snapshotDrift();
       if (httpServer) await httpServer.stop();
       // Best-effort: persist the latest last_seen for everything still in
       // session memory (visit counts were already written immediately).
