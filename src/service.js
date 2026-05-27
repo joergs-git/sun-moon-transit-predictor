@@ -35,7 +35,7 @@ import { PushoverClient } from './pushover.js';
 import { createHttpServer } from './server.js';
 import { SharpCapTrigger } from './sharpcap.js';
 import { HistoryStore } from './store.js';
-import { findTransits } from './tracker.js';
+import { extrapolate, findTransits } from './tracker.js';
 import { loadIssTle, predictIssTransits, nextIssVisiblePass } from './iss.js';
 
 export const DEFAULT_CONFIG = {
@@ -556,6 +556,30 @@ export async function runService({
   // Refresh once per minute or after a fresh post-mortem write.
   let predictionStatsCache = null;
   let predictionStatsAtMs = 0;
+
+  // v0.30.22 — drift-bias sampler.
+  //
+  // For every aircraft above ~30° elevation we keep its previous fix in
+  // memory; each new fix lets us compare "where did we predict it would
+  // be by now (based on the prev fix's velocity vector)" against "where
+  // it actually IS in the new fix". The residual, expressed as m/s drift
+  // in the local NE plane, is the daily wind + ATC + autopilot
+  // correction signal averaged across the whole observed traffic. Mean
+  // residual over the rolling window is the systematic bias the
+  // predictor could subtract from future extrapolations.
+  //
+  // In-memory only (high frequency = bad fit for DB writes). The mean
+  // bias is recomputed on demand and surfaced via state.driftBias.
+  const EARTH_RADIUS_M = 6_371_008.8;
+  const DRIFT_WINDOW_MS = 4 * 3600_000;       // 4-hour rolling window
+  const DRIFT_CAP = 4000;                     // hard cap so memory stays bounded
+  const DRIFT_MIN_DT_S = 0.5;                 // ignore back-to-back ADS-B updates
+  const DRIFT_MAX_DT_S = 30;                  // skip long gaps (extrapolation breaks)
+  const DRIFT_OUTLIER_MS = 30;                // clamp aggressive maneuvers / ATC vectors
+  const DRIFT_MIN_ELEV_DEG = 30;              // user's "above 30°" gate
+  const previousFixes = new Map();            // icao -> last seen ac object
+  /** @type {Array<{tMs:number, dNorthMs:number, dEastMs:number, dUpMs:number}>} */
+  const driftSamples = [];
 
   // ISS prediction cache. Recomputed on a slow cadence (config.iss.recomputeMs)
   // and whenever the TLE file changes on disk. The notifier de-dupes the
@@ -1307,6 +1331,94 @@ export async function runService({
       highElevIcaos.add(entry.icao);
       try { store.markHighElevation(entry.icao, nowMs); }
       catch (e) { logger.warn?.('markHighElevation failed:', e?.message ?? e); }
+    }
+
+    // ── Drift-bias sampler ───────────────────────────────────────────────
+    // For each aircraft above ~30° elevation with a fresh fix, residual =
+    // actual_position - extrapolate(prev_fix, dt). Convert lat/lon delta
+    // to local NE metres, divide by dt → drift rate in m/s. Filter
+    // outliers (>30 m/s ≈ active manoeuvre, not wind). Append to ring
+    // buffer; prune anything older than DRIFT_WINDOW_MS.
+    const liveByIcao = new Map();
+    for (const ac of aircraft) if (ac.icao) liveByIcao.set(ac.icao, ac);
+    const aboveElevIcaos = new Set(
+      totalLive
+        .filter((e) => Number.isFinite(e.elevationDeg) && e.elevationDeg >= DRIFT_MIN_ELEV_DEG && e.icao)
+        .map((e) => e.icao),
+    );
+    for (const icao of aboveElevIcaos) {
+      const ac = liveByIcao.get(icao);
+      if (!ac || !Number.isFinite(ac.lat) || !Number.isFinite(ac.lon) || !Number.isFinite(ac.altMmsl)) continue;
+      const prev = previousFixes.get(icao);
+      previousFixes.set(icao, ac);
+      if (!prev) continue;
+      const dt = ((ac.receivedAtMs ?? nowMs) - (prev.receivedAtMs ?? nowMs)) / 1000;
+      if (!Number.isFinite(dt) || dt < DRIFT_MIN_DT_S || dt > DRIFT_MAX_DT_S) continue;
+      if (typeof prev.groundSpeedMs !== 'number' || typeof prev.trackDeg !== 'number') continue;
+      const predicted = extrapolate(prev, dt);
+      // Lat/lon delta -> local NE plane metres (flat-earth approx; over
+      // a few seconds × <30 m/s drift the curvature error is below 1 cm).
+      const dLat = ac.lat - predicted.lat;
+      const dLon = ac.lon - predicted.lon;
+      const cosLat = Math.cos(ac.lat * Math.PI / 180);
+      const dNorthM = dLat * Math.PI / 180 * EARTH_RADIUS_M;
+      const dEastM  = dLon * Math.PI / 180 * EARTH_RADIUS_M * cosLat;
+      const dUpM    = ac.altMmsl - predicted.altMmsl;
+      const dNorthMs = dNorthM / dt;
+      const dEastMs  = dEastM / dt;
+      const dUpMs    = dUpM / dt;
+      // Outlier filter: a 30 m/s residual over 5 seconds = 150 m, way
+      // beyond any plausible wind shift between two fixes; that's a
+      // manoeuvre / ATC vector and we explicitly want to AVERAGE THOSE
+      // OUT, not let them dominate the bias.
+      if (Math.abs(dNorthMs) > DRIFT_OUTLIER_MS || Math.abs(dEastMs) > DRIFT_OUTLIER_MS) continue;
+      driftSamples.push({ tMs: nowMs, dNorthMs, dEastMs, dUpMs });
+    }
+    // Prune by time window and absolute cap (oldest-first).
+    const driftCutoff = nowMs - DRIFT_WINDOW_MS;
+    while (driftSamples.length > 0 && driftSamples[0].tMs < driftCutoff) driftSamples.shift();
+    while (driftSamples.length > DRIFT_CAP) driftSamples.shift();
+    // Garbage-collect previousFixes for ICAOs that aren't observed any more
+    // (otherwise the map grows unbounded over days).
+    if (previousFixes.size > liveByIcao.size * 3) {
+      for (const k of previousFixes.keys()) {
+        if (!liveByIcao.has(k)) previousFixes.delete(k);
+      }
+    }
+
+    // Aggregate bias from the rolling window. Needs a minimum sample
+    // count so a quiet hour doesn't produce a wildly-swinging bias from
+    // 3 samples. Surfaced via state.driftBias; consumed by the UI panel
+    // for now (no automatic application to extrapolate yet — that's
+    // opt-in via tracker.driftCorrection in a future commit).
+    if (driftSamples.length >= 25) {
+      let sumN = 0, sumE = 0, sumU = 0;
+      for (const s of driftSamples) { sumN += s.dNorthMs; sumE += s.dEastMs; sumU += s.dUpMs; }
+      const n = driftSamples.length;
+      const mN = sumN / n;
+      const mE = sumE / n;
+      const mU = sumU / n;
+      let varN = 0, varE = 0;
+      for (const s of driftSamples) {
+        varN += (s.dNorthMs - mN) ** 2;
+        varE += (s.dEastMs - mE) ** 2;
+      }
+      const magnitude = Math.hypot(mN, mE);
+      const bearingDeg = (Math.atan2(mE, mN) * 180 / Math.PI + 360) % 360;
+      state.driftBias = {
+        n,
+        windowMs: DRIFT_WINDOW_MS,
+        meanNorthMs: mN,
+        meanEastMs: mE,
+        meanUpMs: mU,
+        stdNorthMs: Math.sqrt(varN / n),
+        stdEastMs: Math.sqrt(varE / n),
+        magnitudeMs: magnitude,
+        bearingDeg,         // direction the traffic is being pushed (0=N, 90=E)
+        ageMs: nowMs - driftSamples[0].tMs,
+      };
+    } else {
+      state.driftBias = { n: driftSamples.length, windowMs: DRIFT_WINDOW_MS, building: true };
     }
 
     state.lastUpdateMs = nowMs;
