@@ -701,6 +701,83 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
    (see the rule block above). History no longer needs its own override:
    green means the same thing everywhere (a real, confirmed disc overlap). */
 
+/* Prediction-accuracy + wind-drift panel (v0.30.24) — two side-by-side
+   cards. Compact so the existing stats pile below it stays in reach. */
+.predstats-sub-h { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 8px; }
+.predstats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+.predstats-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+.predstats-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+  display: flex; justify-content: space-between; align-items: baseline;
+}
+.predstats-sub {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.predstats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.predstats-table th {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 500;
+  text-align: left;
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.predstats-table td {
+  padding: 3px 4px;
+  font-variant-numeric: tabular-nums;
+}
+.pe-bar-cell { width: 90px; }
+.pe-bar {
+  display: block;
+  height: 6px;
+  width: 0;
+  background: linear-gradient(to right, #34d058, #ffdd44, #ff5d5d);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+.predstats-foot {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.predstats-compass-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 4px 0 6px;
+}
+.predstats-compass { display: block; }
+.predstats-numbers {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.predstats-mag {
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
 /* F — detection funnel: three pure-CSS horizontal bars under Alert learning. */
 .detect-funnel {
   margin-top: 10px;

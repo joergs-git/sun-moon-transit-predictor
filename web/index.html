@@ -349,6 +349,83 @@
     </div>
   </section>
 
+  <!-- v0.30.24 — passive accuracy + wind-drift readout. Both feed the
+       FOV mini-chart's confidence gradient with REAL data; auto-correction
+       of extrapolate() stays off until the numbers have been eyeballed. -->
+  <section id="predstats-section">
+    <h2>Prediction accuracy &amp; wind drift
+      <span class="predstats-sub-h">collected continuously · not auto-applied yet</span>
+    </h2>
+    <p class="hint">
+      Two passive data streams. <b>Postmortem</b> compares each finished
+      transit candidate's tightest projected sep against the predicted sep at
+      ~90 s / ~30 s / ~10 s of remaining lead — bucketed so you can read
+      "at lead X, how far off does my prediction tend to be". <b>Drift sampler</b>
+      runs every tick over every aircraft &ge; 30° elevation and reports the
+      mean ground-track residual = today's systematic wind + ATC bias.
+      Auto-application to <code>extrapolate()</code> is intentionally OFF
+      until the numbers look stable; this panel shows the raw data.
+    </p>
+    <div class="predstats-grid">
+      <div class="predstats-card">
+        <div class="predstats-head">
+          Prediction error by lead time
+          <span class="predstats-sub" id="pe-total-n">n=0</span>
+        </div>
+        <table class="predstats-table" id="pe-table">
+          <thead><tr>
+            <th>Lead</th>
+            <th title="50th percentile — half of predictions were within this error.">p50</th>
+            <th title="95th percentile — only 5 % of predictions had a larger error than this.">p95</th>
+            <th>n</th>
+            <th title="p95 visualised against a 1° full-scale bar.">scale</th>
+          </tr></thead>
+          <tbody>
+            <tr><td>&gt; 90 s</td>
+              <td id="pe-90-p50">—</td><td id="pe-90-p95">—</td><td id="pe-90-n">—</td>
+              <td class="pe-bar-cell"><span class="pe-bar" id="pe-90-bar"></span></td></tr>
+            <tr><td>30-60 s</td>
+              <td id="pe-30-p50">—</td><td id="pe-30-p95">—</td><td id="pe-30-n">—</td>
+              <td class="pe-bar-cell"><span class="pe-bar" id="pe-30-bar"></span></td></tr>
+            <tr><td>&lt; 10 s</td>
+              <td id="pe-10-p50">—</td><td id="pe-10-p95">—</td><td id="pe-10-n">—</td>
+              <td class="pe-bar-cell"><span class="pe-bar" id="pe-10-bar"></span></td></tr>
+          </tbody>
+        </table>
+        <div class="predstats-foot">
+          Drift (final − best sep) across all postmortems:
+          p50 <b id="pe-drift-p50">—</b> · p95 <b id="pe-drift-p95">—</b>
+        </div>
+      </div>
+
+      <div class="predstats-card">
+        <div class="predstats-head">
+          Wind drift bias <span class="predstats-sub" id="pd-status">building…</span>
+        </div>
+        <div class="predstats-compass-wrap">
+          <svg id="pd-compass" viewBox="0 0 100 100" width="100" height="100" class="predstats-compass">
+            <circle cx="50" cy="50" r="42" fill="none" stroke="var(--line)" stroke-width="1"/>
+            <line x1="50" y1="8" x2="50" y2="14" stroke="var(--muted)" stroke-width="1"/>
+            <line x1="50" y1="86" x2="50" y2="92" stroke="var(--muted)" stroke-width="1"/>
+            <line x1="8" y1="50" x2="14" y2="50" stroke="var(--muted)" stroke-width="1"/>
+            <line x1="86" y1="50" x2="92" y2="50" stroke="var(--muted)" stroke-width="1"/>
+            <text x="50" y="6" text-anchor="middle" font-size="7" fill="var(--muted)">N</text>
+            <text x="96" y="52" text-anchor="end" font-size="7" fill="var(--muted)">E</text>
+            <text x="50" y="98" text-anchor="middle" font-size="7" fill="var(--muted)">S</text>
+            <text x="4" y="52" text-anchor="start" font-size="7" fill="var(--muted)">W</text>
+            <g id="pd-arrow"></g>
+          </svg>
+        </div>
+        <div class="predstats-numbers">
+          <div class="predstats-mag"><b id="pd-mag">—</b> m/s @ <b id="pd-bearing">—</b></div>
+          <div class="predstats-sub">N: <span id="pd-north">—</span> · E: <span id="pd-east">—</span></div>
+          <div class="predstats-sub">σN <span id="pd-stdn">—</span> · σE <span id="pd-stde">—</span></div>
+          <div class="predstats-sub">n=<span id="pd-n">0</span>, oldest <span id="pd-age">—</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="learning-section">
     <h2>Alert learning</h2>
     <p class="hint">

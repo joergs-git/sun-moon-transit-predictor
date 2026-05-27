@@ -579,6 +579,109 @@ function fmtFunnelCell(n, allN, highN) {
   return `<b>${n}</b> <span class="funnel-foot-frac">(${fmtPct(allN)} / ${fmtPct(highN)})</span>`;
 }
 
+// Prediction-accuracy + wind-drift panel (v0.30.24). Reads two state
+// fields written by the service:
+//   state.predictionStats   — bucketed p50/p95 of prediction error.
+//   state.driftBias         — rolling 4 h mean wind/ATC residual.
+// Both are "passive" — collected continuously, not yet auto-applied
+// to extrapolate(). This panel just surfaces the numbers so the user
+// can decide if/when to wire them in.
+function renderPredStats(pred, drift) {
+  // — Prediction error table —
+  const fmtDeg = (v) => (Number.isFinite(v) ? `${v.toFixed(2)}°` : '—');
+  // Bar scale: 1° full-width. Anything bigger clamps to 100% and shows
+  // ">" prefix on the value so the user knows the bar is saturated.
+  const PE_BAR_MAX_DEG = 1.0;
+  const setBar = (id, valDeg) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const w = Number.isFinite(valDeg)
+      ? Math.min(100, Math.max(2, (valDeg / PE_BAR_MAX_DEG) * 100))
+      : 0;
+    el.style.width = `${w}%`;
+  };
+  const setBucket = (id, bucket) => {
+    const pe = (k, v) => {
+      const el = document.getElementById(`pe-${id}-${k}`);
+      if (el) el.textContent = v;
+    };
+    if (!bucket || bucket.n === 0) {
+      pe('p50', '—'); pe('p95', '—'); pe('n', '0');
+      setBar(`pe-${id}-bar`, null);
+      return;
+    }
+    pe('p50', fmtDeg(bucket.p50));
+    pe('p95', fmtDeg(bucket.p95));
+    pe('n', String(bucket.n));
+    setBar(`pe-${id}-bar`, bucket.p95);
+  };
+  const totalEl = document.getElementById('pe-total-n');
+  if (totalEl) totalEl.textContent = `n=${pred?.total ?? 0}`;
+  setBucket('90', pred?.buckets?.['>90s']);
+  setBucket('30', pred?.buckets?.['30-60s']);
+  setBucket('10', pred?.buckets?.['<10s']);
+  const driftP50 = document.getElementById('pe-drift-p50');
+  const driftP95 = document.getElementById('pe-drift-p95');
+  if (driftP50) driftP50.textContent = fmtDeg(pred?.drift?.p50);
+  if (driftP95) driftP95.textContent = fmtDeg(pred?.drift?.p95);
+
+  // — Wind drift card —
+  const statusEl = document.getElementById('pd-status');
+  const arrowEl = document.getElementById('pd-arrow');
+  const set = (id, v) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = v;
+  };
+  const fmtAgeMs = (ms) => {
+    if (!Number.isFinite(ms) || ms < 0) return '—';
+    const s = Math.round(ms / 1000);
+    if (s < 90) return `${s}s ago`;
+    const m = Math.round(s / 60);
+    if (m < 90) return `${m}m ago`;
+    return `${(m / 60).toFixed(1)}h ago`;
+  };
+  if (!drift || drift.building) {
+    if (statusEl) statusEl.textContent = `building… (${drift?.n ?? 0}/25)`;
+    set('pd-mag', '—');
+    set('pd-bearing', '—');
+    set('pd-north', '—');
+    set('pd-east', '—');
+    set('pd-stdn', '—');
+    set('pd-stde', '—');
+    set('pd-n', String(drift?.n ?? 0));
+    set('pd-age', '—');
+    if (arrowEl) arrowEl.innerHTML = '';
+    return;
+  }
+  // Arrow length scales 0-15 m/s → 0-32 px (radius - margin).
+  const MAX_VIS_MS = 15;
+  const magPx = Math.min(32, Math.max(4, (drift.magnitudeMs / MAX_VIS_MS) * 32));
+  // SVG bearing convention: 0° = north (up = -y in SVG). Convert
+  // bearingDeg to SVG angle: rotate the arrow head from up.
+  const rad = (drift.bearingDeg * Math.PI) / 180;
+  const tipX = 50 + magPx * Math.sin(rad);
+  const tipY = 50 - magPx * Math.cos(rad);
+  if (arrowEl) {
+    arrowEl.innerHTML =
+      `<line x1="50" y1="50" x2="${tipX.toFixed(1)}" y2="${tipY.toFixed(1)}" stroke="#6cb6ff" stroke-width="2"/>` +
+      `<circle cx="${tipX.toFixed(1)}" cy="${tipY.toFixed(1)}" r="2.5" fill="#6cb6ff"/>` +
+      `<circle cx="50" cy="50" r="2" fill="#6cb6ff"/>`;
+  }
+  if (statusEl) statusEl.textContent = 'live';
+  // Bearing label: numeric + compass octant.
+  const compass = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  const oct = compass[Math.round((drift.bearingDeg % 360) / 45) % 8];
+  set('pd-mag', drift.magnitudeMs.toFixed(1));
+  set('pd-bearing', `${Math.round(drift.bearingDeg)}° ${oct}`);
+  const signed = (v) => (Number.isFinite(v) ? (v >= 0 ? '+' : '') + v.toFixed(1) : '—');
+  set('pd-north', `${signed(drift.meanNorthMs)} m/s`);
+  set('pd-east', `${signed(drift.meanEastMs)} m/s`);
+  set('pd-stdn', `${(drift.stdNorthMs ?? 0).toFixed(1)} m/s`);
+  set('pd-stde', `${(drift.stdEastMs ?? 0).toFixed(1)} m/s`);
+  set('pd-n', String(drift.n));
+  set('pd-age', fmtAgeMs(drift.ageMs));
+}
+
 function renderDetectFunnelLifetime(life) {
   const block = $('#funnel-lifetime');
   if (!block) return;
@@ -723,6 +826,7 @@ async function pollState() {
     renderTracking(state);
     renderTotalLive(state);
     renderDetectFunnel(state.detectStats);
+    renderPredStats(state.predictionStats, state.driftBias);
     // Push live optics into the FOV sketch module so a Settings edit is
     // reflected on the next render of the inline preview pane.
     if (state.optics) {
