@@ -365,10 +365,23 @@
       transit candidate's tightest projected sep against the predicted sep at
       ~90 s / ~30 s / ~10 s of remaining lead — bucketed so you can read
       "at lead X, how far off does my prediction tend to be". <b>Drift sampler</b>
-      runs every tick over every aircraft &ge; 30° elevation and reports the
+      runs every tick over every aircraft &ge; 20° elevation and reports the
       mean ground-track residual = today's systematic wind + ATC bias.
       Auto-application to <code>extrapolate()</code> is intentionally OFF
       until the numbers look stable; this panel shows the raw data.
+    </p>
+    <p class="hint">
+      <b>Why the &lt; 10 s bucket fills slowly:</b> ADS-B itself almost never
+      drops out (most flights emit ~30-60 squitters/min throughout reception).
+      What drops out is the <i>transit candidate</i> — the moment a flight's
+      projected path drifts outside the 2° panel band (course tweak by ATC,
+      wind shift, slight altitude change) the tracker stops emitting it
+      and the lifecycle entry goes stale-faded. The aircraft is still in
+      dump1090, just no longer on a Sun/Moon-bound trajectory in our
+      prediction window. 80-90 % of candidates fade this way before
+      reaching imminent stage; only the &lt;1 in 5 that hold their track all
+      the way to closest approach contribute to the 30-60 s and &lt;10 s
+      buckets — those are your imminent-confirmed history rows.
     </p>
     <div class="predstats-grid">
       <div class="predstats-card">
