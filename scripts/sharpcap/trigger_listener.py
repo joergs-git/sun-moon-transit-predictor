@@ -491,15 +491,19 @@ def _robocopy_transfer(src, dest, move):
 
 def _filename_tags(meta):
     """Build the trailing _-separated tag list spliced into transferred .ser
-    file names (v0.30.33). Order: body, port, icao, sep -- so grep/sort
-    naturally groups recordings by body first.
-      body  -> 'Sun' or 'Moon' from meta.body
-      port  -> always present (this listener's PORT)
-      icao  -> lowercase hex from meta.icao
-      sep   -> deg*100 zero-padded to 3 digits ('sep021' = 0.21 deg)
+    file names. Order: body, port, icao, route, sep -- so grep/sort
+    naturally groups by body first, then digs into airframe and route.
+      body   -> 'Sun' or 'Moon' from meta.body
+      port   -> always present (this listener's PORT)
+      icao   -> lowercase hex from meta.icao
+      route  -> '<origin>-<destination>' (IATA, ICAO fallback) when both
+                ends are known (v0.30.36)
+      sep    -> deg*100 zero-padded to 3 digits ('sep021' = 0.21 deg)
     Sep encoded as deg*100 to dodge the decimal point and keep file
-    names shell-safe. Body and icao only emitted when meta carries them
-    (a manual-test trigger has no meta -> just port).
+    names shell-safe. Each field is only emitted when meta carries it
+    (a manual-test trigger has no meta -> just port). Route is only
+    emitted when BOTH endpoints exist -- an asymmetric '?-LHR' would
+    just clutter the name without adding searchable structure.
     """
     tags = []
     if isinstance(meta, dict):
@@ -511,6 +515,15 @@ def _filename_tags(meta):
         icao = meta.get("icao")
         if icao:
             tags.append(str(icao).lower())
+        origin = meta.get("origin")
+        destination = meta.get("destination")
+        if origin and destination:
+            # Strip any internal whitespace / slashes that an exotic route
+            # entry could carry -- the filename must stay shell-safe.
+            o = str(origin).replace("/", "").replace(" ", "")
+            d = str(destination).replace("/", "").replace(" ", "")
+            if o and d:
+                tags.append("{}-{}".format(o, d))
         sep = meta.get("sepDeg")
         if sep is not None:
             try:
