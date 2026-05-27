@@ -171,6 +171,11 @@ export function fromLifecycleEntry(entry) {
       ? ic.closestApproachSepDeg : null,
     initialTransitPath: ic && ic !== c && Array.isArray(ic.transitPath)
       ? ic.transitPath : [],
+    // v0.30.21: per-tick prediction history for the FOV mini-chart
+    // overlay (lead-time on X, predicted sep on Y, segment colour by
+    // confidence bucket).
+    predictionHistory: Array.isArray(entry.predictionHistory)
+      ? entry.predictionHistory : [],
   };
 }
 
@@ -360,6 +365,99 @@ function fmtRange(m) {
  * @param {SketchInput} d
  * @returns {string} SVG markup.
  */
+/**
+ * Small "prediction drift over time" overlay drawn in the top-right
+ * corner of the FOV widget. Reads `d.predictionHistory` (per-tick
+ * snapshots of the projected closest-approach sep + leadTime). Each
+ * line segment is coloured by its midpoint's lead time on a green ->
+ * yellow -> red gradient (low lead = high confidence = green; high
+ * lead = low confidence = red). Empty when the history has fewer than
+ * two valid samples. v0.30.21.
+ */
+function buildPredictionChart(d, wX, wY, wW, wH) {
+  const hist = (d.predictionHistory ?? [])
+    .filter((p) => Number.isFinite(p.leadMs) && Number.isFinite(p.sepDeg));
+  if (hist.length < 2) return '';
+
+  const CW = 132;
+  const CH = 56;
+  const cX = wX + wW - CW - 4;          // top-right of widget rect
+  const cY = wY + 4;
+  const PAD_IN_L = 16;                  // y-axis label gutter
+  const PAD_IN_R = 4;
+  const PAD_IN_T = 12;                  // title row
+  const PAD_IN_B = 11;                  // x-axis tick row
+  const plotX = cX + PAD_IN_L;
+  const plotY = cY + PAD_IN_T;
+  const plotW = CW - PAD_IN_L - PAD_IN_R;
+  const plotH = CH - PAD_IN_T - PAD_IN_B;
+
+  // Domain
+  const leads = hist.map((p) => p.leadMs);
+  const seps = hist.map((p) => p.sepDeg);
+  const leadMin = Math.min(...leads);
+  const leadMax = Math.max(...leads);
+  const sepMin = Math.min(...seps);
+  const sepMax = Math.max(...seps);
+  const leadRange = Math.max(1, leadMax - leadMin);
+  const sepPad = Math.max(0.02, (sepMax - sepMin) * 0.15);
+  const sepLo = Math.max(0, sepMin - sepPad);
+  const sepHi = sepMax + sepPad;
+  const sepRange = Math.max(0.01, sepHi - sepLo);
+
+  // Higher lead = lower confidence = further left on the chart (older
+  // prediction); lead approaching 0 = ETA imminent = right edge.
+  const xOf = (lead) => plotX + plotW * (1 - (lead - leadMin) / leadRange);
+  // Lower sep = better = bottom of chart; higher sep = drift = top.
+  const yOf = (sep) => plotY + plotH * (1 - (sep - sepLo) / sepRange);
+
+  const hueForLead = (leadMs) => {
+    // Confidence gradient: 0 ms lead -> 120 (green), 90 s+ lead -> 0 (red),
+    // linear interpolation between. Beyond 90 s clamps to red.
+    const t = Math.max(0, Math.min(1, leadMs / 90_000));
+    return (120 * (1 - t)).toFixed(0);
+  };
+  const stroke = (leadMs) => `hsl(${hueForLead(leadMs)}, 70%, 55%)`;
+
+  let svg = '';
+  // Backing card so the chart reads against busy FOV content underneath.
+  svg += `<rect x="${cX}" y="${cY}" width="${CW}" height="${CH}" `
+       + `fill="rgba(14,16,22,0.88)" stroke="#3a3f4a" stroke-width="0.5" rx="3"/>`;
+  // Title + axis labels
+  svg += txt(cX + 6, cY + 9, 'sep ° over time', { fill: '#9aa0a6', size: 7 });
+  svg += txt(cX + CW - 4, cY + 9, sepRange < 9 ? seps[seps.length - 1].toFixed(2) + '°' : '—', {
+    fill: stroke(leads[leads.length - 1]), size: 8, anchor: 'end', weight: 600,
+  });
+  // x-axis tick labels: leftmost = oldest lead, rightmost = current
+  svg += txt(plotX, cY + CH - 2,
+    '-' + Math.round(leadMax / 1000) + 's',
+    { fill: '#6a6f76', size: 7 });
+  svg += txt(plotX + plotW, cY + CH - 2,
+    leadMin <= 0 ? 'past ETA' : '-' + Math.round(leadMin / 1000) + 's',
+    { fill: '#6a6f76', size: 7, anchor: 'end' });
+  // y-axis bounds
+  svg += txt(cX + 4, plotY + 4, sepHi.toFixed(2),
+    { fill: '#6a6f76', size: 6.5 });
+  svg += txt(cX + 4, plotY + plotH,
+    sepLo.toFixed(2),
+    { fill: '#6a6f76', size: 6.5 });
+
+  // Coloured line segments — one per pair of consecutive samples.
+  for (let i = 1; i < hist.length; i++) {
+    const a = hist[i - 1];
+    const b = hist[i];
+    const mid = (a.leadMs + b.leadMs) / 2;
+    svg += `<line x1="${xOf(a.leadMs).toFixed(1)}" y1="${yOf(a.sepDeg).toFixed(1)}" `
+         + `x2="${xOf(b.leadMs).toFixed(1)}" y2="${yOf(b.sepDeg).toFixed(1)}" `
+         + `stroke="${stroke(mid)}" stroke-width="1.4"/>`;
+  }
+  // Highlight the latest sample with a small dot.
+  const last = hist[hist.length - 1];
+  svg += `<circle cx="${xOf(last.leadMs).toFixed(1)}" cy="${yOf(last.sepDeg).toFixed(1)}" `
+       + `r="2" fill="${stroke(last.leadMs)}"/>`;
+  return svg;
+}
+
 export function buildSketchSvg(d) {
   // FOV pixel rectangle, padded to leave room for top header and bottom
   // legend. Aspect ratio is locked to the sensor's, not the SVG canvas.
@@ -796,6 +894,7 @@ export function buildSketchSvg(d) {
     initialGlyphSvg +
     pathSvg +
     acGroup +
+    buildPredictionChart(d, widgetX, widgetY, widgetW, widgetH) +
     nowMarker +
     axisLabels +
     compass +
