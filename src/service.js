@@ -343,6 +343,15 @@ export async function runService({
 }) {
   const config = mergeConfig(userConfig);
   const store = providedStore ?? new HistoryStore(config.store.path);
+  // v0.30.29: one-shot migration. Postmortem rows written under the old
+  // strict-tolerance nearestSepAt have NULL checkpoint columns even
+  // though their history_json contains plenty of samples that would now
+  // qualify under range-bucket semantics. Re-derive the checkpoint sep
+  // for those rows on startup so the existing data isn't wasted.
+  try {
+    const filled = store.backfillPostmortemCheckpoints?.() ?? 0;
+    if (filled > 0) logger.info?.(`postmortem: backfilled ${filled} rows with range-bucket checkpoint seps`);
+  } catch (e) { logger.warn?.('postmortem backfill failed:', e?.message ?? e); }
   const pushover = new PushoverClient(config.pushover, { fetchImpl });
   const routeLookup = config.routes.enabled
     ? new RouteLookup({ fetchImpl, ttlMs: config.routes.ttlMs, negativeTtlMs: config.routes.negativeTtlMs })
@@ -584,7 +593,7 @@ export async function runService({
   const DRIFT_CAP = 4000;                     // hard cap so memory stays bounded
   const DRIFT_MIN_DT_S = 0.5;                 // ignore back-to-back ADS-B updates
   const DRIFT_MAX_DT_S = 30;                  // skip long gaps (extrapolation breaks)
-  const DRIFT_OUTLIER_MS = 30;                // clamp aggressive maneuvers / ATC vectors
+  const DRIFT_OUTLIER_MS = 15;                // clamp aggressive maneuvers / ATC vectors (v0.30.29: was 30 m/s — too permissive, σE was ~9× the mean)
   const DRIFT_MIN_ELEV_DEG = 30;              // user's "above 30°" gate
   const previousFixes = new Map();            // icao -> last seen ac object
   /** @type {Array<{tMs:number, dNorthMs:number, dEastMs:number, dUpMs:number}>} */

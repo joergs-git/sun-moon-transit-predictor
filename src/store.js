@@ -571,22 +571,38 @@ export class HistoryStore {
     if (!args || !args.icao || !args.body) return;
     const hist = Array.isArray(args.predictionHistory) ? args.predictionHistory : [];
     if (!hist.length) return;
-    // Pick the sample whose leadMs is closest to a target lead. Returns
-    // null if no sample even comes near that lead (within ±25 % window),
-    // so an entry that was only seen for the last few seconds doesn't
-    // pollute the >30 s / >90 s buckets with the same one near-zero
-    // sample over and over.
-    const nearestSepAt = (targetSec) => {
-      const targetMs = targetSec * 1000;
-      const tolMs = Math.max(targetMs * 0.25, 2_000);
+    // v0.30.29: range-bucket semantics. The earlier "nearest-with-±25%"
+    // approach demanded a sample within a narrow window (e.g. lead 10 s
+    // ±2.5 s = 2 sample positions on a 2-second tick cadence), and lots
+    // of episodes ended without hitting any of the three windows -- the
+    // user saw n=7 postmortems with 0 in every bucket after 90 minutes
+    // of operation. Now each checkpoint owns a NON-OVERLAPPING range and
+    // returns the sample nearest the target inside that range, so any
+    // entry tracked past the range's lower edge contributes:
+    //
+    //   90 s checkpoint -> samples with leadMs >= 60 s (nearest 90 s)
+    //   30 s checkpoint -> 15 s <= leadMs < 60 s        (nearest 30 s)
+    //   10 s checkpoint -> leadMs < 15 s                (nearest 10 s)
+    //
+    // The 10 s bucket admits slight past-ETA samples (leadMs < 0) too,
+    // so entries that went stale just past the ETA still report a near-
+    // closest projection rather than dropping out.
+    const nearestInRangeMs = (targetMs, loMs, hiMs) => {
       let best = null;
       let bestDist = Infinity;
       for (const h of hist) {
         if (!Number.isFinite(h.leadMs) || !Number.isFinite(h.sepDeg)) continue;
+        if (h.leadMs < loMs || h.leadMs >= hiMs) continue;
         const d = Math.abs(h.leadMs - targetMs);
         if (d < bestDist) { bestDist = d; best = h; }
       }
-      return best && bestDist <= tolMs ? best.sepDeg : null;
+      return best ? best.sepDeg : null;
+    };
+    const nearestSepAt = (targetSec) => {
+      const ms = targetSec * 1000;
+      if (targetSec >= 90) return nearestInRangeMs(ms, 60_000, Infinity);
+      if (targetSec >= 30) return nearestInRangeMs(ms, 15_000, 60_000);
+      return nearestInRangeMs(ms, -Infinity, 15_000);
     };
     const best = Number.isFinite(args.bestSepDeg) ? args.bestSepDeg : null;
     const final = Number.isFinite(args.finalSepDeg) ? args.finalSepDeg : null;
@@ -610,6 +626,54 @@ export class HistoryStore {
       nearestSepAt(90), nearestSepAt(30), nearestSepAt(10),
       JSON.stringify(hist),
     );
+  }
+
+  /**
+   * Re-compute the sep_at_90s / sep_at_30s / sep_at_10s columns on
+   * postmortem rows that still have them NULL. Used on service startup
+   * to apply the v0.30.29 range-bucket semantics to rows written under
+   * the old strict-tolerance logic. Idempotent: rows that already have
+   * non-null checkpoints are skipped. Returns the number of rows
+   * touched so the caller can log it.
+   */
+  backfillPostmortemCheckpoints() {
+    const rows = this.db.prepare(`
+      SELECT id, history_json
+      FROM transit_postmortem
+      WHERE history_json IS NOT NULL
+        AND (sep_at_90s_deg IS NULL AND sep_at_30s_deg IS NULL AND sep_at_10s_deg IS NULL)
+    `).all();
+    if (!rows.length) return 0;
+    const upd = this.db.prepare(`
+      UPDATE transit_postmortem
+      SET sep_at_90s_deg = ?, sep_at_30s_deg = ?, sep_at_10s_deg = ?
+      WHERE id = ?
+    `);
+    let touched = 0;
+    for (const r of rows) {
+      let hist;
+      try { hist = JSON.parse(r.history_json); }
+      catch { continue; }
+      if (!Array.isArray(hist) || !hist.length) continue;
+      const nearestInRangeMs = (targetMs, loMs, hiMs) => {
+        let best = null;
+        let bestDist = Infinity;
+        for (const h of hist) {
+          if (!Number.isFinite(h?.leadMs) || !Number.isFinite(h?.sepDeg)) continue;
+          if (h.leadMs < loMs || h.leadMs >= hiMs) continue;
+          const d = Math.abs(h.leadMs - targetMs);
+          if (d < bestDist) { bestDist = d; best = h; }
+        }
+        return best ? best.sepDeg : null;
+      };
+      const s90 = nearestInRangeMs(90_000, 60_000, Infinity);
+      const s30 = nearestInRangeMs(30_000, 15_000, 60_000);
+      const s10 = nearestInRangeMs(10_000, -Infinity, 15_000);
+      if (s90 == null && s30 == null && s10 == null) continue;
+      upd.run(s90, s30, s10, r.id);
+      touched += 1;
+    }
+    return touched;
   }
 
   /**
