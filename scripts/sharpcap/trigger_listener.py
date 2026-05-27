@@ -225,6 +225,16 @@ _capture_files = {}     # captureId -> { tMs: epoch_ms, paths: [...] }
 _CAPTURE_FILES_TTL_MS = 24 * 3600_000
 _CAPTURE_FILES_CAP = 1000
 
+# v0.30.34 -- outcome arrival signalling. _transfer_new_files now waits up
+# to OUTCOME_WAIT_S after the source file finished writing for an outcome
+# message; when one arrives during the wait, _apply_outcome renames the
+# LOCAL source on SSD (instant), then the transfer to NAS runs against the
+# final tagged name. Avoids the race where a 20 GB file is still being
+# uploaded when the outcome packet would have wanted to rename it.
+_outcome_events_lock = threading.Lock()
+_outcome_events = {}     # capture_id -> threading.Event
+OUTCOME_WAIT_S = 120
+
 
 def _remember_capture_files(capture_id, paths):
     if not capture_id or not paths:
@@ -251,26 +261,37 @@ def _remember_capture_files(capture_id, paths):
 def _apply_outcome(capture_id, verdict, final_sep_deg):
     """Rename every still-present file recorded under capture_id by
     appending '_<verdict>' (and optionally '_finalsepNNN') before the
-    extension. Returns (renamed_count, missing_count) for the reply."""
+    extension. Updates _capture_files in place so a subsequent transfer
+    step picks up the new (verdict-tagged) name. v0.30.34: this is what
+    makes the 'rename on SSD BEFORE transfer' flow work -- the
+    _transfer_new_files thread waits on _outcome_events[capture_id]; the
+    moment we set that event the transfer reads the updated path list
+    out of _capture_files and uploads the already-verdict-tagged file
+    to the NAS, so the rename doesn't have to race the upload.
+    Returns (renamed_count, missing_count) for the reply."""
     if not capture_id or not verdict:
         return (0, 0)
     verdict = str(verdict).lower()
     if verdict not in ("confirmed", "probempty"):
         return (0, 0)
-    with _capture_files_lock:
-        entry = _capture_files.get(capture_id)
-        paths = list(entry["paths"]) if entry else []
-    renamed = 0
-    missing = 0
     extra_tag = ""
     if final_sep_deg is not None:
         try:
             extra_tag = "_finalsep{:03d}".format(int(round(float(final_sep_deg) * 100)))
         except (TypeError, ValueError):
             extra_tag = ""
+    with _capture_files_lock:
+        entry = _capture_files.get(capture_id)
+        paths = list(entry["paths"]) if entry else []
+    if not paths:
+        return (0, 0)
+    renamed = 0
+    missing = 0
+    new_paths = []
     for old_path in paths:
         try:
             if not os.path.isfile(old_path):
+                new_paths.append(old_path)
                 missing += 1
                 continue
             d = os.path.dirname(old_path)
@@ -278,18 +299,25 @@ def _apply_outcome(capture_id, verdict, final_sep_deg):
             # Don't double-tag if a previous outcome already ran on this
             # file (e.g. retry / network hiccup).
             if "_confirmed" in base or "_probempty" in base:
+                new_paths.append(old_path)
                 missing += 1
                 continue
             new_path = os.path.join(d, "{}_{}{}{}".format(base, verdict, extra_tag, ext))
-            # Skip if target name happens to exist already (very rare;
-            # unique_dest at write time normally prevents it).
             if os.path.exists(new_path):
+                new_paths.append(old_path)
                 missing += 1
                 continue
             os.rename(old_path, new_path)
+            new_paths.append(new_path)
             renamed += 1
         except OSError:
             _log("outcome rename failed for {!r}:\n{}".format(old_path, traceback.format_exc()))
+            new_paths.append(old_path)
+    # Update _capture_files so any subsequent step (transfer to NAS,
+    # late-arriving second outcome) reads the new path names.
+    with _capture_files_lock:
+        if capture_id in _capture_files:
+            _capture_files[capture_id]["paths"] = new_paths
     return (renamed, missing)
 
 
@@ -523,58 +551,100 @@ def _transfer_new_files(pre_snapshot, label, meta=None, capture_id=None):
         _log("transfer: cannot create dest dir {!r}:\n{}".format(SER_DEST_DIR, traceback.format_exc()))
         return
 
+    # -- Phase 1: wait-until-stable + LOCAL tag rename --------------------
+    # On big captures (20 GB+) the SSD->NAS transfer takes many minutes,
+    # which is far longer than the predictor's 60 s outcome dispatch.
+    # Renaming the source file on the LOCAL SSD with the meta tags FIRST
+    # (and then with the verdict tag once the outcome arrives) means
+    # the long-running NAS copy ALWAYS sees the final filename and the
+    # user gets a correctly-tagged file on the share without any race.
+    # v0.30.34.
+    local_paths = []
+    sigs = []
     for src in files:
         try:
-            # Block until SharpCap has stopped growing the file (handle freed)
-            # before we touch it -- never transfer a half-written capture.
             if not _wait_until_stable(src):
-                _log("transfer {!r}: {} vanished before transfer".format(label, src))
+                _log("transfer {!r}: {} vanished before tagging".format(label, src))
                 continue
             sig = _signature(src)
             with _transferred_lock:
                 if sig in _transferred:
                     continue
-            # v0.30.3 / v0.30.32: splice port + ICAO + predicted-sep into
-            # the destination filename so two rigs on the same machine can
-            # share a dest dir AND so the user can grep/sort recordings by
-            # airframe / band without opening each file. The tag tail is
-            # whatever _filename_tags() can extract from the trigger's meta
-            # block.
-            #
-            # Example transformation:
-            #   2026-05-25-1820_2-Moon.ser
-            #   -> 2026-05-25-1820_2-Moon_p9999_4080e9_sep021.ser
-            src_base = os.path.basename(src)
-            base, ext = os.path.splitext(src_base)
-            # v0.30.33: strip trailing underscores from the SharpCap-
-            # provided base name. SharpCap's default filename template
-            # often ends with a separator (e.g. '%h%_%m%_%s%_%Object%')
-            # which gives a base like '16_43_08_' when Object Name is
-            # blank -- without this strip the concatenation produced
-            # '16_43_08__p9999.ser' with a doubled underscore.
+            src_dir = os.path.dirname(src)
+            base, ext = os.path.splitext(os.path.basename(src))
             base = base.rstrip("_")
-            tagged = "{}_{}{}".format(base, _filename_tags(meta), ext)
-            dest = _unique_dest(tagged)
-            verb = "moved" if TRANSFER_MOVE else "copied"
+            tagged_name = "{}_{}{}".format(base, _filename_tags(meta), ext)
+            tagged_src = os.path.join(src_dir, tagged_name)
+            if tagged_src != src:
+                try:
+                    if os.path.exists(tagged_src):
+                        # An unlikely collision -- fall back to original.
+                        tagged_src = src
+                    else:
+                        os.rename(src, tagged_src)
+                except OSError:
+                    _log("transfer {!r}: local rename failed for {}:\n{}".format(
+                        label, src, traceback.format_exc()))
+                    tagged_src = src
+            local_paths.append(tagged_src)
+            sigs.append(sig)
+            _log("transfer {!r}: source tagged locally -> {}".format(label, tagged_src))
+        except Exception:
+            _log("transfer {!r}: tag-phase failed for {}:\n{}".format(label, src, traceback.format_exc()))
+
+    if not local_paths:
+        return
+    if capture_id:
+        _remember_capture_files(capture_id, local_paths)
+
+    # -- Phase 2: wait for the predictor's outcome message ---------------
+    # The outcome packet arrives ~60 s after the lifecycle entry settles
+    # (typically ~T+115 s for past-eta entries). _apply_outcome will
+    # rename the SOURCE files in place (instant on SSD); we just block
+    # here with a hard cap so a never-arriving outcome doesn't stall the
+    # transfer forever.
+    if capture_id:
+        with _outcome_events_lock:
+            ev = threading.Event()
+            _outcome_events[capture_id] = ev
+        try:
+            if ev.wait(OUTCOME_WAIT_S):
+                _log("transfer {!r}: outcome received, proceeding to NAS".format(label))
+            else:
+                _log("transfer {!r}: outcome timed out after {} s, transferring un-verdicted".format(label, OUTCOME_WAIT_S))
+        finally:
+            with _outcome_events_lock:
+                _outcome_events.pop(capture_id, None)
+
+    # -- Phase 3: re-read current paths (outcome may have renamed) -------
+    if capture_id:
+        with _capture_files_lock:
+            entry = _capture_files.get(capture_id)
+            current_paths = list(entry["paths"]) if entry else local_paths
+    else:
+        current_paths = local_paths
+
+    # -- Phase 4: transfer to NAS using the final filename ---------------
+    new_nas_paths = []
+    verb = "moved" if TRANSFER_MOVE else "copied"
+    for idx, src in enumerate(current_paths):
+        try:
+            if not os.path.isfile(src):
+                _log("transfer {!r}: {} missing before NAS copy".format(label, src))
+                continue
+            dest = _unique_dest(os.path.basename(src))
             t0 = time.time()
             try_robocopy_first = (os.name == "nt"
                                   and SER_DEST_DIR
                                   and os.path.isabs(dest))
             done = False
             if try_robocopy_first:
-                # v0.30.12: prefer robocopy over shutil for the actual
-                # bytes-on-the-wire move. Python's shutil.copyfile uses a
-                # ~1 MB userspace loop on Windows; over SMB to a NAS that
-                # leaves significant bandwidth on the table compared to
-                # CopyFileEx-based tools. robocopy is Windows-native,
-                # multi-threaded (/MT), restartable (/Z) and quieter
-                # (/NJH /NJS /NP). It cannot rename during transfer, so
-                # the port-tag rename happens as a cheap local os.rename
-                # against the just-arrived file.
+                # robocopy: multi-threaded SMB-aware; same basename so no
+                # post-copy rename needed any more (the meta + verdict
+                # tags are already in src). Falls back to shutil on any
+                # error.
                 done = _robocopy_transfer(src, dest, TRANSFER_MOVE)
             if not done:
-                # shutil fallback (non-Windows, or robocopy unavailable
-                # for any reason). Same semantics, just slower over SMB.
                 if TRANSFER_MOVE:
                     shutil.move(src, dest)
                 else:
@@ -588,14 +658,20 @@ def _transfer_new_files(pre_snapshot, label, meta=None, capture_id=None):
             except OSError:
                 _log("transfer {!r}: {} {} -> {} ({:.1f} s)".format(
                     label, verb, src, dest, dt))
-            with _transferred_lock:
-                _transferred.add(sig)
-            # Remember the destination so a follow-up 'outcome' message
-            # from the predictor can rename it with the _confirmed /
-            # _probempty verdict tag. v0.30.33.
-            _remember_capture_files(capture_id, [dest])
+            if idx < len(sigs):
+                with _transferred_lock:
+                    _transferred.add(sigs[idx])
+            new_nas_paths.append(dest)
         except Exception:
-            _log("transfer {!r}: failed for {}:\n{}".format(label, src, traceback.format_exc()))
+            _log("transfer {!r}: NAS-phase failed for {}:\n{}".format(label, src, traceback.format_exc()))
+
+    # Update _capture_files with NAS paths so a LATE outcome (arriving
+    # after Phase 2 timed out but the file made it to the NAS) can still
+    # rename the dest-side file.
+    if capture_id and new_nas_paths:
+        with _capture_files_lock:
+            if capture_id in _capture_files:
+                _capture_files[capture_id]["paths"] = new_nas_paths
 
 
 # SharpCap is a WPF .NET app and its capture-writer init is UI-thread-affine.
@@ -781,6 +857,14 @@ def _handle_conn(conn, addr):
             verdict = req.get("verdict")
             final_sep = req.get("finalSepDeg")
             renamed, missing = _apply_outcome(cap_id, verdict, final_sep)
+            # Wake any _transfer_new_files thread currently blocked on
+            # this captureId so the transfer step uses the freshly-
+            # renamed (verdict-tagged) source file instead of starting
+            # the multi-minute SSD->NAS copy under the meta-only name.
+            with _outcome_events_lock:
+                ev = _outcome_events.get(cap_id)
+            if ev is not None:
+                ev.set()
             _log("outcome {!r}: verdict={} renamed={} missing={}".format(
                 cap_id, verdict, renamed, missing))
             reply = '{{"ok": true, "renamed": {}, "missing": {}}}\n'.format(renamed, missing)
