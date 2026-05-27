@@ -616,7 +616,20 @@ function renderPredStats(pred, drift) {
     setBar(`pe-${id}-bar`, bucket.p95);
   };
   const totalEl = document.getElementById('pe-total-n');
-  if (totalEl) totalEl.textContent = `n=${pred?.total ?? 0}`;
+  if (totalEl) {
+    const total = pred?.total ?? 0;
+    const bucketSum = (pred?.buckets?.['>90s']?.n ?? 0)
+                   + (pred?.buckets?.['30-60s']?.n ?? 0)
+                   + (pred?.buckets?.['<10s']?.n ?? 0);
+    // When postmortem rows exist but none has a sample near any of the
+    // three checkpoint leads, the buckets stay empty. Flag it explicitly
+    // so the user doesn't read 'n=5' and wonder why every row is "—".
+    if (total > 0 && bucketSum === 0) {
+      totalEl.textContent = `n=${total} · checkpoints empty (entries detected too late to hit 90/30/10 s windows)`;
+    } else {
+      totalEl.textContent = `n=${total}`;
+    }
+  }
   setBucket('90', pred?.buckets?.['>90s']);
   setBucket('30', pred?.buckets?.['30-60s']);
   setBucket('10', pred?.buckets?.['<10s']);
@@ -667,7 +680,18 @@ function renderPredStats(pred, drift) {
       `<circle cx="${tipX.toFixed(1)}" cy="${tipY.toFixed(1)}" r="2.5" fill="#6cb6ff"/>` +
       `<circle cx="50" cy="50" r="2" fill="#6cb6ff"/>`;
   }
-  if (statusEl) statusEl.textContent = 'live';
+  // Signal-to-noise check: if the mean drift magnitude is comparable to
+  // (or smaller than) the per-axis standard deviation, the bias estimate
+  // is statistically weak — flag it so the user doesn't trust a noisy
+  // few-hundred-sample bias as real wind.
+  const maxStd = Math.max(drift.stdNorthMs ?? 0, drift.stdEastMs ?? 0);
+  const lowSignal = maxStd > 0 && drift.magnitudeMs < maxStd;
+  if (statusEl) {
+    statusEl.textContent = lowSignal ? 'live · low signal' : 'live';
+    statusEl.title = lowSignal
+      ? 'Mean drift magnitude is smaller than the per-axis stddev — the bias estimate is dominated by individual-aircraft manoeuvres. Wait for the rolling window to fill more samples or until the wind/ATC pattern stabilises.'
+      : 'Rolling window has enough samples for the mean drift vector to be statistically meaningful.';
+  }
   // Bearing label: numeric + compass octant.
   const compass = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   const oct = compass[Math.round((drift.bearingDeg % 360) / 45) % 8];
