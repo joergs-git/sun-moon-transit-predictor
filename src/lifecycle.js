@@ -150,6 +150,26 @@ export function updateLifecycle({
     const initialCandidate = (prevWasLive && prevEntry.initialCandidate)
       ? prevEntry.initialCandidate
       : c;
+
+    // v0.30.20 — per-tick prediction time series for retrospective drift
+    // analysis. Each entry { tMs, leadMs, sepDeg, closestAtMs } captures
+    // "at THIS tick we projected sep X at lead Y". Capped at 60 ticks
+    // (~ 2 minutes at the default 2-second cadence) so a long-lived
+    // entry doesn't bloat the lifecycle map. The frontend FOV mini-chart
+    // reads this directly; the post-mortem writer aggregates it into
+    // accuracy stats once the entry goes stale.
+    const PREDICTION_HISTORY_CAP = 60;
+    const prevHistory = (prevWasLive && Array.isArray(prevEntry.predictionHistory))
+      ? prevEntry.predictionHistory
+      : [];
+    const predictionHistory = Number.isFinite(currSep) && Number.isFinite(c.closestApproachAtMs)
+      ? prevHistory.concat({
+        tMs: nowMs,
+        leadMs: c.closestApproachAtMs - nowMs,
+        sepDeg: currSep,
+        closestAtMs: c.closestApproachAtMs,
+      }).slice(-PREDICTION_HISTORY_CAP)
+      : prevHistory;
     next.set(key, {
       key,
       status,
@@ -166,6 +186,7 @@ export function updateLifecycle({
       route: c.route ?? prevEntry?.route ?? null,
       candidate: c,
       initialCandidate,
+      predictionHistory,
       watchlistEntry: prevEntry?.watchlistEntry ?? null,
       coasting: false,   // live this tick — explicitly not coasting
       isISS: c.isISS === true,

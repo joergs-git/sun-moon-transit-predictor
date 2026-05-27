@@ -91,6 +91,36 @@ CREATE TABLE IF NOT EXISTS aircraft_high_elev (
 );
 CREATE INDEX IF NOT EXISTS idx_aircraft_high_elev_first
   ON aircraft_high_elev(first_seen_ms);
+
+-- v0.30.20: per-transit post-mortem. One row per finished lifecycle
+-- episode (stale-transitioned with a usable prediction history), so the
+-- UI can show "how close did we predict vs what actually happened" and
+-- bucket by remaining lead time. Lets the user see whether the default
+-- maxDriftS is too generous, and feeds the FOV mini-chart's confidence
+-- gradient with real data instead of guessed thresholds.
+CREATE TABLE IF NOT EXISTS transit_postmortem (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  recorded_at_ms   INTEGER NOT NULL,
+  icao             TEXT NOT NULL,
+  body             TEXT NOT NULL,
+  flight           TEXT,
+  predicted_at_ms  INTEGER,   -- first emission's closest_at_ms (initial)
+  actual_at_ms     INTEGER,   -- last emission's closest_at_ms (drifted)
+  best_sep_deg     REAL,      -- tightest projected sep across all ticks
+  final_sep_deg    REAL,      -- projected sep at the last live tick
+  drift_deg        REAL,      -- final - best
+  -- Predicted sep at three "checkpoints" relative to actual closest,
+  -- picked by nearest-lead-time. NULL when the entry never saw that
+  -- lead time (e.g. detected first at 40 s -> no >90s sample).
+  sep_at_90s_deg   REAL,
+  sep_at_30s_deg   REAL,
+  sep_at_10s_deg   REAL,
+  history_json     TEXT       -- full per-tick history (compact JSON)
+);
+CREATE INDEX IF NOT EXISTS idx_postmortem_recorded
+  ON transit_postmortem(recorded_at_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_postmortem_body
+  ON transit_postmortem(body, recorded_at_ms DESC);
 `;
 
 export class HistoryStore {
@@ -522,6 +552,107 @@ export class HistoryStore {
    * @param {object|null} route
    * @param {number} recordedAtMs
    */
+  /**
+   * Persist a per-transit post-mortem record. `predictionHistory` is the
+   * array carried on the lifecycle entry (each item:
+   *   { tMs, leadMs, sepDeg, closestAtMs }
+   * ). The three checkpoint seps (at ~90 s / 30 s / 10 s of lead) are
+   * the nearest sample to each target lead time; NULL when the entry's
+   * earliest tick was already past that lead. v0.30.20.
+   *
+   * @param {{
+   *   nowMs: number, icao: string, body: string, flight?: string|null,
+   *   initialClosestAtMs?: number|null, finalClosestAtMs?: number|null,
+   *   bestSepDeg?: number|null, finalSepDeg?: number|null,
+   *   predictionHistory: Array<{ tMs: number, leadMs: number, sepDeg: number, closestAtMs: number }>,
+   * }} args
+   */
+  recordPostmortem(args) {
+    if (!args || !args.icao || !args.body) return;
+    const hist = Array.isArray(args.predictionHistory) ? args.predictionHistory : [];
+    if (!hist.length) return;
+    // Pick the sample whose leadMs is closest to a target lead. Returns
+    // null if no sample even comes near that lead (within ±25 % window),
+    // so an entry that was only seen for the last few seconds doesn't
+    // pollute the >30 s / >90 s buckets with the same one near-zero
+    // sample over and over.
+    const nearestSepAt = (targetSec) => {
+      const targetMs = targetSec * 1000;
+      const tolMs = Math.max(targetMs * 0.25, 2_000);
+      let best = null;
+      let bestDist = Infinity;
+      for (const h of hist) {
+        if (!Number.isFinite(h.leadMs) || !Number.isFinite(h.sepDeg)) continue;
+        const d = Math.abs(h.leadMs - targetMs);
+        if (d < bestDist) { bestDist = d; best = h; }
+      }
+      return best && bestDist <= tolMs ? best.sepDeg : null;
+    };
+    const best = Number.isFinite(args.bestSepDeg) ? args.bestSepDeg : null;
+    const final = Number.isFinite(args.finalSepDeg) ? args.finalSepDeg : null;
+    const drift = Number.isFinite(best) && Number.isFinite(final) ? final - best : null;
+    this.db.prepare(`
+      INSERT INTO transit_postmortem (
+        recorded_at_ms, icao, body, flight,
+        predicted_at_ms, actual_at_ms,
+        best_sep_deg, final_sep_deg, drift_deg,
+        sep_at_90s_deg, sep_at_30s_deg, sep_at_10s_deg,
+        history_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      args.nowMs,
+      String(args.icao).toLowerCase(),
+      String(args.body),
+      args.flight ?? null,
+      Number.isFinite(args.initialClosestAtMs) ? args.initialClosestAtMs : null,
+      Number.isFinite(args.finalClosestAtMs) ? args.finalClosestAtMs : null,
+      best, final, drift,
+      nearestSepAt(90), nearestSepAt(30), nearestSepAt(10),
+      JSON.stringify(hist),
+    );
+  }
+
+  /**
+   * Aggregated prediction-accuracy stats by lead-time bucket. Powers the
+   * "how good is the prediction at X seconds out" widget. Buckets keyed
+   * by lead range; values include p50 / p95 of the absolute distance
+   * from each bucket's projection to the FINAL projected sep (= the
+   * tightest the prediction got before the entry went stale).
+   *
+   * @param {{ windowMs?: number, nowMs?: number }} [opts]
+   */
+  predictionAccuracy({ windowMs = 30 * 24 * 3600_000, nowMs = Date.now() } = {}) {
+    const since = nowMs - windowMs;
+    const rows = this.db.prepare(`
+      SELECT body, best_sep_deg AS bestSep, final_sep_deg AS finalSep, drift_deg AS drift,
+             sep_at_90s_deg AS s90, sep_at_30s_deg AS s30, sep_at_10s_deg AS s10
+      FROM transit_postmortem
+      WHERE recorded_at_ms >= ?
+    `).all(since);
+    const summarize = (vals) => {
+      const xs = vals.filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
+      if (!xs.length) return { n: 0, p50: null, p95: null, mean: null };
+      const pick = (q) => xs[Math.min(xs.length - 1, Math.floor(q * xs.length))];
+      const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+      return { n: xs.length, p50: pick(0.5), p95: pick(0.95), mean };
+    };
+    // Error at a checkpoint = |sep_at_X - best_sep|. That's "how far off
+    // was the prediction at lead X from the eventual tightest we saw".
+    const errAt = (key) => rows
+      .filter((r) => Number.isFinite(r[key]) && Number.isFinite(r.bestSep))
+      .map((r) => Math.abs(r[key] - r.bestSep));
+    return {
+      total: rows.length,
+      windowMs,
+      buckets: {
+        '>90s': summarize(errAt('s90')),
+        '30-60s': summarize(errAt('s30')),
+        '<10s': summarize(errAt('s10')),
+      },
+      drift: summarize(rows.map((r) => r.drift).filter((x) => Number.isFinite(x))),
+    };
+  }
+
   /**
    * Record the projected sep at the moment a live entry transitioned to
    * stale-faded. Updates ALL transit_history rows for this (icao, body,

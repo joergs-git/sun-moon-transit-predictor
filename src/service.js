@@ -550,6 +550,13 @@ export async function runService({
   // long gap doesn't generate a log line every 2 s.
   const lastSkipReason = new Map();
 
+  // Cached prediction-accuracy aggregate. The underlying SELECT is cheap
+  // but stats change slowly (only when a new transit goes stale and gets
+  // a post-mortem row), so re-running it every 2-second tick is waste.
+  // Refresh once per minute or after a fresh post-mortem write.
+  let predictionStatsCache = null;
+  let predictionStatsAtMs = 0;
+
   // ISS prediction cache. Recomputed on a slow cadence (config.iss.recomputeMs)
   // and whenever the TLE file changes on disk. The notifier de-dupes the
   // Pushover + History rows per (icao,body), so no extra bookkeeping here.
@@ -1431,6 +1438,20 @@ export async function runService({
       lifetime: lifetimeStats,
     };
 
+    // Prediction-accuracy aggregate (v0.30.20). Refreshed at most every
+    // 60 s; invalidated immediately when a new post-mortem row was just
+    // written so the user sees the fresh data point without waiting.
+    if (!predictionStatsCache || (nowMs - predictionStatsAtMs > 60_000)) {
+      try {
+        predictionStatsCache = store.predictionAccuracy({ nowMs });
+        predictionStatsAtMs = nowMs;
+      } catch (err) {
+        logger.warn?.('predictionAccuracy failed:', err?.message ?? err);
+        predictionStatsCache = null;
+      }
+    }
+    state.predictionStats = predictionStatsCache;
+
     // Refresh the predictor watchlist on the configured cadence, then surface
     // upcoming-today expected events. The rebuild is async but cheap (single
     // SELECT) — it runs at most once per `rebuildIntervalMs`.
@@ -1556,13 +1577,39 @@ export async function runService({
       if (e.status !== 'stale') continue;
       const prevE = lifecyclePrev.get(key);
       if (prevE && prevE.status === 'stale') continue;          // already stale last tick
-      if (!Number.isFinite(e.bestSepDeg) || !Number.isFinite(e.closestApproachSepDeg)) continue;
-      if (e.bestSepDeg + 0.1 >= e.closestApproachSepDeg) continue;
-      if (!e.icao || !e.body || !Number.isFinite(e.closestApproachAtMs)) continue;
-      try {
-        store.recordFinalSep(e.icao, e.body, e.closestApproachAtMs, e.closestApproachSepDeg);
-      } catch (err) {
-        logger.warn?.('recordFinalSep failed:', err?.message ?? err);
+      // Final-sep update on transit_history rows. Only when the
+      // prediction actually drifted (matches the live SEP_DIVERGED_DEG).
+      if (Number.isFinite(e.bestSepDeg) && Number.isFinite(e.closestApproachSepDeg)
+          && e.bestSepDeg + 0.1 < e.closestApproachSepDeg
+          && e.icao && e.body && Number.isFinite(e.closestApproachAtMs)) {
+        try {
+          store.recordFinalSep(e.icao, e.body, e.closestApproachAtMs, e.closestApproachSepDeg);
+        } catch (err) {
+          logger.warn?.('recordFinalSep failed:', err?.message ?? err);
+        }
+      }
+      // v0.30.20: post-mortem record. Independent of the divergence
+      // check above — even a perfectly-held prediction is interesting
+      // data ("at 90 s lead our sep guess was within 0.02° of the
+      // final"). Skip entries with no usable history (e.g. a planned
+      // entry that never reached radio).
+      if (e.icao && e.body && Array.isArray(e.predictionHistory) && e.predictionHistory.length > 0) {
+        try {
+          store.recordPostmortem({
+            nowMs,
+            icao: e.icao,
+            body: e.body,
+            flight: e.flight ?? e.callsign ?? null,
+            initialClosestAtMs: e.initialCandidate?.closestApproachAtMs ?? null,
+            finalClosestAtMs: e.closestApproachAtMs ?? null,
+            bestSepDeg: e.bestSepDeg ?? null,
+            finalSepDeg: e.closestApproachSepDeg ?? null,
+            predictionHistory: e.predictionHistory,
+          });
+          predictionStatsCache = null;        // invalidate so the next tick refreshes
+        } catch (err) {
+          logger.warn?.('recordPostmortem failed:', err?.message ?? err);
+        }
       }
     }
 
