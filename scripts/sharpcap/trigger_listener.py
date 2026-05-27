@@ -222,7 +222,7 @@ _transferred = set()
 # 'tMs' timestamp; entries older than 24 h are pruned on each insert.
 _capture_files_lock = threading.Lock()
 _capture_files = {}     # captureId -> { tMs: epoch_ms, paths: [...] }
-_CAPTURE_FILES_TTL_MS = 24 * 3600_000
+_CAPTURE_FILES_TTL_MS = 24 * 3600 * 1000     # 24 h, plain int literal (3600_000 syntax is Python 3.6+; some SharpCap builds embed 3.4)
 _CAPTURE_FILES_CAP = 1000
 
 # v0.30.34 -- outcome arrival signalling. _transfer_new_files now waits up
