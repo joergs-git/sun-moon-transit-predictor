@@ -383,7 +383,29 @@ def _robocopy_transfer(src, dest, move):
         return False
 
 
-def _transfer_new_files(pre_snapshot, label):
+def _filename_tags(meta):
+    """Build the trailing _-separated tag list spliced into transferred .ser
+    file names (v0.30.32). Pulled from the trigger's meta block so future
+    grep/sort can find recordings by ICAO, by body, by predicted-sep band
+    etc. without opening each file. PORT always present; ICAO + sep when
+    known.  Example: '_p9999_4080e9_sep021' (sep encoded as deg*100 to
+    avoid the decimal point and keep filenames shell-safe).
+    """
+    tags = ["p{}".format(PORT)]
+    if isinstance(meta, dict):
+        icao = meta.get("icao")
+        if icao:
+            tags.append(str(icao).lower())
+        sep = meta.get("sepDeg")
+        if sep is not None:
+            try:
+                tags.append("sep{:03d}".format(int(round(float(sep) * 100))))
+            except (TypeError, ValueError):
+                pass
+    return "_".join(tags)
+
+
+def _transfer_new_files(pre_snapshot, label, meta=None):
     """Copy/move the file(s) SharpCap created during this capture to the
     network destination. `pre_snapshot` is {path: mtime} captured BEFORE
     RunCapture(); only files that are new or grew relative to it are sent, so
@@ -425,13 +447,19 @@ def _transfer_new_files(pre_snapshot, label):
             with _transferred_lock:
                 if sig in _transferred:
                     continue
-            # v0.30.3: splice the listener's PORT into the destination
-            # filename so two rigs on the same machine can deliver to the
-            # same dest dir / network share without clobbering each other.
-            # Example: 2026-05-25-1820_2-Moon.ser -> 2026-05-25-1820_2-Moon_p9999.ser
+            # v0.30.3 / v0.30.32: splice port + ICAO + predicted-sep into
+            # the destination filename so two rigs on the same machine can
+            # share a dest dir AND so the user can grep/sort recordings by
+            # airframe / band without opening each file. The tag tail is
+            # whatever _filename_tags() can extract from the trigger's meta
+            # block.
+            #
+            # Example transformation:
+            #   2026-05-25-1820_2-Moon.ser
+            #   -> 2026-05-25-1820_2-Moon_p9999_4080e9_sep021.ser
             src_base = os.path.basename(src)
             base, ext = os.path.splitext(src_base)
-            tagged = "{}_p{}{}".format(base, PORT, ext)
+            tagged = "{}_{}{}".format(base, _filename_tags(meta), ext)
             dest = _unique_dest(tagged)
             verb = "moved" if TRANSFER_MOVE else "copied"
             t0 = time.time()
@@ -529,7 +557,7 @@ def _run_on_ui(func):
     return box.get("result")
 
 
-def _do_capture(label, pre_roll_s, duration_s, my_gen, cancel_event):
+def _do_capture(label, pre_roll_s, duration_s, my_gen, cancel_event, meta=None):
     """Wait pre_roll_s, then start a capture for duration_s. Runs in its own
     thread so the listener can keep accepting reject-only follow-ups.
 
@@ -609,7 +637,7 @@ def _do_capture(label, pre_roll_s, duration_s, my_gen, cancel_event):
                 _recording = False
         # Transfer runs strictly after StopCapture has returned. Errors
         # are logged but never raised.
-        _transfer_new_files(pre_snapshot, label)
+        _transfer_new_files(pre_snapshot, label, meta)
     finally:
         # Belt-and-braces: clear the flags if for some reason they
         # haven't been cleared above (e.g. an exception escaped from
@@ -753,7 +781,7 @@ def _handle_conn(conn, addr):
                     _capture_active = False
             return
 
-        t = threading.Thread(target=_do_capture, args=(label, pre_roll_s, duration_s, my_gen, ev))
+        t = threading.Thread(target=_do_capture, args=(label, pre_roll_s, duration_s, my_gen, ev, meta))
         t.daemon = True
         t.start()
     except Exception:
