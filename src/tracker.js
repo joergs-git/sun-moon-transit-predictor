@@ -127,8 +127,8 @@ function sampleBodyTrajectory(observer, body, nowMs, horizonS, stepS) {
   return samples;
 }
 
-function bodyIsObservableSomewhere(samples) {
-  for (const s of samples) if (isObservable(s.azel)) return true;
+function bodyIsObservableSomewhere(samples, minElevationDeg) {
+  for (const s of samples) if (isObservable(s.azel, minElevationDeg)) return true;
   return false;
 }
 
@@ -194,7 +194,7 @@ function sampleTransitPath(observer, obsEcef, ac, body, closestApproachAtMs, geo
   return path;
 }
 
-function candidateForBody(ac, body, acTrajectory, bodySamples, thresholdDeg, looseThresholdDeg, nowMs, stepS) {
+function candidateForBody(ac, body, acTrajectory, bodySamples, thresholdDeg, looseThresholdDeg, nowMs, stepS, minBodyElevationDeg) {
   let minSep = Infinity;
   let minIdx = -1;
   let tightEnters = -1;
@@ -210,7 +210,7 @@ function candidateForBody(ac, body, acTrajectory, bodySamples, thresholdDeg, loo
 
   // bodySamples and acTrajectory share the same indexing (same step + horizon).
   for (let i = 0; i < bodySamples.length; i++) {
-    if (!isObservable(bodySamples[i].azel)) continue;
+    if (!isObservable(bodySamples[i].azel, minBodyElevationDeg)) continue;
     bodyObservableCount += 1;
     const ac_i = acTrajectory[i];
     if (!ac_i || ac_i.acAzEl.elevationDeg <= 0) continue;
@@ -255,10 +255,10 @@ function candidateForBody(ac, body, acTrajectory, bodySamples, thresholdDeg, loo
   let refinedTSec = bodySamples[minIdx].tSec;
   let refinedSep = minSep;
   if (minIdx > 0 && minIdx < bodySamples.length - 1) {
-    const prev = acTrajectory[minIdx - 1] && isObservable(bodySamples[minIdx - 1].azel)
+    const prev = acTrajectory[minIdx - 1] && isObservable(bodySamples[minIdx - 1].azel, minBodyElevationDeg)
       ? angularSeparationDeg(acTrajectory[minIdx - 1].acAzEl, bodySamples[minIdx - 1].azel)
       : null;
-    const next = acTrajectory[minIdx + 1] && isObservable(bodySamples[minIdx + 1].azel)
+    const next = acTrajectory[minIdx + 1] && isObservable(bodySamples[minIdx + 1].azel, minBodyElevationDeg)
       ? angularSeparationDeg(acTrajectory[minIdx + 1].acAzEl, bodySamples[minIdx + 1].azel)
       : null;
     if (prev !== null && next !== null) {
@@ -319,6 +319,15 @@ export function findTransits(observer, aircraftList, nowMs, opts = {}) {
   // to surface flights from first ADS-B contact at the cost of more
   // "faded" episodes.
   const horizonS = Math.min(1800, Math.max(10, opts.horizonS ?? 900));
+  // v0.30.37: configurable body-observability threshold. Defaults to the
+  // 20° historical floor in geometry.js when not supplied; service.js
+  // auto-widens it down to the smallest rig's minElevationDeg so a clear
+  // low-horizon site can record transits with the Sun/Moon at 10-20°
+  // elevation instead of having the tracker filter those candidates out
+  // before they ever reach the lifecycle / Real-candidates list.
+  const minBodyElevationDeg = Number.isFinite(opts.minBodyElevationDeg)
+    ? opts.minBodyElevationDeg
+    : undefined;
   // v0.30.13 — optional diagnostic callback for "tracker skip" logging.
   // Called with { icao, body|null, reason, detail? } whenever an aircraft
   // (or one body of an aircraft) is filtered out. `trackedIcaos` (a Set)
@@ -336,7 +345,7 @@ export function findTransits(observer, aircraftList, nowMs, opts = {}) {
   const trajectories = new Map();
   for (const body of bodies) {
     const samples = sampleBodyTrajectory(observer, body, nowMs, horizonS, stepS);
-    if (bodyIsObservableSomewhere(samples)) {
+    if (bodyIsObservableSomewhere(samples, minBodyElevationDeg)) {
       trajectories.set(body, samples);
     }
   }
@@ -386,7 +395,7 @@ export function findTransits(observer, aircraftList, nowMs, opts = {}) {
     for (const [body, samples] of trajectories) {
       const cand = candidateForBody(
         ac, body, acTrajectory, samples,
-        thresholdDeg, looseThresholdDeg, nowMs, stepS,
+        thresholdDeg, looseThresholdDeg, nowMs, stepS, minBodyElevationDeg,
       );
       if (cand && !cand._skip) {
         cand.transitPath = sampleTransitPath(

@@ -1302,11 +1302,28 @@ export async function runService({
     // user would have to manually keep two settings in sync.
     let effectiveLooseDeg = Number.isFinite(config.tracker.looseThresholdDeg)
       ? config.tracker.looseThresholdDeg : 0;
+    // v0.30.37: auto-widen the body-observability threshold to whatever
+    // the LOWEST enabled rig is willing to record. The historical 20°
+    // floor (OBSERVABILITY_MIN_ELEVATION_DEG) is a sensible default for
+    // refraction/extinction, but a clear-horizon site with the main rig
+    // at minElevationDeg=10 was silently throwing away every transit
+    // where Sun/Moon sat between 10-20° -- the tracker never emitted a
+    // candidate, so the Real-candidates list stayed empty. Mirror the
+    // looseThresholdDeg auto-widen logic.
+    let effectiveMinBodyElevDeg = 20;     // OBSERVABILITY_MIN_ELEVATION_DEG default
     for (const { trigger } of sharpcapTargets) {
       if (!trigger.enabled) continue;
       const m = Number(trigger.config.maxSepDeg);
       if (Number.isFinite(m) && m > effectiveLooseDeg) effectiveLooseDeg = m;
+      const e = Number(trigger.config.minElevationDeg);
+      if (Number.isFinite(e) && e >= 0 && e < effectiveMinBodyElevDeg) effectiveMinBodyElevDeg = e;
     }
+    // Hard floor at 5° -- below that the geometry is dominated by
+    // refraction and our calculations get unreliable. If a rig insists
+    // on minElevationDeg < 5 it can still arm (its own gate runs in
+    // armForCandidate), but the tracker won't emit candidates for body
+    // elevations below 5.
+    if (effectiveMinBodyElevDeg < 5) effectiveMinBodyElevDeg = 5;
     // Tracker-skip diagnostic: only emit for currently-followed ICAOs so
     // the log doesn't drown in distant-traffic skips. "Followed" = the
     // lifecycle map has an active (not stale/planned) entry for it. The
@@ -1321,6 +1338,7 @@ export async function runService({
     const trackerOpts = {
       ...config.tracker,
       looseThresholdDeg: effectiveLooseDeg || config.tracker.looseThresholdDeg,
+      minBodyElevationDeg: effectiveMinBodyElevDeg,
       geoidUndulationM: observer.geoidUndulationM ?? config.tracker.geoidUndulationM ?? 0,
       trackedIcaos,
       onSkip: ({ icao, body, reason, detail }) => {

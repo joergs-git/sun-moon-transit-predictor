@@ -246,6 +246,12 @@ export function angularSeparationDeg(a, b) {
  * @param {AzEl} azEl
  * @returns {boolean}
  */
-export function isObservable(azEl) {
-  return azEl.elevationDeg > OBSERVABILITY_MIN_ELEVATION_DEG;
+export function isObservable(azEl, minElevationDeg) {
+  // v0.30.37: threshold is now a parameter so the tracker can lower it
+  // when a rig wants to record below the default 20° (e.g. a clear-
+  // southern-horizon site with minElevationDeg = 10 on the main rig).
+  // Falls back to OBSERVABILITY_MIN_ELEVATION_DEG when caller doesn't
+  // pass anything, preserving the historical default behaviour.
+  const thr = Number.isFinite(minElevationDeg) ? minElevationDeg : OBSERVABILITY_MIN_ELEVATION_DEG;
+  return azEl.elevationDeg > thr;
 }
