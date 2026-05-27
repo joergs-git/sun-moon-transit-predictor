@@ -1420,7 +1420,21 @@ function refreshFovPane() {
   }
 
   if (pin) {
-    renderFovSketch(pin.input, { pinned: true, label: pin.label });
+    // v0.30.22: when the pin points at a still-live lifecycle entry,
+    // re-resolve its input from the LATEST state so growing fields
+    // (predictionHistory, drifting closestApproachSepDeg, etc.) keep
+    // updating in the FOV panel. The pin's frozen `input` is the
+    // fallback for entries that no longer exist live (e.g. pinned
+    // from History) — same behaviour as pre-v0.30.22.
+    let pinInput = pin.input;
+    if (pin.key && !pin.key.startsWith('history:') && Array.isArray(lastLifecycle)) {
+      const fresh = lastLifecycle.find((e) => e.key === pin.key);
+      if (fresh) {
+        const refreshed = fromLifecycleEntry(fresh);
+        if (refreshed) pinInput = refreshed;
+      }
+    }
+    renderFovSketch(pinInput, { pinned: true, label: pin.label });
     renderFovSpecs(pin.acMeta);
     renderFovMap(pin.acMeta);
     renderFovAcinfo(pin.acMeta);   // AirNav: only on an explicit click/pin

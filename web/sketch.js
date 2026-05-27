@@ -411,13 +411,27 @@ function buildPredictionChart(d, wX, wY, wW, wH) {
   // Lower sep = better = bottom of chart; higher sep = drift = top.
   const yOf = (sep) => plotY + plotH * (1 - (sep - sepLo) / sepRange);
 
-  const hueForLead = (leadMs) => {
-    // Confidence gradient: 0 ms lead -> 120 (green), 90 s+ lead -> 0 (red),
-    // linear interpolation between. Beyond 90 s clamps to red.
-    const t = Math.max(0, Math.min(1, leadMs / 90_000));
+  // v0.30.23 — colour the line by the SEP value itself, not by lead time.
+  // The intuitive read: when the line dips toward the disc-radius region,
+  // it ALSO turns green. Lead-time was the original design but every
+  // segment in a 4-minute lead window came out red regardless of how
+  // much the prediction had tightened, which hid the very signal the
+  // chart was supposed to surface.
+  //
+  // Anchors:
+  //   sep <= 0.1°  -> 120 (green) -- well within Sun/Moon disc
+  //   sep = ~0.5°  -> 60  (yellow) -- near-miss band edge
+  //   sep >= 2°    -> 0   (red)   -- out of the panel band
+  // Log scale across [0.05°, 2°] so the 0.1-0.5° range is properly
+  // discriminated (most of the interesting drift sits there).
+  const LOG_LO = Math.log10(0.1);
+  const LOG_HI = Math.log10(2.0);
+  const hueForSep = (sepDeg) => {
+    const s = Math.max(0.05, sepDeg);
+    const t = Math.max(0, Math.min(1, (Math.log10(s) - LOG_LO) / (LOG_HI - LOG_LO)));
     return (120 * (1 - t)).toFixed(0);
   };
-  const stroke = (leadMs) => `hsl(${hueForLead(leadMs)}, 70%, 55%)`;
+  const stroke = (sepDeg) => `hsl(${hueForSep(sepDeg)}, 70%, 55%)`;
 
   let svg = '';
   // Backing card so the chart reads against busy FOV content underneath.
@@ -426,7 +440,7 @@ function buildPredictionChart(d, wX, wY, wW, wH) {
   // Title + axis labels
   svg += txt(cX + 6, cY + 9, 'sep ° over time', { fill: '#9aa0a6', size: 7 });
   svg += txt(cX + CW - 4, cY + 9, sepRange < 9 ? seps[seps.length - 1].toFixed(2) + '°' : '—', {
-    fill: stroke(leads[leads.length - 1]), size: 8, anchor: 'end', weight: 600,
+    fill: stroke(seps[seps.length - 1]), size: 8, anchor: 'end', weight: 600,
   });
   // x-axis tick labels: leftmost = oldest lead, rightmost = current
   svg += txt(plotX, cY + CH - 2,
@@ -442,19 +456,22 @@ function buildPredictionChart(d, wX, wY, wW, wH) {
     sepLo.toFixed(2),
     { fill: '#6a6f76', size: 6.5 });
 
-  // Coloured line segments — one per pair of consecutive samples.
+  // Coloured line segments — one per pair of consecutive samples. The
+  // segment's hue is derived from the AVERAGE sep across its endpoints,
+  // so the line literally turns red-orange-yellow-green as the predicted
+  // sep tightens toward the disc.
   for (let i = 1; i < hist.length; i++) {
     const a = hist[i - 1];
     const b = hist[i];
-    const mid = (a.leadMs + b.leadMs) / 2;
+    const midSep = (a.sepDeg + b.sepDeg) / 2;
     svg += `<line x1="${xOf(a.leadMs).toFixed(1)}" y1="${yOf(a.sepDeg).toFixed(1)}" `
          + `x2="${xOf(b.leadMs).toFixed(1)}" y2="${yOf(b.sepDeg).toFixed(1)}" `
-         + `stroke="${stroke(mid)}" stroke-width="1.4"/>`;
+         + `stroke="${stroke(midSep)}" stroke-width="1.4"/>`;
   }
   // Highlight the latest sample with a small dot.
   const last = hist[hist.length - 1];
   svg += `<circle cx="${xOf(last.leadMs).toFixed(1)}" cy="${yOf(last.sepDeg).toFixed(1)}" `
-       + `r="2" fill="${stroke(last.leadMs)}"/>`;
+       + `r="2" fill="${stroke(last.sepDeg)}"/>`;
   return svg;
 }
 
