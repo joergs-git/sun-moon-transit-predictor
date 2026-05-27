@@ -431,12 +431,13 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
    exchange for keeping the table in the right column instead of stealing
    a full-width row below the page header. */
 .total-live-section { margin: 0; }
-/* Fixed height so the section below the top-row (Real candidates, History,
-   stats…) doesn't jump every tick when traffic comes and goes. 25 data
-   rows fit visibly at the current 11 px / 3-px-padding row height; the
-   sticky thead keeps the column headers in view while the rest scrolls. */
+/* Always-visible at top of right column (v0.30.28). Fixed height of
+   roughly 20 data rows + header + section title; section below the
+   top-row never jumps when traffic comes and goes, and the plan / side
+   / airframe cells underneath sit at a predictable y-offset. The
+   sticky thead keeps column headers in view while the rest scrolls. */
 .total-live-section .table-scroll {
-  height: 600px;
+  height: 420px;
   overflow-y: auto;
   overflow-x: auto;
 }

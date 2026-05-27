@@ -137,21 +137,22 @@
       </section>
     </div>
     <aside class="top-right">
-      <!-- RIGHT column: plan/side/airframe cells parallel to the left
-           column. Each hides itself when empty. While no real candidate is
-           in flight, the #total-live-section below takes over this whole
-           column with a single compact table of every aircraft in range
-           sorted by current SEP — so the user always sees what's in the
-           sky and how close each contact is. -->
-      <div id="fov-map" class="fov-aux-cell" hidden></div>
-      <div id="fov-side" class="fov-aux-cell" hidden></div>
-      <div id="fov-acinfo" class="fov-aux-right" hidden></div>
-      <section id="total-live-section" class="total-live-section" hidden>
+      <!-- RIGHT column (v0.30.28 layout):
+             1. #total-live-section -- ALWAYS visible at top, max 20 rows
+                before the table itself scrolls internally. With the FOV
+                auto-pick now expanding to 2°, the live list would
+                otherwise hide behind a perma-active FOV; pinning it on
+                top keeps the "what's in the sky right now" overview
+                always reachable.
+             2. plan / side / airframe cells -- under it, self-hide when
+                empty (so an idle right column collapses to just the
+                live list). -->
+      <section id="total-live-section" class="total-live-section">
         <h2>
           Total live trackings
           <span class="th-sub">all in range · sorted by SEP</span>
         </h2>
-        <p class="hint">Everything dump1090 currently sees, with each contact's current angular distance to the nearest body. Replaced by the FOV preview as soon as a real tracking starts.</p>
+        <p class="hint">Everything dump1090 currently sees, with each contact's current angular distance to the nearest body. Scrollable when more than ~20 aircraft are in view.</p>
         <div class="table-scroll">
           <table id="total-live-table" class="total-live-table">
             <thead>
@@ -170,6 +171,9 @@
           </table>
         </div>
       </section>
+      <div id="fov-map" class="fov-aux-cell" hidden></div>
+      <div id="fov-side" class="fov-aux-cell" hidden></div>
+      <div id="fov-acinfo" class="fov-aux-right" hidden></div>
     </aside>
   </div>
   <div id="fov-specs" class="fov-specs" hidden></div>

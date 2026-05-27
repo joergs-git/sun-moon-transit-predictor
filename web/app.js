@@ -779,35 +779,17 @@ function renderIssPass(iss) {
 
 // "Total live trackings" — single sorted-by-SEP table of EVERY aircraft in
 // dump1090 range, with each one's current angular distance to the nearest
-// observable body. Visible only while no real candidate is being followed
-// AND nothing is pinned (so the user is genuinely "idle" — staring at the
-// sky waiting for something interesting). The moment a radio/candidate/
-// imminent row appears, this panel hides and the FOV preview takes over.
-// Layout-wise the section spans the entire .top-row grid (see CSS), so it
-// visually replaces both the sketch and the plan/side/airframe stack.
+// observable body. v0.30.28: ALWAYS rendered at the top of the right
+// column (previously toggle-hidden whenever the FOV preview had content,
+// but with the FOV auto-pick now expanding to 2° that left almost no
+// idle moments for the list to be visible). Fixed ~420 px viewport means
+// the section beneath it (plan / side / airframe) sits at a predictable
+// y-offset and the page below the top-row doesn't jump as traffic comes
+// and goes; the table scrolls inside its own viewport when more than
+// ~20 aircraft are in view.
 function renderTotalLive(state) {
   const section = document.getElementById('total-live-section');
   if (!section) return;
-  // Show the totalLive panel whenever the right column would otherwise be
-  // empty — i.e. when there is NO content for FOV / plan / side / airframe
-  // to display. That's exactly the condition refreshFovPane uses to render
-  // something: either an explicit pin OR an auto-pickable entry (a live
-  // candidate with closestApproachSepDeg < FOV_NEAR_DEG and usable
-  // geometry). A bare "radio" / faraway entry does NOT trigger the FOV
-  // stack, so the totalLive panel stays visible alongside it — matches the
-  // user's expectation that the list is up "whenever no FOV / plane view
-  // etc. is shown".
-  const isPinned = typeof pin !== 'undefined' && pin != null;
-  const auto = typeof pickAutoEntry === 'function'
-    ? pickAutoEntry(Array.isArray(state.lifecycle) ? state.lifecycle : [])
-    : null;
-  if (isPinned || auto) {
-    section.hidden = true;
-    return;
-  }
-  // Idle: take over the .top-right column. The fov-map/fov-side/fov-acinfo
-  // cells are already self-hidden whenever there's no active/pinned data,
-  // so showing this section visually replaces them in place.
   section.hidden = false;
   const rows = Array.isArray(state.totalLive) ? state.totalLive : [];
   const tbody = section.querySelector('tbody');
