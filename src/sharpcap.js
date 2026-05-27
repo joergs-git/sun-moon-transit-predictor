@@ -311,6 +311,27 @@ export class SharpCapTrigger {
   }
 
   /**
+   * Post-capture outcome message (v0.30.33). Sent ~60 s after a lifecycle
+   * entry finishes, so the listener can rename the file(s) it transferred
+   * for `captureId` with a verdict tag — '_confirmed' when the entry
+   * actually reached the imminent stage (transit really happened), or
+   * '_probempty' when the prediction faded before imminent (recording is
+   * most likely empty sky). The optional finalSepDeg adds a finalsepNNN
+   * sub-tag so the user can filter '...sep021_finalsep087_probempty.ser'
+   * at a glance.
+   *
+   * @param {{ captureId: string, verdict: 'confirmed'|'probempty', finalSepDeg?: number }} args
+   */
+  async sendOutcome({ captureId, verdict, finalSepDeg }) {
+    if (!this.enabled) return { sent: false, reason: 'disabled' };
+    if (!captureId || !verdict) return { sent: false, reason: 'missing-fields' };
+    const payload = { type: 'outcome', captureId, verdict };
+    if (Number.isFinite(finalSepDeg)) payload.finalSepDeg = finalSepDeg;
+    if (this.config.token) payload.token = this.config.token;
+    return this._sendPayload(payload);
+  }
+
+  /**
    * Low-level: send one JSON payload and read one JSON reply. Internal — use
    * triggerFromEvent() for the real flow.
    * @param {object} payload

@@ -214,6 +214,84 @@ def _apply_local_config():
 _transferred_lock = threading.Lock()
 _transferred = set()
 
+# v0.30.33 -- captureId -> list of transferred destination paths, populated
+# when _transfer_new_files completes. Used by the 'outcome' message handler
+# to find the files written for a given capture and rename them with the
+# _confirmed / _probempty verdict tag. Capped + time-pruned so the listener
+# can run for days without growing the map unbounded. Each entry has a
+# 'tMs' timestamp; entries older than 24 h are pruned on each insert.
+_capture_files_lock = threading.Lock()
+_capture_files = {}     # captureId -> { tMs: epoch_ms, paths: [...] }
+_CAPTURE_FILES_TTL_MS = 24 * 3600_000
+_CAPTURE_FILES_CAP = 1000
+
+
+def _remember_capture_files(capture_id, paths):
+    if not capture_id or not paths:
+        return
+    now_ms = int(time.time() * 1000)
+    with _capture_files_lock:
+        # Prune ANY entries older than TTL (cheap; map stays small).
+        to_drop = [k for k, v in _capture_files.items() if (now_ms - v["tMs"]) > _CAPTURE_FILES_TTL_MS]
+        for k in to_drop:
+            del _capture_files[k]
+        # Hard cap (oldest first).
+        if len(_capture_files) >= _CAPTURE_FILES_CAP:
+            sorted_keys = sorted(_capture_files.keys(), key=lambda k: _capture_files[k]["tMs"])
+            for k in sorted_keys[:max(1, len(_capture_files) - _CAPTURE_FILES_CAP + 1)]:
+                del _capture_files[k]
+        existing = _capture_files.get(capture_id, {"tMs": now_ms, "paths": []})
+        existing["tMs"] = now_ms
+        for p in paths:
+            if p and p not in existing["paths"]:
+                existing["paths"].append(p)
+        _capture_files[capture_id] = existing
+
+
+def _apply_outcome(capture_id, verdict, final_sep_deg):
+    """Rename every still-present file recorded under capture_id by
+    appending '_<verdict>' (and optionally '_finalsepNNN') before the
+    extension. Returns (renamed_count, missing_count) for the reply."""
+    if not capture_id or not verdict:
+        return (0, 0)
+    verdict = str(verdict).lower()
+    if verdict not in ("confirmed", "probempty"):
+        return (0, 0)
+    with _capture_files_lock:
+        entry = _capture_files.get(capture_id)
+        paths = list(entry["paths"]) if entry else []
+    renamed = 0
+    missing = 0
+    extra_tag = ""
+    if final_sep_deg is not None:
+        try:
+            extra_tag = "_finalsep{:03d}".format(int(round(float(final_sep_deg) * 100)))
+        except (TypeError, ValueError):
+            extra_tag = ""
+    for old_path in paths:
+        try:
+            if not os.path.isfile(old_path):
+                missing += 1
+                continue
+            d = os.path.dirname(old_path)
+            base, ext = os.path.splitext(os.path.basename(old_path))
+            # Don't double-tag if a previous outcome already ran on this
+            # file (e.g. retry / network hiccup).
+            if "_confirmed" in base or "_probempty" in base:
+                missing += 1
+                continue
+            new_path = os.path.join(d, "{}_{}{}{}".format(base, verdict, extra_tag, ext))
+            # Skip if target name happens to exist already (very rare;
+            # unique_dest at write time normally prevents it).
+            if os.path.exists(new_path):
+                missing += 1
+                continue
+            os.rename(old_path, new_path)
+            renamed += 1
+        except OSError:
+            _log("outcome rename failed for {!r}:\n{}".format(old_path, traceback.format_exc()))
+    return (renamed, missing)
+
 
 def _scan_capture_dir():
     """Map {abspath: mtime} of all files under SER_SOURCE_DIR matching
@@ -385,13 +463,22 @@ def _robocopy_transfer(src, dest, move):
 
 def _filename_tags(meta):
     """Build the trailing _-separated tag list spliced into transferred .ser
-    file names (v0.30.32). Pulled from the trigger's meta block so future
-    grep/sort can find recordings by ICAO, by body, by predicted-sep band
-    etc. without opening each file. PORT always present; ICAO + sep when
-    known.  Example: '_p9999_4080e9_sep021' (sep encoded as deg*100 to
-    avoid the decimal point and keep filenames shell-safe).
+    file names (v0.30.33). Order: body, port, icao, sep -- so grep/sort
+    naturally groups recordings by body first.
+      body  -> 'Sun' or 'Moon' from meta.body
+      port  -> always present (this listener's PORT)
+      icao  -> lowercase hex from meta.icao
+      sep   -> deg*100 zero-padded to 3 digits ('sep021' = 0.21 deg)
+    Sep encoded as deg*100 to dodge the decimal point and keep file
+    names shell-safe. Body and icao only emitted when meta carries them
+    (a manual-test trigger has no meta -> just port).
     """
-    tags = ["p{}".format(PORT)]
+    tags = []
+    if isinstance(meta, dict):
+        body = meta.get("body")
+        if body:
+            tags.append(str(body))
+    tags.append("p{}".format(PORT))
     if isinstance(meta, dict):
         icao = meta.get("icao")
         if icao:
@@ -405,7 +492,7 @@ def _filename_tags(meta):
     return "_".join(tags)
 
 
-def _transfer_new_files(pre_snapshot, label, meta=None):
+def _transfer_new_files(pre_snapshot, label, meta=None, capture_id=None):
     """Copy/move the file(s) SharpCap created during this capture to the
     network destination. `pre_snapshot` is {path: mtime} captured BEFORE
     RunCapture(); only files that are new or grew relative to it are sent, so
@@ -459,6 +546,13 @@ def _transfer_new_files(pre_snapshot, label, meta=None):
             #   -> 2026-05-25-1820_2-Moon_p9999_4080e9_sep021.ser
             src_base = os.path.basename(src)
             base, ext = os.path.splitext(src_base)
+            # v0.30.33: strip trailing underscores from the SharpCap-
+            # provided base name. SharpCap's default filename template
+            # often ends with a separator (e.g. '%h%_%m%_%s%_%Object%')
+            # which gives a base like '16_43_08_' when Object Name is
+            # blank -- without this strip the concatenation produced
+            # '16_43_08__p9999.ser' with a doubled underscore.
+            base = base.rstrip("_")
             tagged = "{}_{}{}".format(base, _filename_tags(meta), ext)
             dest = _unique_dest(tagged)
             verb = "moved" if TRANSFER_MOVE else "copied"
@@ -496,6 +590,10 @@ def _transfer_new_files(pre_snapshot, label, meta=None):
                     label, verb, src, dest, dt))
             with _transferred_lock:
                 _transferred.add(sig)
+            # Remember the destination so a follow-up 'outcome' message
+            # from the predictor can rename it with the _confirmed /
+            # _probempty verdict tag. v0.30.33.
+            _remember_capture_files(capture_id, [dest])
         except Exception:
             _log("transfer {!r}: failed for {}:\n{}".format(label, src, traceback.format_exc()))
 
@@ -557,7 +655,7 @@ def _run_on_ui(func):
     return box.get("result")
 
 
-def _do_capture(label, pre_roll_s, duration_s, my_gen, cancel_event, meta=None):
+def _do_capture(label, pre_roll_s, duration_s, my_gen, cancel_event, meta=None, capture_id=None):
     """Wait pre_roll_s, then start a capture for duration_s. Runs in its own
     thread so the listener can keep accepting reject-only follow-ups.
 
@@ -637,7 +735,7 @@ def _do_capture(label, pre_roll_s, duration_s, my_gen, cancel_event, meta=None):
                 _recording = False
         # Transfer runs strictly after StopCapture has returned. Errors
         # are logged but never raised.
-        _transfer_new_files(pre_snapshot, label, meta)
+        _transfer_new_files(pre_snapshot, label, meta, capture_id)
     finally:
         # Belt-and-braces: clear the flags if for some reason they
         # haven't been cleared above (e.g. an exception escaped from
@@ -670,6 +768,24 @@ def _handle_conn(conn, addr):
         if SHARED_TOKEN and req.get("token") != SHARED_TOKEN:
             _log("reject from {}: bad token".format(addr))
             conn.sendall(b'{"ok": false, "error": "unauth"}\n')
+            return
+
+        # v0.30.33: 'outcome' message handler. Sent by the predictor ~60 s
+        # after a lifecycle entry finishes, carrying the verdict
+        # ('confirmed' or 'probempty') for one of OUR earlier captures.
+        # We look up the files we transferred under that captureId and
+        # rename them with the verdict tag, so the user can sort / delete
+        # without opening each .ser. No camera work touched.
+        if req.get("type") == "outcome":
+            cap_id = req.get("captureId")
+            verdict = req.get("verdict")
+            final_sep = req.get("finalSepDeg")
+            renamed, missing = _apply_outcome(cap_id, verdict, final_sep)
+            _log("outcome {!r}: verdict={} renamed={} missing={}".format(
+                cap_id, verdict, renamed, missing))
+            reply = '{{"ok": true, "renamed": {}, "missing": {}}}\n'.format(renamed, missing)
+            try: conn.sendall(reply.encode("utf-8"))
+            except Exception: pass
             return
 
         try:
@@ -781,7 +897,7 @@ def _handle_conn(conn, addr):
                     _capture_active = False
             return
 
-        t = threading.Thread(target=_do_capture, args=(label, pre_roll_s, duration_s, my_gen, ev, meta))
+        t = threading.Thread(target=_do_capture, args=(label, pre_roll_s, duration_s, my_gen, ev, meta, capture_id))
         t.daemon = True
         t.start()
     except Exception:

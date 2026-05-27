@@ -453,6 +453,16 @@ export async function runService({
   // Session-cumulative count of captures armed across all rigs (resets on
   // restart). Surfaced in state.sharpcap for the header status readout.
   let sharpcapArmedCount = 0;
+
+  // v0.30.33 — pending-outcome tracking. Key = `${rigName}|${icao}|${body}`,
+  // value = { trigger, rigName, captureId, armedAtMs }. Populated on each
+  // successful arm; on re-arm the same key gets overwritten with the
+  // fresher captureId (older capture was replaced inside the listener
+  // before it ever wrote a file). Drained when the matching lifecycle
+  // entry transitions to stale and we dispatch the outcome message.
+  // Cleaned up periodically of entries older than 1 h so a flight whose
+  // lifecycle was somehow lost doesn't leak forever.
+  const pendingOutcomes = new Map();
   // Recent armed episodes — {icao, body, closestAtMs, armedAtMs, rig}, capped —
   // so the UI can put a ⚡ next to the matching Live / History row. In-memory:
   // resets on restart. Capped to keep /api/state small.
@@ -508,6 +518,19 @@ export async function runService({
             }
             logger.info?.(`sharpcap[${name}]: capture ${res.reArmed ? 're-armed' : 'armed'} for ${who} (${res.response?.captureId ?? ''})`);
             if (!res.reArmed) notifySharpcapTrigger(c, res, name, trigger.config);
+            // Remember the captureId so we can send a verdict
+            // (_confirmed / _probempty) after the lifecycle settles.
+            // Re-arm overwrites the same key with the fresher id; the
+            // earlier capture's file was replaced inside the listener
+            // and won't need a rename.
+            if (c.icao && c.body && res.response?.captureId) {
+              pendingOutcomes.set(`${name}|${c.icao}|${c.body}`, {
+                trigger,
+                rigName: name,
+                captureId: res.response.captureId,
+                armedAtMs: Date.now(),
+              });
+            }
           } else if (res.error) {
             logger.warn?.(`sharpcap[${name}] arm failed for ${who}: ${res.error?.message ?? res.error}`);
           } else if (res.reason === 'too-low' || res.reason === 'too-late') {
@@ -1798,6 +1821,42 @@ export async function runService({
         } catch (err) {
           logger.warn?.('recordPostmortem failed:', err?.message ?? err);
         }
+      }
+      // v0.30.33: dispatch verdict to every rig that armed for this
+      // (icao|body). Verdict = 'confirmed' if the entry actually
+      // reached the imminent stage during its lifetime (transit was
+      // real); 'probempty' otherwise. The 60 s delay gives SharpCap
+      // and the transfer (robocopy/shutil) time to finalise the .ser
+      // file on disk before we ask the listener to rename it. If the
+      // service shuts down inside that window the outcome is simply
+      // never sent — file stays untagged, which is harmless (user can
+      // still grep by sep / icao).
+      if (e.icao && e.body && e.status === 'stale' && (!prevE || prevE.status !== 'stale')) {
+        const verdict = e.highestStatusReached === 'imminent' ? 'confirmed' : 'probempty';
+        const finalSepDeg = Number.isFinite(e.closestApproachSepDeg) ? e.closestApproachSepDeg : null;
+        for (const [pk, rec] of Array.from(pendingOutcomes)) {
+          if (!pk.endsWith(`|${e.icao}|${e.body}`)) continue;
+          pendingOutcomes.delete(pk);
+          setTimeout(() => {
+            rec.trigger.sendOutcome({ captureId: rec.captureId, verdict, finalSepDeg })
+              .then((r) => {
+                if (r?.sent) {
+                  logger.info?.(`sharpcap[${rec.rigName}]: outcome ${verdict} sent for ${rec.captureId} (renamed=${r.response?.renamed ?? '?'})`);
+                } else {
+                  logger.warn?.(`sharpcap[${rec.rigName}]: outcome ${verdict} failed for ${rec.captureId}: ${r?.error?.message ?? r?.reason ?? 'unknown'}`);
+                }
+              }).catch((err) => logger.warn?.('sendOutcome threw:', err?.message ?? err));
+          }, 60_000);
+        }
+      }
+    }
+    // Periodic cleanup: any pendingOutcomes that never matched a stale
+    // transition (e.g. an entry got evicted from lifecycleMap by the cap
+    // before staling) eventually time out so the map stays bounded.
+    const PENDING_OUTCOME_TTL_MS = 60 * 60_000;
+    for (const [pk, rec] of pendingOutcomes) {
+      if (nowMs - rec.armedAtMs > PENDING_OUTCOME_TTL_MS) {
+        pendingOutcomes.delete(pk);
       }
     }
 
