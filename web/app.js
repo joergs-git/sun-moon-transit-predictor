@@ -1150,14 +1150,22 @@ function entryHasGeometry(entry) {
   return Boolean(c?.aircraftAtClosest && c?.bodyAtClosest);
 }
 
+// Outer band for the FOV auto-pick fallback (v0.30.26). Anything inside
+// this band is eligible; the picker still PREFERS sub-FOV_NEAR_DEG entries
+// when one is in flight (see pickAutoEntry's tier-0 score).
+const FOV_AUTO_FALLBACK_DEG = 2.0;
 function isQualifyingLifecycle(entry) {
   // "close enough for an intersection" → angular separation strictly under
-  // FOV_NEAR_DEG, AND we actually have geometry to render. Stale entries
-  // can still qualify so the user gets a last-known view of a fly-by that
-  // already happened, as long as the geometry is intact.
+  // FOV_AUTO_FALLBACK_DEG, AND we actually have geometry to render. Stale
+  // entries can still qualify so the user gets a last-known view of a
+  // fly-by that already happened, as long as the geometry is intact.
+  // v0.30.26: was FOV_NEAR_DEG (1°). Loosened so the FOV preview / chart
+  // also surface entries in the broader panel band when nothing tighter
+  // is in flight — pickAutoEntry's tight-band priority below makes sure a
+  // <1° entry always wins out when both exist.
   if (!entry) return false;
   if (!Number.isFinite(entry.closestApproachSepDeg)) return false;
-  if (entry.closestApproachSepDeg >= FOV_NEAR_DEG) return false;
+  if (entry.closestApproachSepDeg >= FOV_AUTO_FALLBACK_DEG) return false;
   return entryHasGeometry(entry);
 }
 
@@ -1189,6 +1197,11 @@ function pickAutoEntry(lifecycle) {
   for (const e of lifecycle) {
     if (!isQualifyingLifecycle(e)) continue;
     const score = [
+      // Tier 0: a <1° entry ALWAYS outranks a 1-2° fallback. The latter
+      // exists only to keep the FOV preview occupied during quiet
+      // moments, not to compete with a tight near-miss.
+      e.closestApproachSepDeg < FOV_NEAR_DEG ? 1 : 0,
+      // Existing priorities preserved below.
       e.status === 'imminent' ? 1 : 0,
       visScore(e),
       -(Number.isFinite(e.closestApproachSepDeg) ? e.closestApproachSepDeg : 99),
@@ -1551,7 +1564,7 @@ function refreshFovPane() {
     renderFovAcinfo(null);         // never auto-fetch (billed per call)
   } else {
     renderFovEmpty(
-      `No close approach right now (sep &lt; ${FOV_NEAR_DEG.toFixed(0)}°). ` +
+      `No close approach right now (sep &lt; ${FOV_AUTO_FALLBACK_DEG.toFixed(0)}°). ` +
       'Click any tracking or history row to pin a specific transit here.',
     );
     renderFovSpecs(null);
