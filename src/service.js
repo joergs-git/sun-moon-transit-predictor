@@ -1833,6 +1833,10 @@ export async function runService({
             finalClosestAtMs: e.closestApproachAtMs ?? null,
             bestSepDeg: e.bestSepDeg ?? null,
             finalSepDeg: e.closestApproachSepDeg ?? null,
+            // Aircraft elevation at closest approach -- used by the stats
+            // panel to stratify high-elev (cruise) vs low-elev (approach)
+            // populations, which have very different drift behaviour.
+            closestElevDeg: e.candidate?.aircraftAtClosest?.elevationDeg ?? null,
             predictionHistory: e.predictionHistory,
           });
           predictionStatsCache = null;        // invalidate so the next tick refreshes

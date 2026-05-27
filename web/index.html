@@ -413,6 +413,24 @@
           Drift (final − best sep) across all postmortems:
           p50 <b id="pe-drift-p50">—</b> · p95 <b id="pe-drift-p95">—</b>
         </div>
+        <!-- v0.30.38: stratified by aircraft elevation at closest
+             approach. High-elev (≥30°) ~ cruise traffic, stable
+             prediction; low-elev (&lt;30°) ~ descent / approach
+             traffic, bigger drift due to ATC vectoring. -->
+        <div class="predstats-foot" id="pe-stratified-row">
+          <div title="Aircraft at ≥30° elevation — typically cruise altitude, autopilot-stable, low prediction drift.">
+            <b>High-elev (≥ 30°)</b>
+            p50: &gt;90s <span id="pe-hi-90">—</span> ·
+                  30-60s <span id="pe-hi-30">—</span> ·
+                  &lt;10s <span id="pe-hi-10">—</span>
+          </div>
+          <div title="Aircraft at &lt;30° elevation — typically descent/approach traffic with ATC vectoring, bigger and later prediction drift.">
+            <b>Low-elev (&lt; 30°)</b>
+            p50: &gt;90s <span id="pe-lo-90">—</span> ·
+                  30-60s <span id="pe-lo-30">—</span> ·
+                  &lt;10s <span id="pe-lo-10">—</span>
+          </div>
+        </div>
       </div>
 
       <div class="predstats-card">

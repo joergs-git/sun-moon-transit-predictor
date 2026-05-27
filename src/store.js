@@ -115,6 +115,11 @@ CREATE TABLE IF NOT EXISTS transit_postmortem (
   sep_at_90s_deg   REAL,
   sep_at_30s_deg   REAL,
   sep_at_10s_deg   REAL,
+  closest_elev_deg REAL,      -- v0.30.38: aircraft elevation at closest
+                              -- approach, so the stats panel can stratify
+                              -- high-elev cruise vs low-elev approach
+                              -- (the two populations have very different
+                              -- drift characteristics).
   history_json     TEXT       -- full per-tick history (compact JSON)
 );
 CREATE INDEX IF NOT EXISTS idx_postmortem_recorded
@@ -149,6 +154,10 @@ export class HistoryStore {
     // service.js's stale-detection diff; legacy rows stay NULL → no
     // change in display.
     ensureColumn(this.db, 'transit_history', 'last_sep_deg', 'REAL');
+    // v0.30.38: aircraft elevation at closest approach so prediction
+    // accuracy stats can stratify high vs low elevation populations
+    // (cruise jets vs descent/approach traffic behave very differently).
+    ensureColumn(this.db, 'transit_postmortem', 'closest_elev_deg', 'REAL');
     this.insertStmt = this.db.prepare(`
       INSERT INTO transit_history (
         recorded_at_ms, closest_at_ms, stage, body, icao, callsign,
@@ -613,8 +622,9 @@ export class HistoryStore {
         predicted_at_ms, actual_at_ms,
         best_sep_deg, final_sep_deg, drift_deg,
         sep_at_90s_deg, sep_at_30s_deg, sep_at_10s_deg,
+        closest_elev_deg,
         history_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       args.nowMs,
       String(args.icao).toLowerCase(),
@@ -624,6 +634,7 @@ export class HistoryStore {
       Number.isFinite(args.finalClosestAtMs) ? args.finalClosestAtMs : null,
       best, final, drift,
       nearestSepAt(90), nearestSepAt(30), nearestSepAt(10),
+      Number.isFinite(args.closestElevDeg) ? args.closestElevDeg : null,
       JSON.stringify(hist),
     );
   }
@@ -685,11 +696,12 @@ export class HistoryStore {
    *
    * @param {{ windowMs?: number, nowMs?: number }} [opts]
    */
-  predictionAccuracy({ windowMs = 30 * 24 * 3600_000, nowMs = Date.now() } = {}) {
+  predictionAccuracy({ windowMs = 30 * 24 * 3600 * 1000, nowMs = Date.now() } = {}) {
     const since = nowMs - windowMs;
     const rows = this.db.prepare(`
       SELECT body, best_sep_deg AS bestSep, final_sep_deg AS finalSep, drift_deg AS drift,
-             sep_at_90s_deg AS s90, sep_at_30s_deg AS s30, sep_at_10s_deg AS s10
+             sep_at_90s_deg AS s90, sep_at_30s_deg AS s30, sep_at_10s_deg AS s10,
+             closest_elev_deg AS elev
       FROM transit_postmortem
       WHERE recorded_at_ms >= ?
     `).all(since);
@@ -700,18 +712,51 @@ export class HistoryStore {
       const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
       return { n: xs.length, p50: pick(0.5), p95: pick(0.95), mean };
     };
-    // Error at a checkpoint = |sep_at_X - best_sep|. That's "how far off
-    // was the prediction at lead X from the eventual tightest we saw".
-    const errAt = (key) => rows
-      .filter((r) => Number.isFinite(r[key]) && Number.isFinite(r.bestSep))
-      .map((r) => Math.abs(r[key] - r.bestSep));
+    // For each bucket, return TWO summaries: error stats (|sep-X - bestSep|)
+    // AND the median elevation of the postmortems that contributed -- so
+    // the UI can show "n=6 (median el 12°)" and the user can tell why a
+    // bucket has the numbers it has. Mixed populations (cruise vs
+    // descent) otherwise blend invisibly into one misleading p50.
+    // v0.30.38.
+    const bucketStats = (key) => {
+      const contributing = rows.filter((r) => Number.isFinite(r[key]) && Number.isFinite(r.bestSep));
+      const errors = contributing.map((r) => Math.abs(r[key] - r.bestSep));
+      const elevs = contributing.map((r) => r.elev).filter((x) => Number.isFinite(x));
+      const err = summarize(errors);
+      const elev = summarize(elevs);
+      return { ...err, medianElevDeg: elev.p50 };
+    };
+    // Also split into high-elev (>=30°) vs low-elev (<30°) cohorts so the
+    // user can read each population separately. NULL closest_elev_deg
+    // (legacy rows) goes into 'unknown' and isn't double-counted.
+    const ELEV_SPLIT = 30;
+    const stratifiedBucketStats = (key, predicate) => {
+      const contributing = rows
+        .filter((r) => Number.isFinite(r[key]) && Number.isFinite(r.bestSep))
+        .filter(predicate);
+      const errors = contributing.map((r) => Math.abs(r[key] - r.bestSep));
+      return summarize(errors);
+    };
     return {
       total: rows.length,
       windowMs,
       buckets: {
-        '>90s': summarize(errAt('s90')),
-        '30-60s': summarize(errAt('s30')),
-        '<10s': summarize(errAt('s10')),
+        '>90s':   bucketStats('s90'),
+        '30-60s': bucketStats('s30'),
+        '<10s':   bucketStats('s10'),
+      },
+      stratified: {
+        high: {
+          '>90s':   stratifiedBucketStats('s90', (r) => Number.isFinite(r.elev) && r.elev >= ELEV_SPLIT),
+          '30-60s': stratifiedBucketStats('s30', (r) => Number.isFinite(r.elev) && r.elev >= ELEV_SPLIT),
+          '<10s':   stratifiedBucketStats('s10', (r) => Number.isFinite(r.elev) && r.elev >= ELEV_SPLIT),
+        },
+        low: {
+          '>90s':   stratifiedBucketStats('s90', (r) => Number.isFinite(r.elev) && r.elev < ELEV_SPLIT),
+          '30-60s': stratifiedBucketStats('s30', (r) => Number.isFinite(r.elev) && r.elev < ELEV_SPLIT),
+          '<10s':   stratifiedBucketStats('s10', (r) => Number.isFinite(r.elev) && r.elev < ELEV_SPLIT),
+        },
+        elevSplitDeg: ELEV_SPLIT,
       },
       drift: summarize(rows.map((r) => r.drift).filter((x) => Number.isFinite(x))),
     };

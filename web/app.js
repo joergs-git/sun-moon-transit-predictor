@@ -612,7 +612,14 @@ function renderPredStats(pred, drift) {
     }
     pe('p50', fmtDeg(bucket.p50));
     pe('p95', fmtDeg(bucket.p95));
-    pe('n', String(bucket.n));
+    // v0.30.38: append median elevation of contributing postmortems
+    // so the user can tell whether a bucket is dominated by high-elev
+    // cruise traffic (small drift) or low-elev approach traffic (big
+    // drift). Same number, very different demographics.
+    const elTxt = Number.isFinite(bucket.medianElevDeg)
+      ? ` (el ${Math.round(bucket.medianElevDeg)}°)`
+      : '';
+    pe('n', `${bucket.n}${elTxt}`);
     setBar(`pe-${id}-bar`, bucket.p95);
   };
   const totalEl = document.getElementById('pe-total-n');
@@ -637,6 +644,22 @@ function renderPredStats(pred, drift) {
   const driftP95 = document.getElementById('pe-drift-p95');
   if (driftP50) driftP50.textContent = fmtDeg(pred?.drift?.p50);
   if (driftP95) driftP95.textContent = fmtDeg(pred?.drift?.p95);
+
+  // Stratified by elevation (v0.30.38). Shows the user that the bucket
+  // demographics are vastly different between cruise (>=30° elev,
+  // stable) and approach (<30° elev, drifty) populations.
+  const setStrat = (tier, bucketKey, elId) => {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const b = pred?.stratified?.[tier]?.[bucketKey];
+    el.textContent = b && b.n > 0 ? `${fmtDeg(b.p50)} (n=${b.n})` : '—';
+  };
+  setStrat('high', '>90s',  'pe-hi-90');
+  setStrat('high', '30-60s','pe-hi-30');
+  setStrat('high', '<10s',  'pe-hi-10');
+  setStrat('low',  '>90s',  'pe-lo-90');
+  setStrat('low',  '30-60s','pe-lo-30');
+  setStrat('low',  '<10s',  'pe-lo-10');
 
   // — Wind drift card —
   const statusEl = document.getElementById('pd-status');
