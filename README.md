@@ -297,9 +297,63 @@ release X" see `git log --oneline`.
 
 ## Hardware + software bill of materials
 
-End-to-end the project needs the items below. The cheap-but-complete
-ADS-B receiver is the RTL-SDR + 1090 MHz antenna pair; everything else
-is the host computer it runs on.
+### Shopping list — the short answer
+
+If you only want the bottom-line "what do I order to make this work",
+it is essentially **two parcels**:
+
+**A. A tiny 1090 MHz ADS-B receiver — USB stick + antenna.**
+A short, telescopic 1090 MHz antenna plus an RTL-SDR-based USB dongle.
+Plugs into the Pi's USB port; the antenna sits anywhere with a clear
+view of the sky (a windowsill is usually enough for 100-200 km range).
+Example kit, just to anchor the picture in your head:
+[RTL-SDR + 1090 MHz antenna bundle](https://amzn.eu/d/03rcjsBg).
+Any RTL-SDR (RTL2832U + R820T2 tuner) clone works as long as it decodes
+1090 MHz Mode S — the **RTL-SDR Blog v3** is the gold standard if you
+want one purchase that you never have to reconsider.
+
+**B. A small Raspberry Pi with a microSD card.**
+The matchbox-sized computer that the receiver plugs into. Anything from
+a Pi 4 upwards is fine; a **Pi 5 (4 GB)** is the validated host. Needs
+a microSD card (16 GB+, endurance grade like SanDisk High Endurance),
+a USB-C power supply, and an Ethernet cable *or* your Wi-Fi credentials.
+Example:
+[Raspberry Pi 5 starter kit](https://amzn.eu/d/0gSlAqV8).
+
+**That's it.** Plug the dongle into the Pi, antenna into the dongle, Pi
+into your network, follow the one-liner installer below, and from then
+on **everything else lives in your browser** — your observer location,
+your telescope optics, your Pushover notification target, your SharpCap
+capture rigs. After setup the Pi sits in a corner, draws maybe 5 W, and
+runs unattended for months at a time.
+
+#### Why does it have to be local on a Pi at home?
+
+In principle one *could* host this as an internet service, but two
+constraints make the Pi-at-home form factor the obvious choice:
+
+1. **You only care about the sky above YOUR observatory.** The maths
+   has to run for your exact WGS84 coordinates — an aircraft only
+   crosses a 0.5° solar/lunar disc when the geometry from a specific
+   ground point lines up. There is no sensible way to time-share that
+   computation across multiple users in different cities.
+2. **The receiver has to be near the antenna.** 1090 MHz line-of-sight
+   covers maybe 200-400 km from a rooftop; the things you can photograph
+   from your garden are inside that radius anyway. A Hamburg-based ADS-B
+   feed cannot tell you what is crossing the Sun above Munich.
+3. **Latency is real.** The pipeline runs every 2 seconds end-to-end,
+   from ADS-B fix to "fire SharpCap NOW". Every hop you add to that
+   path eats into the < 1-second window when an aircraft is actually
+   on disc. Local TCP between a Pi and a Windows capture machine is
+   < 5 ms; a public cloud round-trip is 30-100 ms even on a good day.
+
+Hence: small Pi + small dongle + small antenna, on your LAN, near your
+telescope. Once installed it is browser-administered and effectively
+maintenance-free.
+
+The detailed bills of materials below add the optional + situational
+items (active LNA, PoE HAT, external SSD, SharpCap integration, etc.)
+for the cases where you want to push the setup further.
 
 ### Required hardware
 
