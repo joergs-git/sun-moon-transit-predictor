@@ -260,13 +260,20 @@ export const DEFAULT_CONFIG = {
   webRoot: 'web',
 };
 
-function snapshotBody(observer, body, nowMs) {
+function snapshotBody(observer, body, nowMs, minElevationDeg) {
   const azel = bodyAzEl(observer, body, new Date(nowMs));
   return {
     azimuthDeg: azel.azimuthDeg,
     elevationDeg: azel.elevationDeg,
     rangeM: azel.rangeM,
-    observable: isObservable(azel),
+    // v0.30.40: pass the auto-widened threshold through so the API
+    // surfaces the SAME observability gate the tracker actually uses.
+    // Before this, the snapshot used the hardcoded 20° default, so a
+    // rig configured with minElevationDeg=5 (e.g. Moon at 8°) was
+    // reported as observable=false by the API even though the tracker
+    // was happily emitting candidates for it — and the empty-state
+    // banner in the UI said "below 20°" indefinitely.
+    observable: isObservable(azel, minElevationDeg),
   };
 }
 
@@ -1283,18 +1290,13 @@ export async function runService({
   async function tick() {
     const nowMs = Date.now();
     state.nowMs = nowMs;
-    state.bodies = Object.fromEntries(
-      config.tracker.bodies.map((b) => [b, snapshotBody(observer, b, nowMs)]),
-    );
 
-    let aircraft = [];
-    try {
-      aircraft = await fetchAircraft(config.adsb.url, { fetchImpl });
-    } catch (e) {
-      logger.warn?.('aircraft fetch failed:', e?.message ?? e);
-    }
-    state.aircraftCount = aircraft.length;
-
+    // v0.30.40: compute the effective body-observability threshold FIRST
+    // so snapshotBody can use it. Previously bodies were snapshotted with
+    // the hardcoded 20° default and the auto-widen below only affected
+    // findTransits — the API's bodies.*.observable flag stayed false even
+    // when the tracker was emitting candidates for a 5-20° Moon.
+    //
     // Auto-widen the tracker's outer "panel band" so any rig whose own
     // maxSepDeg is wider than the global tracker.looseThresholdDeg still
     // receives the candidates it wants. Otherwise the tracker would silently
@@ -1318,12 +1320,35 @@ export async function runService({
       const e = Number(trigger.config.minElevationDeg);
       if (Number.isFinite(e) && e >= 0 && e < effectiveMinBodyElevDeg) effectiveMinBodyElevDeg = e;
     }
+    // Honour the global tracker.minBodyElevationDeg override too (set via
+    // Settings) so the threshold is consistent whether the user adjusts
+    // it per-rig OR through the global tracker block.
+    const globalMinBody = Number(config.tracker.minBodyElevationDeg);
+    if (Number.isFinite(globalMinBody) && globalMinBody >= 0 && globalMinBody < effectiveMinBodyElevDeg) {
+      effectiveMinBodyElevDeg = globalMinBody;
+    }
     // Hard floor at 5° -- below that the geometry is dominated by
     // refraction and our calculations get unreliable. If a rig insists
     // on minElevationDeg < 5 it can still arm (its own gate runs in
     // armForCandidate), but the tracker won't emit candidates for body
     // elevations below 5.
     if (effectiveMinBodyElevDeg < 5) effectiveMinBodyElevDeg = 5;
+
+    state.bodies = Object.fromEntries(
+      config.tracker.bodies.map((b) => [b, snapshotBody(observer, b, nowMs, effectiveMinBodyElevDeg)]),
+    );
+    // Surface the effective threshold to the UI so the empty-state
+    // banner ("Sun/Moon below the observable limit") can quote the
+    // real number instead of a hardcoded 20°.
+    state.observabilityMinElevDeg = effectiveMinBodyElevDeg;
+
+    let aircraft = [];
+    try {
+      aircraft = await fetchAircraft(config.adsb.url, { fetchImpl });
+    } catch (e) {
+      logger.warn?.('aircraft fetch failed:', e?.message ?? e);
+    }
+    state.aircraftCount = aircraft.length;
     // Tracker-skip diagnostic: only emit for currently-followed ICAOs so
     // the log doesn't drown in distant-traffic skips. "Followed" = the
     // lifecycle map has an active (not stale/planned) entry for it. The

@@ -316,19 +316,25 @@ function renderTracking(state) {
   const rows = state.lifecycle ?? [];
   lastLifecycle = rows;
   if (rows.length === 0) {
-    // If BOTH bodies are below the 20° observability floor the tracker
-    // returns nothing no matter how much ADS-B traffic there is — make that
-    // explicit so an empty panel isn't mistaken for a fault (SkyAware will
-    // still be showing aircraft). Otherwise it's just "no flight on the
-    // Sun/Moon line right now", which is the normal idle state.
+    // If BOTH bodies are below the effective observability floor the
+    // tracker returns nothing no matter how much ADS-B traffic there is
+    // — make that explicit so an empty panel isn't mistaken for a fault
+    // (SkyAware will still be showing aircraft). Otherwise it's just
+    // "no flight on the Sun/Moon line right now", which is the normal
+    // idle state. The threshold is auto-widened per the lowest-enabled-
+    // rig minElevationDeg (since v0.30.37), so quote it from state
+    // rather than hardcoding 20° — otherwise a user who set Moon at 5°
+    // would still see the misleading "< 20°" text.
     const bodies = state.bodies ?? {};
     const names = Object.keys(bodies);
     const anyObservable = names.some((n) => bodies[n]?.observable);
     if (names.length && !anyObservable) {
       const lo = names.join(' & ');
+      const elev = Number.isFinite(state.observabilityMinElevDeg)
+        ? state.observabilityMinElevDeg : 20;
       tbody.innerHTML =
         `<tr class="empty"><td colspan="12" class="no-bodies">`
-        + `☀🌙 ${lo} below the observable limit (&lt; 20° elevation).`
+        + `☀🌙 ${lo} below the observable limit (&lt; ${elev}° elevation).`
         + `<br>No transit candidates can occur until one rises — ADS-B traffic`
         + ` elsewhere is expected and not tracked.</td></tr>`;
     } else {

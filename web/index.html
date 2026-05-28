@@ -50,7 +50,7 @@
               <th title="Celestial body — Sun or Moon, evaluated for the configured observer location.">Body</th>
               <th title="Azimuth in degrees, measured clockwise from true north (0° = N, 90° = E, 180° = S, 270° = W).">Az</th>
               <th title="Elevation in degrees above the local horizon (refraction-corrected).">El</th>
-              <th title="✓ when the body is above the 20° elevation floor used by the transit detector. Below that, refraction residuals + obstructions make a transit unreliable.">Observable</th>
+              <th title="✓ when the body is above the elevation floor the transit detector currently uses. Default 20°, auto-widened down to the lowest enabled rig's minElevationDeg (floor 5°). Below the threshold, refraction residuals + obstructions make a transit unreliable.">Observable</th>
             </tr>
           </thead>
           <tbody></tbody>
