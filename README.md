@@ -18,7 +18,7 @@ T-minus alert once live ADS-B has nailed down the transit time.
                   aircraft.json    │ poll 2 s
                                    ▼
                             [stp service]
-                              tracker   → 900 s (15 min) linear extrapolation
+                              tracker   → 300 s (5 min) linear extrapolation
                               geometry  → topocentric Az/El (Sun/Moon)
                               notifier  → 3-stage Pushover (radio→candidate→imminent)
                               store     → SQLite history
@@ -43,20 +43,22 @@ Every poll cycle (default every 2 s) the service answers one question:
 
 > *Which aircraft, currently visible to the local ADS-B receiver, will line
 > up between my observer location and the Sun or Moon disc within the next
-> 900 seconds (15 min) — while that body sits more than 20° above the horizon?*
+> 300 seconds (5 min) — while that body sits above the observability floor?*
 
 1. **Sky position.** Topocentric Az/El of the Sun and Moon are computed for
    the configured observer (WGS84, refraction-corrected). Bodies below the
-   20° elevation floor are flagged `observable: false` and skipped — the
-   floor keeps obstructions, haze, and refraction residuals out of the
-   budget.
+   observability floor (default **20°**, auto-widened down to the lowest
+   enabled rig's `minElevationDeg` since v0.30.37, hard-floored at 5°) are
+   flagged `observable: false` and skipped — the floor keeps obstructions,
+   haze, and refraction residuals out of the budget.
 2. **Aircraft position.** Each aircraft from `dump1090-fa`'s `aircraft.json`
    is converted WGS84 → ECEF → ENU into Az/El relative to the same observer,
    using `alt_geom` (fallback `alt_baro`) as MSL. ADS-B `seen_pos` latency is
    back-stamped onto the actual fix time, so the projection starts from when
    the position was sampled, not from "now".
 3. **Forward projection.** Position and velocity are linearly extrapolated
-   on the local tangent plane in 0.5 s steps across the next 900 s (15 min).
+   on the local tangent plane in 0.5 s steps across the next 300 s
+   (5 min default; clamped to `[10, 1800]` via `tracker.horizonS`).
 4. **Separation test.** Great-circle angular separation between the
    predicted aircraft Az/El and the body's Az/El is computed at each step.
    When the *minimum* separation across the trajectory drops below
@@ -108,15 +110,17 @@ The main heartbeat. Each pass executes the following in order:
 
 **a) Coarse Sun/Moon trajectory** — `tracker.js → sampleBodyTrajectory`. Az/El
 for each tracked body is computed across the next `horizonS` seconds
-(default 900 s = 15 min look-ahead) at `stepS` resolution (default 0.5 s),
-yielding **1801 Az/El samples per body** per tick. Geometric (no refraction)
-to match the aircraft side, which is also un-refracted.
+(default 300 s = 5 min look-ahead, lowered from 900 s in v0.23.4 because
+linear extrapolation degrades fast past ~5 min) at `stepS` resolution
+(default 0.5 s), yielding **601 Az/El samples per body** per tick.
+Geometric (no refraction) to match the aircraft side, which is also
+un-refracted.
 
 **b) Coarse aircraft route vector** — `tracker.js → extrapolate`. Each
 ADS-B contact is linearly extrapolated from `lat/lon/altMmsl` using
 `groundSpeedMs` + `trackDeg`, anchored at `receivedAtMs` (the actual sample
 time of the position, **not** "now" — this back-stamps ADS-B latency).
-WGS84 → ECEF → ENU → Az/El, same 0.5 s grid over 900 s, **1801 Az/El points
+WGS84 → ECEF → ENU → Az/El, same 0.5 s grid over 300 s, **601 Az/El points
 per aircraft**.
 
 **c) Pairwise separation scan**. For every (aircraft × body) pair the
@@ -140,7 +144,22 @@ the grid at 0.05 s.
 FOV-preview sketch the tracker emits 21 dense samples at
 `[-5, -4.5, …, +5] s` around closest approach. Pre-v0.7.6 used 5 samples at
 `±60 s` which, at typical airliner angular speeds, produced a misleading
-V-line through the disc — see v0.7.6 release notes.
+V-line through the disc.
+
+**v0.30.19+ initial-guess overlay.** The lifecycle entry now also stores
+`initialCandidate` — the very first emission's geometry — frozen across
+all subsequent ticks. The FOV sketch paints this in **grey under the
+white current path**, so the user can see at a glance how much the
+prediction has drifted between first contact and now. A stable cruise
+flight shows the two paths overlapping; a drifting approach traffic
+shows two distinct paths.
+
+**v0.30.21+ prediction-drift mini-chart.** Top-right inset in the FOV
+widget: a small line plot of predicted-sep-over-time, with line
+segments coloured by sep value (green when the projection is in disc
+range, red when far). Surfaces the convergence story visually — a
+healthy prediction's line trends down + green, a drifting one hooks
+up + red as it approaches ETA.
 
 **f) Route lookup** — `adsbdb.js`. Each candidate's callsign is enriched
 with `flight / origin / destination / airline` via adsbdb.com. Hits are
@@ -271,72 +290,10 @@ load picks up wherever it left off, including the restored tracking list.
 
 ## Status
 
-| Milestone | Scope | Status |
-|---|---|---|
-| M1 | Pi receiver setup (dump1090-fa) | hardware task, out of repo |
-| M2 | Geometry core (Az/El, Sun/Moon, separation) | done |
-| M3 | Live tracker (`aircraft.json` polling, extrapolation, candidates) | done |
-| M4 | Pushover notifier, two-stage messages with flight details | done |
-| M5 | adsbdb.com route lookup (origin / destination / IATA flight number) | done |
-| M6 | Web UI on the Pi (live list + persistent history) | done |
-| M7 | Bash install script for Pi 5 (Raspberry Pi OS, ARM64) | done |
-| M8 | Accuracy pass: latency back-stamp, sub-step vertex refinement, geoid offset, refraction-frame alignment | done |
-| M9 | Zero-touch operations: gitignored personal config, `--non-interactive` install, nightly auto-update timer | done |
-| M10 | History-based predictor (24 h "Expected today" panel) + optional OpenSky schedule augmentation | done |
-| M11 | Lifecycle pipeline: planned → radio → candidate → imminent → stale, unified UI panel (look-ahead later raised to `horizonS=900` in M17) | done |
-| M12 | FOV sketch popup: per-row preview of disc + aircraft + apparent transit line in the 500 mm / ASI174MM frame | done |
-| M13 | In-browser Settings panel (Pushover, observer, optics) + cross-restart tracking-list persistence | done |
-| M14 | Inline FOV preview pane (auto-tracks newest sep&lt;1° candidate, click-to-pin) + live header clock | done |
-| M15 | Tighter 1°-only radio Pushovers + alert-learning stats (hit / surprise rate, per-row outcome tags) | done |
-| M16 | Editable tracker panel band (default 2°), near-hit row highlight (sep&lt;0.5°), weekday+date in History, learning block moved under Sky now | done |
-| M17 | 15-min look-ahead default + episode-consolidated History (one row per transit with Lead-time column) + planned suppression for live ADS-B callsigns | done |
-| M18 (v0.8.0) | History logged at the panel band independent of the phone filter (true Lead time); lifecycle coasting through brief ADS-B gaps + 10-row panel / 30-min stale eviction; offline airframe spec block (ICAO type → real span/length, no network/photos) beside the FOV; session detection-funnel bar chart; "LIVE-TRACKING-SIGNALS" rename; green near-hit rows in History; column sub-labels | done |
-| M19 (v0.8.1) | History pager (page 1 = today + yesterday, older in 50-row pages); detection-funnel `< 0.2°` bar; "Sun/Moon below observable limit" banner; History "Disc xing" column (approx full-disc crossing time from ω ≈ ground speed / slant range); running-version badge with safe click-to-update (trigger file + systemd `stp-update.path`) | done |
-| M20 (v0.9.0) | ISS transit prediction — dependency-free embedded SGP4 (validated against the official 88888 verification vectors), offline TLE file with opt-in `refresh-tle.js` fetcher; ISS surfaced in LIVE-TRACKING-SIGNALS + History + FOV in front of Sun **and** Moon with a distinct cyan highlight + 🛰 / station glyph, reusing the Disc-xing column | done |
-| M21 (v0.9.1) | History column reorder: Sun/Moon shown as a leading icon (Body text column dropped); geometry block `Sep · Dist · Disc xing · Speed · Alt` moved between Lead and Stage; Flight / ICAO / Route moved to the far right | done |
-| M22 (v0.10.0) | ISS Pushover (heads-up the moment a Sun/Moon transit is predicted) + History rows via the shared notifier path; "next visible ISS pass" line in Sky-now (el > 20°, after dusk, station sunlit — offline cylindrical-shadow test); Alert-learning aggregates exclude ISS (kept in the History table); Tracking table reordered like History (leading Sun/Moon icon, Flight/ICAO/Route to the right); detection funnel gains a live "Live planes" bar and "detected" → "Total detected" | done |
-| M23 (v0.10.1) | Click-to-update no longer fails silently: server self-diagnostic (`state.update`: pending → consumed → stuck), honest UI status line, `ok:false` surfaced; `auto-update.sh` warns when `stp-update.path` is missing; troubleshooting docs (the missing-watcher root cause on Pis upgraded from < v0.8.1) | done |
-| M24 (v0.10.2) | Fixed badge stuck on "updating…" forever (a consumed-but-no-restart / no-op update never cleared, survived refresh): server auto-clears `consumed`→idle after 20 s and `stuck`→idle after 10 min (cleaning the stale trigger); frontend state machine always restores the version badge. Sky-now now shows the next visible ISS pass **and** the next Sun/Moon transit even weeks out (with date), via a 30-day visible-pass horizon (early-return, cheap) and a 14-day transit horizon | done |
-| M25 (v0.10.3) | "No ISS info" out of the box fixed: `install-pi5.sh` now does an initial TLE fetch and installs a daily `stp-tle.timer` + `stp-tle.service` (the running service still never fetches — offline by default) so `data/iss.tle` exists and stays fresh automatically | done |
-| M26 (v0.10.4) | ISS rows in Live-Tracking + History recoloured **blue** (was cyan) for an unambiguous identity, matched by the Sky-now ISS line; ISS rows show the 🛰 satellite symbol in the status cell instead of the ✈️ aircraft glyph so they can't be mistaken for traffic | done |
-| M27 (v0.10.5) | `bootstrap-pi5.sh` bare-image one-liner (apt deps → clone → install-pi5.sh, args/env forwarded); fixed `install-pi5.sh` writing a stale `service.json` (it pinned old `horizonS:300` / `looseThresholdDeg:5` / `staleGraceMs:0` / `maxEntries:20` and omitted `iss`/`update`) — fresh installs now get the current defaults + explicit ISS config | done |
-| M28 (v0.10.6) | Docs: validated **Raspberry Pi OS Lite (Legacy, 64-bit)** as the known-good image (exact Imager path; current/Bookworm caused dependency trouble) + a copy-paste, no-experiments **ADS-B receiver setup** for dump1090-fa with the AirNav FlightStick (FlightAware apt repo + DVB-T blacklist + verify); `--with-dump1090` aligned to the same reliable steps | done |
-| M29 (v0.10.7) | Install fixes from on-Pi testing: manual path now installs `git` first (absent on Pi OS Lite); FlightAware repo package bumped `1.2 → 1.3` (the 1.2 URL 404s) in the README + `bootstrap-pi5.sh`, with a version-drift note | done |
-| M30 (v0.10.8) | Docs: `rbfeeder`/AirNav-RadarBox sharing-key sidenote + MLAT explainer in the ADS-B section (independent of the predictor; same WGS84 location) | done |
-| M31 (v0.10.9) | ISS transits only push/log within `iss.notifyWithinMs` (default 72 h) — far-future SGP4 is noise that flips with each daily TLE, so this kills phantom-transit Pushover spam + "surprise" stat pollution; Sky-now still previews the soonest, flagged "tentative". README "Good to know" facts: ISS prediction reliability + observer coordinate/elevation pitfalls | done |
-| M64 (v0.25.0) | **Min-altitude gate + mobile Settings + accent Test buttons**: (a) new `tracker.minAltitudeM` (default 0 = off) drops aircraft below the threshold from the *whole* pipeline — candidates, alerts, History, SharpCap arming. Set e.g. 2000 to ignore helicopters/GA/drones and keep airliner traffic; aircraft with no altitude data are skipped while the gate is on. Exposed in the Settings → Tracker section. (b) Settings modal now uses `100dvh` (with `100vh` fallback) for its max-height so the bottom rows + Save button stay reachable on iPhone Safari (the static `100vh` ran below the dynamic chrome bar). (c) Per-rig `Test 2s` buttons styled in the accent colour with a 🎥 prefix so they no longer get lost between the small inputs in the rig row | done |
-| M63 (v0.24.0, fixed v0.30.1) | **SharpCap multi-rig (`targets`)** — drive several telescopes/PCs at once, routed by body. Each entry in `sharpcap.targets[]` runs its own listener on its own `host:port`, inherits the shared knobs and overrides host/port/bodies/buffers; a Sun candidate arms only Sun rigs, a Moon candidate only Moon rigs (independent dedup + re-arm per rig). Typical uses: an Hα solar scope (Sun) on one PC + a normal scope (Moon) on another, OR a "main" recorder + a wider-band "extra" rig on the same PC (different ports). The top-level `sharpcap.{host,port,…}` block is now auto-promoted to its OWN implicit "main" rig whenever `targets[]` is non-empty and the base has its own `enabled+host` — only suppressed if a target already claims the same `host:port` (no duplicate listener hits). Pre-v0.30.1 silently dropped the base as a rig the moment a `targets[]` entry was present, so a working main + an extra fired only the extras. Header readout shows the union (`🎥 ☀🌙 · N×`) with a per-rig tooltip; off-body Pushover suppression uses the union. The trigger is body+geometry based, so differing FOV/sensors per rig don't matter for triggering | done |
-| M62 (v0.23.4) | **SharpCap re-arming + 5-min tracker horizon**: (a) when the refined closest-approach prediction moves > `reArmShiftS` (12 s) while a capture is still in its **pre-roll** (not yet recording), the predictor re-sends and the listener **replaces** the pending capture with the fresher time — generation-guarded, never interrupts a live recording or preempts a different target. Fixes "armed early on a stale prediction that later corrected". (b) `tracker.horizonS` default **900 → 300 s**: linear extrapolation degrades fast for descending/turning approach traffic, so a 15-min horizon produced many speculative candidates that fired a radio alert then faded. 5 min keeps predictions accurate + alerts trustworthy (SharpCap arms ~95 s out anyway; a Pushover 1–2 min ahead is ample warning) | done |
-| M61 (v0.23.1) | **SharpCap drift margin — fixes missed early-armed transits**: arming up to ~95 s before closest approach (to never miss a lost-tracking case) means the predicted *time* is less certain, so a stale/unconfirmed candidate could cross just outside the tight ±preBuffer/postBuffer window (a sub-second transit through a ~0.3°×0.19° sensor has no margin). The recording window now widens symmetrically by `leadDriftFrac × secondsToClosest` per side, capped at `maxDriftS` (defaults 0.5 / 45 s → arming 50 s out records ±35 s instead of ±10 s). Diagnosed from a real miss where the arm-time prediction was 31 s later than the actual transit (stale candidate), so the fixed ±10 s clip started after the transit was over. `leadDriftFrac:0` disables it | done |
-| M60 (v0.23.0) | **SharpCap row marker + focused alerts**: a **⚡ next to the traffic-light** in History & Live-Tracking marks every transit the trigger actually armed a capture for (in-memory session list `state.sharpcap.armed`, matched by `icao+body+closest±2 min`). And when the trigger is **enabled**, aircraft Pushovers for the *other* disc are suppressed — Sun-armed → no Moon buzz and vice versa (History/stats still record both; ISS exempt). Trigger off → both bodies push as before. New `notifier.pushBodies`, set from `sharpcap.bodies` each tick | done |
-| M59 (v0.21.7–v0.22.0) | **SharpCap reliability + UX**: writer init fixed (`PrepareToCapture()` before `RunCapture()`, UI-thread-marshalled — the "No writer object" cause), CPython-compatible bootstrap download (urllib, not .NET WebClient — SharpCap 4.x is CPython), BOM-safe config, deterministic log path. **Tick-based arming** (`armForCandidate`) replaces the fragile single 'imminent' event: every tick arms any candidate within `maxSepDeg` (default 0.5°) as soon as the pre-roll fits the listener cap, dedup-limited to one capture per `(icao, body)` — "rather over-record than miss the shot", with skip reasons logged. New **single-select trigger body** (Sun *or* Moon — one scope, one disc) and a **header status readout** next to the clock (`🎥 ☀ Sun · N×`: armed body + session capture count) | done |
-| M58 (v0.21.0–v0.21.5) | **SharpCap live capture trigger** (Windows-side) + hardening + docs. When a transit goes `imminent` the service fires a TCP trigger (`src/sharpcap.js`) to a listener running inside SharpCap (`scripts/sharpcap/trigger_listener.py`), which records a clip framed around the predicted closest approach (configurable pre/post-roll) and can auto-copy the `.ser` to a NAS. Web **Settings → SharpCap capture trigger** with a "Test trigger (2 s)" button; PowerShell installer + always-latest bootstrap; IronPython-only (no separate Python). Hardening since the merge: reject non-finite trigger durations before arming capture (NaN slipped past the `<=0`/`>MAX` guards → endless recording), separator-aware static-path boundary (path-traversal via URL-encoded slashes), auto-update discards npm-regenerated lockfile churn before the ff-only pull, installer points at `main` + execution-policy note. Documented in the main README (Overview, optional hardware, dedicated section) and the detailed `scripts/sharpcap/README.md` | done |
-| M57 (v0.21.1) | **History page 1 = today only** (was today + yesterday). The combined list grew too long on busy days; trimming the recent-cutoff from "yesterday 00:00" to "today 00:00" keeps page 1 compact while yesterday's rows are still one click away via "Older ▶". One-line `recentCutoffMs` change, plus label/comment sweeps in `web/app.js` + `web/index.html` | done |
-| M56 (v0.21.0) | **Free fallback for the airframe info box (adsbdb)**: when the AirNav token is missing, disabled, or out of credits, `/api/acinfo` no longer 404s — it transparently falls back to the free **adsbdb /v0/aircraft/&lt;hex&gt;** endpoint (no token, no billing). Coverage of the AirNav payload's *static* half: registration, ICAO type, manufacturer + model (composed into `typeDescription`), operator + operator ICAO code, and a planespotters photo URL. Live flight info (origin/destination, scheduled times) stays AirNav-only — but the route popover still resolves callsigns via the existing adsbdb route endpoint. Response carries a new `source` field (`'airnav' \| 'adsbdb'`) that the frontend uses to relabel the box header (`AirNav · on-demand` vs `adsbdb · free`) and footer with an honest provenance line. AirNav is still used first whenever it's configured and answers; the free path is pure graceful degradation. New `AircraftLookup` class in `src/adsbdb.js` (mirrors the existing `RouteLookup` patterns: TTL cache, AbortController timeout, normalised to AirNav's `normalizeAircraft` shape so the frontend doesn't branch on source) | done |
-| M55 (v0.20.1) | **Clickable stats labels — ICAO hex + callsign → adsbexchange globe**: the ICAO hex and ADS-B callsign labels in the "Aircraft stats" and "Usable candidates" panels are now real links (matching the History/Live table pattern from v0.16.3). Click → opens `globe.adsbexchange.com` for that hex (`?icao=…`) or callsign (`?callsign=…`) in a new tab — instant history/playback for any airframe or flight in the stats. Hover still fires the AirNav photo / adsbdb route popover (data-hex / data-cs preserved). Falls back to a plain span for partial / unusable values. New `statsLabelLink()` helper de-duplicates the two stats renderers; CSS keeps the accent colour on the link variant | done |
-| M54 (v0.20.0) | **FOV sketch: disc-centric widget, dashed sensor box on top**: scale is now derived from the body (disc Ø ≈ ½ of the smaller widget dimension) instead of the sensor — so the Sun/Moon is **always fully visible** with room around it for near-miss aircraft. The sensor FOV is drawn as a **dashed rectangle layered on top of the disc** (not as the widget frame). FOV box and aircraft still share `pxPerDeg` with the disc, so all proportions remain physically accurate: at long focal length (e.g. 2142 mm) the FOV box becomes a small dashed rectangle inside the disc ("this strip lands on the sensor"); at short focal length the FOV box is bigger than the disc and may extend beyond the widget edge (footer carries the exact angular dims). Axis labels, horizon N/E/S/W and crosshair re-anchored to the **widget edges** (the FOV box is no longer a stable reference frame). Aircraft drawn at its real angular offset from the body — passing-by traffic up to ≈ half the widget half-width in degrees stays in view, beyond that clips at the SVG edge | done |
-| M53 (v0.19.0) | **FOV sketch: true-optical-scale disc + clipped overflow**: the sensor rectangle is now always drawn at its true on-sensor extent (the auto zoom-out fallback was removed) so the user immediately sees the Sun/Moon size vs. the FOV. The body disc is split into two layers — a **dashed full-size outline** of the real disc, plus a **solid gradient fill clipped to the FOV rectangle** via SVG `<clipPath>`. At short focal lengths the disc sits entirely inside the FOV (outline = rim of the solid disc, no visible difference). At long focal lengths (≥ ~1218 mm with the ASI174MM, where the Sun starts to exceed the FOV width) the dashed contour reveals "this much of the disc is off-sensor and would be clipped" while only the central slice stays filled — exactly the eyepiece truth at e.g. 2142 mm focal. The aircraft stays at its real angular offset from the body even when that puts it outside the FOV box (the user physically slews the mount to catch the transit anyway). The parallactic N/E rose anchor is clamped to the FOV box so its labels remain visible when the disc overflows. Footer "⤢ zoomed out" badge dropped (no zoom-out anymore) | done |
-| M52 (v0.18.0) | **"Best hours" stat — when do the usable hits happen**: new bottom section + `GET /api/hourstats` (new `store.hourStats()`). A 24-bin hour-of-day histogram, **split per body (☀ / 🌙)**, of the *usable* hits — the same definition the Range-stats / Usable-candidates cards use: a time-confirmed real transit (`stage='imminent'`) that actually passed within **0.5°** while the aircraft was **≥ 30°** above the horizon (elevation parsed from `payload_json`, ISS included like the sibling stats). Hours are **observatory-local** (the Pi's wall clock = the time of day to point the scope), taken from `closest_at_ms`. Peak-hour figures (Sun / Moon / both) on top; the fullest bin per column is emphasised. Reuses the acstats bar markup, wired into the slow stats cadence | done |
-| M51 (v0.17.0) | **Compass in the Sun/Moon FOV box** (both frames): (a) azimuth-derived **horizon N/E/S/W** at the four FOV edges — correct for both hemispheres and any sky position with no hemisphere switch (screen-right = bearing Az+90°), the frame the aircraft's ground track lives in; (b) a **parallactic celestial N/E rose** on the disc, computed from observer latitude + body az/el via 3D ENU vectors (no parallactic-angle sign pitfalls) — N up only at the meridian, visibly rotating off-meridian (the sunspot/lunar-map frame). Rose only when the observer latitude is known; both are the geometric true-sky view (diagonal/sensor rotation not modelled). `obsLat` threaded through `renderFovSketch` | done |
-| M50 (v0.16.3) | **ICAO hex → adsbexchange globe link** in every History & Live-Tracking row: the airframe hex is now a direct `globe.adsbexchange.com/?icao=<hex>` link (global search + history/playback, keeps blocked aircraft) — it resolves these brief long-range transits when AirNav/SkyAware can't. Only for a valid 6-hex code (ISS → "orbit"; a weak-signal partial stays plain text, no misleading link). A shared `icaoCellInner()` builds the cell for both tables; clicking the link no longer also pins/scrolls the row | done |
-| M49 (v0.16.2) | **Fixed transit-view header overlap**: with both the route in the title and the ETA on the right, the start-anchored title and the end-anchored right block collided mid-line on long strings. Header is now **two rows** — row 1 `<body> transit · <flight> · <type>` \| `Sep X′`, row 2 a single left-anchored line `<ORIG→DEST> · <ETA · clock>` (route muted, ETA/clock soft red) which can be any length without colliding. The "⤢ zoomed out" indicator moved into the optics footer line (next to the FOV dims) instead of a separate, truncation-prone header note | done |
-| M48 (v0.16.1) | **Transit-view header carries route + ETA; less repetition**: the route (`ORIG→DEST`) is now shown once in the FOV-sketch header next to the flight number (removed from both the plan view and the side view, where it was redundant). The header also shows the **ETA in minutes + the closest-approach clock** in a soft red (`in 7 min · 13:42:10`), unobtrusive but visible — only with a live `nowMs` (back-compat: just the clock otherwise). The auto-zoom note was shortened to `⤢ zoomed out · FOV …° box & disc shown to scale` (dropped the redundant, often-truncated "aircraft X′ from disc" — sep is already in the header) | done |
-| M47 (v0.16.0) | **Dynamic / time-lapse FOV + header tidy-up**: `/api/state` cadence is now adaptive — relaxed 10 s while idle, 2 s once the active transit's \|ETA\| < 3 min (held through ±30 s + a 30 s tail), so plan/side views update like an animation then back off (idle is *less* load than the old fixed 2 s). Auto-pick is now the **"best" candidate** (imminent → best visibility band → tightest sep → nearest ETA) instead of "newest"; an explicit click still pins. The Sun/Moon sketch gains a pulsing **"now" marker** that travels the predicted path by live time (back-compat: no `nowMs` → no marker). Status legend made a collapsible `<details>` (default collapsed). Header: external links (GitHub/AstroBin/dump1090/AirNav) moved to the right edge; a **"buy me a coffee"** link added next to the identity | done |
-| M46 (v0.15.2) | **Pushover message + link rework**: title is now `<body> crosser - sep x.yz° in N minutes` (no stage prefix; imminent still stands out via priority); body trimmed to only what's *not* in the title — flight (+route), airframe/altitude/speed/distance, the **visibility traffic-light** (🔴/🟡/🟢 + elevation), and the tappable link. The notification's clickable URL is now configurable as **`pushover.url`** in Settings (blank → auto-derived `http://<lan-ip>:<port>/` so it opens this predictor's own UI). Removed the pointless **External links / dump1090 URL** config + section — the header dump1090 link is simply hardcoded to `http://<host>:8080/` | done |
-| M45 (v0.15.1) | **Side view + FOV layout rework**: new vertical "side view" SVG beside the plan-view mini-map (observer → aircraft, real slant range + height, isotropic so the drawn angle *is* the true elevation; the line-of-sight wedge is filled in the visibility colour, the 20/30/45° reference rays drawn in their band hues). FOV rearranged per the chosen layout — top row = the dominant transit sketch + the compact AirNav photo/data box beside it (~62/38, AirNav collapses when empty), lower box = plan view \| side view. `acMeta*` now carry `elevationDeg` through `renderFovMap` → `buildSideViewSvg` | done |
-| M44 (v0.15.0) | **Visibility traffic-light + elevation notify gate**: per-row 3-state ampel (🔴 < 30° · 🟡 30–45° · 🟢 ≥ 45°, aircraft elevation at closest approach) in History & Live-Tracking; Pushover now gated by configurable `pushover.minElevationDeg` (default 30°, 0 = off, ISS exempt — History/stats stay complete). New `store.usableCandidates()` + `GET /api/usable` powering a second Aircraft-stats list of real usable transits (elevation ≥ gate). Row colours redefined: **green only** = confirmed real disc overlap (sep < 0.27°), **yellow** = near-miss (< 0.5°), else neutral (removed the old magenta/green near-hit split) | done |
-| M43 (v0.14.4) | **Unified type size across the whole right-hand column** — every label in the FOV sketch and the plan-view mini-map now renders at one shared `LABEL_SIZE` (11 px; the FOV sketch title is the single deliberate `TITLE_SIZE` exception), and the AirNav box / hover-popover CSS is aligned to the same 11 px. Plan-view fix: the route/flight caption and the distance/bearing caption no longer share one baseline (they overlapped on longer strings) — the route line is now stacked one `LINE_H` above the distance line, separate baselines | done |
-| M42 (v0.14.3) | **Range-stats card** at the very bottom (`GET /api/rangestats`, new `store.rangeStats()`): retrospective over *all* stored history — of the aircraft that **actually** passed within 0.5° (imminent-confirmed, not just predicted) it shows confirmed-pass count, median / closest / farthest / 90th-pct line-of-sight distance, an on-disc (&lt;0.27°) tally and a distance histogram (reuses the acstats bar markup). Plan-view mini-map gains a bottom-left **route + flight caption** (`<FLIGHT> ORIG→DEST`, charset-clamped since it comes from the free adsbdb/AirNav lookup); `acMeta*` carry `flight`/`origin`/`destination` through `renderFovMap` → `buildMiniMapSvg` | done |
-| M41 (v0.14.2) | Free `GET /api/route` (adsbdb, no token/credits, cached) → flight-number / callsign **hover popover now works without AirNav** (airline + origin→destination). Aircraft-stats: ICAO labels → AirNav popover, callsign labels → route popover (both interactive). History/Tracking flight cells gain a `data-cs` free-route fallback. Fixed the header **dump1090 link** never pointing at the app's own port (coerced to :8080) | done |
-| M40 (v0.14.1) | **History outcome sharpened** (display only — learning aggregates untouched): `confirmed` = reached the imminent ±30 s window (really happened); `predicted` = a tight candidate that never confirmed (flight diverged before the ETA — the "stale in Live yet graduated in History" case); `faded` = radio only. Headline sep now comes from the imminent row when present; a predicted-only sep is **struck through** + `sepConfirmed` flag. Stage + Outcome columns moved between Sep and Dist. Aircraft-stats → **TOP-20**; ICAO labels hover → AirNav popover | done |
-| M39 (v0.14.0) | **Persistent aircraft-sightings stats** over *all* detected ADS-B traffic (new `aircraft_sightings` SQLite table; survives restarts). A "visit" = a fresh sighting after a ≥ 30-min gap (`sightings.gapMs`); per-tick DB writes throttled via a session map (visit hits SQLite immediately, continuous presence flushes `last_seen` every `flushMs`). `GET /api/acstats`; new "Aircraft stats" section with TOP-10 horizontal bars by airframe (ICAO hex) and by ADS-B callsign + unique/visit totals | done |
-| M38 (v0.13.3) | Mini-map heading vector doubled in length + recoloured amber so it reads distinctly from the blue observer→aircraft sight line | done |
-| M37 (v0.13.2) | Mini-map + AirNav merged into **one compact box** — LEFT = plan-view radii map (now titled "PLAN VIEW · rings = km from you" so its purpose is clear), RIGHT = photo over aircraft data; equal-height columns (right ends flush with the map), empty halves collapse. Roughly half the prior footprint so the FOV transit sketch stays the dominant element | done |
-| M36 (v0.13.1) | AirNav FOV box laid out as **photo \| data side by side** (each ~half width, wraps to stacked only on a very narrow pane) — roughly half the previous height so the FOV sketch stays the dominant element | done |
-| M35 (v0.13.0) | **AirNav On-Demand API v2 integration** (optional, opt-in token in Settings — masked, server-side only). New `src/airnav.js` client + `GET /api/acinfo` proxy (token never reaches the browser; aggressive per-hex session cache since calls are billed). On a row **click** the FOV box shows airframe (reg/type/operator/MSN/first-flight) + live route + a photo; **hovering a flight number** pops an ad-hoc photo+route card (450 ms dwell, shares the cache). Header gains an "AirNav ↗" stations link | done |
-| M34 (v0.12.0) | Offline plan-view **mini-map** under the FOV (observer + aircraft real lat/lon + sight line + heading + range rings + bearing/distance) — pure SVG from our own ADS-B / recorded payload, no tiles/API/key; shown for the pinned/auto FOV entry, hidden for the ISS or when lat/lon is missing | done |
-| M33 (v0.11.1) | FOV sketch **auto zoom-out**: when the closest approach falls outside the optical FOV (e.g. a pinned wide-sep row), the whole sketch — FOV box, disc, path — is shrunk to scale so the aircraft still fits, with a "⤢ zoomed out · aircraft X′ from disc" note, giving a true sense of how far off-frame it was | done |
-| M32 (v0.11.0) | **Settings save bug fixed** — the look-ahead input's `step=30/min=10` made every round value (incl. the 900 default) a native `stepMismatch`, so browser form-validation silently blocked *all* saves (only 10 s was accepted). Form now `novalidate` (server validates with clear messages) + sane steps. Per-field subtitle hints under every Settings field (esp. Tracker). Pushover message reworded to lead with "&lt;Sun/Moon&gt; crosser — sep X° in Y, at &lt;target time&gt;" + flight | done |
+Production-ready and in daily use; ~78 named milestones (M1 → M78,
+covering v0.0 → v0.30.39). Detailed history with per-milestone scope
+lives in **[`MILESTONES.md`](MILESTONES.md)**. For "what changed in
+release X" see `git log --oneline`.
 
 ## Hardware + software bill of materials
 
@@ -366,7 +323,7 @@ is the host computer it runs on.
 | **Active cooling case** (Argon ONE V3, Pi 5 official cooler, etc.) | The Pi 5 throttles under sustained load; the tracker tick is light but if you co-host other services you'll want active cooling. |
 | **External USB-C SSD** | Move `data/history.db` and `data/lifecycle.json` off the SD card by symlinking the `data/` directory. Massively extends SD-card life for multi-year deployments. |
 | **Pushover account** ([pushover.net](https://pushover.net)) | Phone notifications for the three transit stages. The pipeline runs fine without it (`pushover.enabled=false`), but you'll only see transits in the web UI. |
-| **Windows PC running [SharpCap](https://www.sharpcap.co.uk/)** + camera | Only if you want the predictor to *automatically start a capture* the moment a transit goes imminent (too tight a window — often < 30 s — for SharpCap's own Sequencer). Runs a tiny listener inside SharpCap's IronPython; the Pi triggers it over TCP. See **[SharpCap capture trigger](#sharpcap-capture-trigger-optional)**. Off by default. |
+| **Windows PC running [SharpCap](https://www.sharpcap.co.uk/)** + camera | Only if you want the predictor to *automatically start a capture* the moment a transit goes imminent (too tight a window — often < 30 s — for SharpCap's own Sequencer). Runs a tiny stdlib-only Python listener inside SharpCap (4.x uses embedded **CPython**, not IronPython — the listener is portable across both); the Pi triggers it over TCP. Multi-rig: drive several scopes/PCs in parallel via `sharpcap.targets[]`. See **[SharpCap capture trigger](#sharpcap-capture-trigger-optional)**. Off by default. |
 
 ### Required software (installed by `scripts/install-pi5.sh`)
 
@@ -967,13 +924,17 @@ STP_CONFIG=/etc/stp/service.prod.json     \
 npm test
 ```
 
-84 vitest cases cover geometry, ADS-B parsing, tracker (including the
-ADS-B latency back-stamp, sub-step vertex refinement, barometric geoid
-offset from M8, and the level=candidate/radio split from M11), Pushover
+~205 vitest cases across 17 files cover geometry, ADS-B parsing, tracker
+(including the ADS-B latency back-stamp, sub-step vertex refinement,
+barometric geoid offset, and the level=candidate/radio split), Pushover
 client, notifier (3-stage pipeline with minStage filter), route lookup
-with TTL cache, history store (with the M11 stage-rename migration), the
-HTTP server, the history-based predictor, the OpenSky REST client (M10),
-and the lifecycle state machine (M11).
+with TTL cache, history store (with stage-rename migration), the HTTP
+server, the history-based predictor, the OpenSky REST client, the SGP4
+propagator (validated against the official Vallado 88888 verification
+vectors), the SharpCap trigger (dedup / re-arm / busy-vs-network-fail
+distinction), and the lifecycle state machine (planned / radio /
+candidate / imminent / stale + coasting + the four stale-reason
+classifications).
 
 ## Configuration
 
@@ -1002,13 +963,20 @@ Default 0 is fine if you only see GPS-equipped aircraft (`alt_geom`).
 ```json
 {
   "adsb":     { "url": "http://localhost:8080/data/aircraft.json", "pollIntervalMs": 2000 },
-  "tracker":  { "horizonS": 60, "stepS": 0.5, "thresholdDeg": 0.3, "bodies": ["Sun", "Moon"] },
+  "tracker":  { "horizonS": 300, "stepS": 0.5, "thresholdDeg": 0.3, "looseThresholdDeg": 2.0, "bodies": ["Sun", "Moon"] },
   "pushover": { "token": "...", "user": "...", "enabled": true },
   "server":   { "port": 8081, "host": "0.0.0.0", "publicUrl": "" },
   "store":    { "path": "./data/history.db" },
   "routes":   { "enabled": true, "ttlMs": 3600000, "negativeTtlMs": 300000 }
 }
 ```
+
+For the complete list of currently-supported fields (`sharpcap.targets[]`,
+`tracker.minAltitudeM`, `tracker.minBodyElevationDeg`, `iss.*`,
+`predictor.*`, `lifecycle.*`, `update.*`, `driftPersist.*`,
+`lifecyclePersist.*`, etc.) refer to
+[`config/service.example.json`](config/service.example.json) — that
+file is kept in sync with the installer defaults.
 
 `thresholdDeg` (default 0.3°) is the maximum line-of-sight separation that
 triggers a candidate — the Sun's angular radius is ~0.27°, so 0.3° catches
@@ -1137,18 +1105,18 @@ history table.
 
 ### Tuning the live look-ahead
 
-`tracker.horizonS` (default 900 s = 15 min) is the window the live tracker
-linearly extrapolates each aircraft over. Bigger window = earlier warning,
-but linear extrapolation degrades past ~10 min (turns, ATC vectoring,
-wind), so the longer horizon trades more "faded" false-positives for
-catching a flight as it enters ADS-B range. Clamped to `[10, 1800]` in
-code. Typical settings:
+`tracker.horizonS` (default **300 s = 5 min** since v0.23.4 / M62; was
+900 s before but linear extrapolation degrades fast for descending /
+turning approach traffic, so the 15-min horizon produced too many
+speculative candidates that fired a radio alert then faded) is the
+window the live tracker linearly extrapolates each aircraft over.
+Clamped to `[10, 1800]` in code. Typical settings:
 
 | Use case | `horizonS` | What you get |
 |---|---|---|
 | Maximum precision | 60 | First-detection at ~T-60 s; lowest false-positive rate. |
-| Conservative | 300 | First-detection at ~T-5 min; few false-positives. |
-| **Default** | **900** | First-detection at ~T-15 min; catches flights as they enter reception range, at the cost of more "faded" episodes. |
+| **Default** | **300** | First-detection at ~T-5 min; few false-positives; SharpCap arms ~95 s out anyway, a Pushover 1–2 min ahead is ample warning. |
+| Conservative | 600 | First-detection at ~T-10 min; more "faded" false-positives but earlier heads-up. |
 | Wide net | 1800 | First-detection at ~T-30 min (upper clamp); maximum lead, most noise. |
 
 `tracker.looseThresholdDeg` (default **2°** since v0.7.4; was 5° in
@@ -1256,8 +1224,9 @@ journalctl -u stp.service -f | grep -iE 'push|notif'
 
 ## Predictive watchlist (24 h preview)
 
-The live tracker only sees ~60 seconds into the future (linear ADS-B
-extrapolation). The **predictor** complements it with a 24 h preview built
+The live tracker only sees `tracker.horizonS` seconds into the future
+(default **300 s = 5 min** since v0.23.4, linear ADS-B extrapolation).
+The **predictor** complements it with a 24 h preview built
 from past transits: any `(flight, body)` pair that hit ≥ 2 distinct days in
 the last 14 produces a watchlist entry, and the next expected occurrence is
 surfaced in `state.expected`. The "Expected today" panel in the web UI
@@ -1361,8 +1330,41 @@ src/sharpcap.js sends one JSON line       RunCapture() after preRoll,
 - **Windows side:** a one-shot PowerShell installer sets up a bootstrap that
   pulls the latest listener from GitHub on every SharpCap launch, plus an
   optional post-capture copy/move of the `.ser` to a network drive. The
-  listener is IronPython-only (it calls `SharpCap.SelectedCamera`), so it needs
-  **no separate Python install**.
+  listener uses stdlib only (`socket`, `threading`, `json`, `time`,
+  `subprocess`, `shutil`), runs on whatever Python SharpCap embeds (CPython
+  in 4.x; IronPython in older builds — both work), so **no separate Python
+  install** is needed.
+
+**Multi-rig (v0.24+, fixed v0.30.1).** Drive several telescopes/PCs at
+once via `sharpcap.targets[]`. Each entry runs its own listener on its
+own `host:port`, inherits the shared knobs, overrides per-rig fields
+(`bodies`, `maxSepDeg`, buffers…). A Sun candidate arms only Sun rigs,
+a Moon candidate only Moon rigs — independent dedup + re-arm state per
+rig. The top-level `sharpcap.{host,port,…}` block is auto-promoted to
+its own implicit "main" rig when `targets[]` is populated (suppressed
+only on host:port collision).
+
+**Rich filename tagging (v0.30.32+).** The listener renames the source
+`.ser` ON THE LOCAL SSD with all known meta tags before the (often
+multi-minute, multi-GB) NAS upload starts:
+
+```
+HH_MM_SS_Sun_p9999_4080e9_BER-LHR_sep021.ser
+         │   │    │      │       │
+         │   │    │      │       └─ predicted sep 0.21 deg
+         │   │    │      └─────────── origin → destination
+         │   │    └────────────────── ICAO 4080E9 (lowercase)
+         │   └─────────────────────── port (which rig)
+         └──────────────────────────── body
+```
+
+**Outcome verdict (v0.30.33+).** ~60 s after the lifecycle entry
+finishes, the predictor sends a `type:"outcome"` packet. The listener
+appends `_confirmed` (entry reached imminent stage) or `_probempty`
+(entry faded before imminent — recording most likely shows empty sky)
+plus `_finalsepNNN` (drift at end) to the same file ON THE SSD, then
+the NAS upload uses the final tagged name. The 60 s wait gives a 20 GB
+upload time to settle without racing the rename.
 
 Full Windows install, the one-time SharpCap startup-script wiring, the
 machine-local folder config, the wire-format and a hand-test recipe live in
@@ -1434,9 +1436,17 @@ form for the three configuration areas you actually touch in the field:
 - **Telescope & sensor** — focal length, sensor width/height in mm,
   pixel count, and a free-text sensor name. The FOV preview pane picks
   the new optics up on the next state poll, no reload needed.
-- **External links** — optional override for the dump1090 status-page
-  URL surfaced in the header (defaults to
-  `http://<this-host>:8080/`).
+- **Tracker** — `horizonS`, `thresholdDeg`, `looseThresholdDeg`,
+  `minAltitudeM`, `minBodyElevationDeg` (v0.30.37+). All hot-reload.
+- **AirNav Radar API** — bearer token (masked after save).
+- **SharpCap capture trigger** — toggle, host/port for the main rig,
+  per-rig list (`targets[]`) with body / pre-buffer / post-buffer /
+  maxSepDeg / minElevationDeg overrides. Hot-reload + `Test trigger`
+  button per rig.
+
+(The dump1090-status link in the header is hardcoded to `http://<host>:8080/`
+since v0.15.2 — the configurable "External links" field that used to be
+here was removed in M46.)
 
 Saved changes hot-reload the running service in place and are written
 back to `config/observer.json` + `config/service.json` so the next
@@ -1497,17 +1507,23 @@ from the notifier — happy to add that as a config switch if useful.
   exposes the refracted body position via the regular `bodyAzEl` for
   display. Differential refraction along two near-coincident lines of sight
   is well below the search noise.
-- **Observability**: `isObservable` returns `true` only for `el > 20°`.
-  Tracker skips bodies that never rise above 20° within the horizon.
+- **Observability**: `isObservable(azEl, minElevationDeg)` returns `true`
+  only above the threshold (default 20°). Since v0.30.37 the tracker
+  auto-widens this down to the lowest enabled rig's `minElevationDeg`
+  (hard-floored at 5° for refraction sanity), so a clear-horizon site
+  with a 10°-tolerant main rig will see candidates with the body between
+  10° and 20° elevation that the old hardcoded floor would have hidden.
 - **Aircraft altitude**: prefers `alt_geom`, falls back to `alt_baro`.
   `alt_geom` is GPS height above WGS84 ellipsoid (DO-260) and is fed
   straight in. `alt_baro` is pressure altitude (≈MSL on standard atm.) and
   is converted to HAE by adding `observer.geoidUndulationM` (default 0;
   ≈+46 m at Rheine).
-- **Extrapolation**: linear, locally-flat tangent plane, 60 s horizon. Error
-  versus geodesic is well under 1 m at our typical speeds. Aircraft are
-  projected from their **fix time** (`receivedAtMs`), not from `now`, so a
-  `seen_pos` lag of several seconds does not bias the predicted position.
+- **Extrapolation**: linear, locally-flat tangent plane, 300 s horizon
+  (default — clamped to `[10, 1800]`). Error versus geodesic is well
+  under 1 m at our typical speeds within ~60 s; reasonable through
+  ~5 min in stable cruise. Aircraft are projected from their **fix
+  time** (`receivedAtMs`), not from `now`, so a `seen_pos` lag of
+  several seconds does not bias the predicted position.
 - **Sub-step time precision**: after the discrete minimum is located, a
   parabolic vertex is fitted through the three samples around it. With the
   default `stepS = 0.5 s` this gives sub-100-ms closest-approach time.
@@ -1565,8 +1581,172 @@ from the notifier — happy to add that as a config switch if useful.
 │   ├── stp-update.path           click-to-update trigger watcher
 │   ├── stp-tle.service           ISS TLE refresh oneshot template
 │   └── stp-tle.timer             daily ISS TLE schedule (05:40 ±20 min)
-└── test/                         16 vitest files, 167 cases
+└── test/                         17 vitest files, ~205 cases
 ```
+
+## Trivia & statistical insights
+
+A mix of physical-geometry math, real prediction statistics from a
+month-plus of live operation, astronomical curiosities, and the
+amusing-in-hindsight bugs that shaped the architecture. Numbers are
+from the running site (Rheine, Germany) unless noted; your data will
+look broadly similar but specific values drift with traffic patterns
+and weather.
+
+### Physical geometry — how forgiving is an "on-disc" transit, really?
+
+The Sun and Moon disc both span about **0.53°** of sky — angular
+radius **~0.27°**. That radius, multiplied by your slant range to the
+aircraft, is how many METRES of lateral track error pushes the plane
+out of the disc:
+
+| Body elevation | Slant range @ 12 km alt | Lateral tolerance for disc-edge |
+|---|---|---|
+| 90° (overhead) | 12.0 km | **~57 m** (≈ half an A320) |
+| 60° elev | 13.9 km | ~65 m |
+| 45° elev | 17.0 km | ~80 m |
+| 30° elev | 24.0 km | ~113 m |
+| 20° elev | 35.1 km | ~165 m |
+| 10° elev | 69.1 km | **~326 m** |
+
+Counterintuitive result: at LOWER body elevation the lateral tolerance
+GROWS (longer slant range = same 0.27° spans more metres). But low-
+elevation traffic is overwhelmingly descent / approach aircraft that
+get ATC-vectored constantly, so they drift 500-1000 m in the last
+minute — which overwhelms the geometric tolerance. Cruise traffic at
+high elevation has < 50 m of late-stage drift (autopilot + LNAV + GPS
+is mathematically exact at this scale), so the system records very
+tight bullseye transits when the prediction holds.
+
+### Prediction accuracy — what the postmortem table actually shows
+
+After ~90 finished episodes the prediction-error stats break down
+roughly like this (the live panel auto-updates, these are typical
+ranges):
+
+| Lead at sample | High-elev (≥ 30°, cruise) | Low-elev (< 30°, descent / approach) |
+|---|---|---|
+| > 90 s | p50 ~0.20° · p95 ~1.5° | p50 ~0.30° · p95 ~2.5° |
+| 30–60 s | p50 ~0.08° · p95 ~1° | p50 ~0.10° · p95 ~2° |
+| < 10 s | p50 ~0.04° · p95 < 0.3° | p50 ~0.13° · p95 ~2° |
+
+The clean read: **high-elev cruise predictions converge to <0.05°
+median in the last 10 seconds — well inside the 0.27° disc radius**.
+Low-elev approach traffic plateaus at ~0.13° median (still on-disc on
+average), but the long-tail (P95 ~2°) reflects ATC-vectoring drift
+that mathematically cannot be predicted from ADS-B alone. The
+predictor reports it honestly — it does not hide the long tail.
+
+### Wind-drift as a detector
+
+The drift-bias sampler runs every tick over every aircraft above 20°
+elevation, comparing actual position vs. a constant-velocity
+extrapolation of the previous fix. The mean residual across many
+flights = systematic wind / ATC bias for the day. Two observed days
+worth contrasting:
+
+- **Day 1 (light Ostwind):** mean drift 0.9 m/s @ 97° E across
+  n=1407 samples. σ_E = 7.5 m/s, SE = 0.20 m/s → 4.5σ above zero,
+  statistically significant.
+- **Day 2 (calm):** mean drift 0.1 m/s @ 108° E across n=4000 samples.
+  σ_E = 8.0 m/s, SE = 0.13 m/s → 0.8σ, indistinguishable from no wind.
+
+The system actually detects real-world wind conditions — and is
+honest when there isn't a meaningful signal. Standard Error (σ/√n), not
+raw σ, is the correct test for "is the mean different from zero" (see
+v0.30.39 fix).
+
+### Disc-crossing duration — a transit is over before you can react
+
+Angular speed of an airliner across the sky is roughly `v / range`:
+
+| Airliner speed | Slant range | ω (deg/s) | Time to cross 0.53° Sun disc |
+|---|---|---|---|
+| 250 m/s (≈ 900 km/h) | 12 km | 1.19°/s | **~0.45 s** |
+| 250 m/s | 25 km | 0.57°/s | ~0.93 s |
+| 250 m/s | 60 km | 0.24°/s | ~2.2 s |
+
+For an overhead cruise jet you have **less than half a second of disc
+contact** — explains why SharpCap's own Sequencer is too slow and why
+this whole project exists.
+
+### Sun-disc radius isn't quite constant
+
+The Sun's angular diameter varies between **0.524°** (Aphelion ~July 4)
+and **0.541°** (Perihelion ~January 3) — about 3 % swing. The disc
+radius therefore ranges from 0.262° to 0.270°. The Moon swings wider:
+**0.490°** (Apogee) to **0.564°** (Perigee, a "supermoon"). The
+predictor uses fixed nominal disc sizes in the search threshold; the
+real variation rounds inside the 0.3° candidate band so it doesn't
+affect detection.
+
+### Hit rate at a mid-European urban site
+
+From a few days' worth of stats at Rheine, NW Germany (well-served by
+Amsterdam approach traffic + Frankfurt overflights):
+
+- ~**5-15 confirmed-imminent transits per day**, mixed Sun + Moon.
+- Of those, ~**15-20% are on-disc bullseyes** (< disc radius). The
+  rest are near-misses 0.3-2° off-centre.
+- So about **2-3 actual photographable transits per day** for the
+  site — multiply by a typical clear-sky fraction in NW Germany and
+  you get the realistic photographic output.
+
+### Architectural war stories (one-liners)
+
+A few bugs that shaped the current design. All in `MILESTONES.md` if
+you want the full reconstruction.
+
+- **The `→` arrow that broke a Windows install** (v0.30.15): a single
+  U+2192 in a Python comment crashed the SharpCap bootstrap's cache
+  writer because Windows defaults to cp1252 encoding for text-mode
+  file writes. Forced the listener body to pure ASCII forever after.
+
+- **`subprocess.run` is too new** (v0.30.17): some SharpCap builds
+  embed Python 3.4. `subprocess.run` arrived in 3.5,
+  `capture_output=True` in 3.7. Had to drop to `Popen + communicate`
+  to stay portable.
+
+- **The console window that flashed for 1 second** (v0.30.18):
+  `CREATE_NO_WINDOW` flag is Python 3.7+. Older Python silently fell
+  back to 0 and a CMD window briefly popped on every robocopy
+  invocation. Combine with `STARTUPINFO + STARTF_USESHOWWINDOW +
+  SW_HIDE` (in subprocess since Python 2) to cover all versions.
+
+- **The 120 s outcome wait** (v0.30.34): a 20 GB SSD → NAS copy takes
+  many minutes. The predictor's `_probempty` / `_confirmed` verdict
+  arrives ~60 s after the lifecycle settles, so the LOCAL rename on
+  SSD has to happen FIRST, then the long upload uses the already-
+  tagged filename. Listener blocks on `threading.Event[captureId]`
+  for up to 120 s before starting the NAS phase — so the final
+  filename never races the upload.
+
+- **TCP-storm on busy listener** (v0.30.3): the per-rig dedup was
+  releasing the slot on EVERY failed send. A "busy" response (listener
+  recording for another ICAO) would clear dedup, next tick fired
+  again, repeat 25 times in 60 s. Fix: distinguish JSON-reply-but-
+  `ok:false` (= listener said no, keep dedup) from no-reply (= network
+  failed, release dedup).
+
+- **Drift sampler's "low signal" flag was using the wrong test**
+  (v0.30.39): comparing the mean magnitude to within-population σ is
+  not a significance test — that ratio never converges to <1 even
+  with millions of samples. The right comparison is Standard Error
+  of the mean (σ / √n), which shrinks with n. With n=1407 samples a
+  0.9 m/s mean against σ=7.5 is 4.5 standard errors above zero —
+  highly significant, even though the population variance suggests
+  noise.
+
+### Headline numbers at a glance
+
+- **~205 vitest cases** across 17 files cover the whole pipeline.
+- **5-15 confirmed-imminent transits per day** at a mid-European site.
+- **57-326 m** of lateral track-error pushes an aircraft off the disc,
+  depending on body elevation.
+- **0.5 - 2 seconds** is a typical disc-crossing time for an airliner.
+- **~120 s** is the worst case for the outcome-verdict pipeline to
+  settle on the final filename (lifecycle-stale + outcome-wait).
+- **78 named milestones**, M1 → M78, in `MILESTONES.md`.
 
 ## License
 
