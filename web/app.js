@@ -703,17 +703,27 @@ function renderPredStats(pred, drift) {
       `<circle cx="${tipX.toFixed(1)}" cy="${tipY.toFixed(1)}" r="2.5" fill="#6cb6ff"/>` +
       `<circle cx="50" cy="50" r="2" fill="#6cb6ff"/>`;
   }
-  // Signal-to-noise check: if the mean drift magnitude is comparable to
-  // (or smaller than) the per-axis standard deviation, the bias estimate
-  // is statistically weak — flag it so the user doesn't trust a noisy
-  // few-hundred-sample bias as real wind.
-  const maxStd = Math.max(drift.stdNorthMs ?? 0, drift.stdEastMs ?? 0);
-  const lowSignal = maxStd > 0 && drift.magnitudeMs < maxStd;
+  // Signal-to-noise check (v0.30.39: now uses Standard Error of the mean,
+  // not raw stddev — earlier code conflated within-population variance
+  // with sampling-mean uncertainty). The correct question for "is the
+  // bias real" is whether |mean| > k * SE, where SE = sigma / sqrt(n).
+  // With a 4 h window collecting hundreds-thousands of samples, SE
+  // shrinks fast and a small but consistent mean (e.g. 0.9 m/s east
+  // wind) becomes statistically significant even when individual-aircraft
+  // residuals scatter at sigma ~ 8 m/s.
+  const n = drift.n ?? 0;
+  const seN = n > 0 ? (drift.stdNorthMs ?? 0) / Math.sqrt(n) : Infinity;
+  const seE = n > 0 ? (drift.stdEastMs  ?? 0) / Math.sqrt(n) : Infinity;
+  const maxSe = Math.max(seN, seE);
+  // 2-sigma = ~95% confidence. Use the larger axis SE so a
+  // "borderline E but rock-solid N" pair still has to clear the bar.
+  const sigZ = maxSe > 0 ? drift.magnitudeMs / maxSe : 0;
+  const lowSignal = sigZ < 2.0;
   if (statusEl) {
     statusEl.textContent = lowSignal ? 'live · low signal' : 'live';
     statusEl.title = lowSignal
-      ? 'Mean drift magnitude is smaller than the per-axis stddev — the bias estimate is dominated by individual-aircraft manoeuvres. Wait for the rolling window to fill more samples or until the wind/ATC pattern stabilises.'
-      : 'Rolling window has enough samples for the mean drift vector to be statistically meaningful.';
+      ? `Mean drift (${drift.magnitudeMs.toFixed(1)} m/s) is within 2 standard errors of zero — not yet statistically distinguishable from "no wind". SE ≈ ${maxSe.toFixed(2)} m/s with n=${n}.`
+      : `Mean drift is ${sigZ.toFixed(1)} standard errors above zero — statistically real (SE ≈ ${maxSe.toFixed(2)} m/s with n=${n}).`;
   }
   // Bearing label: numeric + compass octant.
   const compass = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
