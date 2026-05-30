@@ -37,11 +37,53 @@
     </div>
   </header>
 
+  <section>
+    <h2>Real candidates</h2>
+    <p class="hint">
+      Unified list, sorted by urgency. Status transitions in real time as
+      flights are detected, projected, and either confirmed or dropped:
+    </p>
+    <details class="legend-details">
+      <summary>Status legend (planned · radio · candidate · imminent · stale)</summary>
+      <ul class="legend">
+        <li><span class="status status-planned">📅 planned</span> watchlist entry expected within ~1 h; no live ADS-B match yet.</li>
+        <li><span class="status status-radio">📡 radio</span> in ADS-B range, projected to pass within the panel band (≤ 2°) of the body — early-warning.</li>
+        <li><span class="status status-candidate">✈️ candidate</span> projected to pass within 0.3° (tight transit band); camera-prep.</li>
+        <li><span class="status status-imminent">🎯 imminent</span> closest approach within ±30 s; press the shutter.</li>
+        <li><span class="status status-stale">❌ stale</span> tracking ended — the row carries the WHY beside the badge:
+          <b>past ETA</b> (the predicted closest moment is over),
+          <b>lost signal</b> (no more squitters from this aircraft),
+          <b>no fix</b> (still in dump1090 with a tight last projection but missing groundSpeed/track in the fix — pops back automatically when complete),
+          <b>faded</b> (still in dump1090 but the projected min-sep moved out of the panel band).
+          Stale rows leave the live panel 5 min after their ETA and reappear in History.</li>
+      </ul>
+    </details>
+    <table id="tracking">
+      <thead>
+        <tr>
+          <th class="th-icon" title="Visibility traffic-light = aircraft elevation above the horizon at closest approach. 🔴 below 30° (barely usable — long hazy/turbulent slant path, horizon clouds), 🟡 30–45° (workable), 🟢 45°+ (ideal)."><span aria-hidden="true">🚦</span><span class="th-sub">vis</span></th>
+          <th class="th-icon" title="Sun or Moon — which body this entry transits."><span aria-hidden="true">☀/🌙</span><span class="th-sub">body</span></th>
+          <th title="Lifecycle stage: planned → radio → candidate → imminent → stale. Driven live by the tracker + predictor.">Status<span class="th-sub">lifecycle</span></th>
+          <th title="Time until closest approach. Negative when the predicted moment has already passed.">ETA<span class="th-sub">until crossing</span></th>
+          <th title="Wall-clock time of the predicted closest approach (camera-ready moment) — NOT the detection time.">Time<span class="th-sub">predicted crossing</span></th>
+          <th title="Minimum angular separation between aircraft and the body disc at closest approach. Below ~0.27° = on-disc transit for the Sun.">Sep<span class="th-sub">min angular</span></th>
+          <th title="Line-of-sight distance from the observer to the aircraft at closest approach.">Dist<span class="th-sub">at closest</span></th>
+          <th title="Ground speed in km/h.">Speed<span class="th-sub">ground</span></th>
+          <th title="Aircraft altitude above mean sea level, rounded to the nearest 100 m. Uses GNSS altitude where available, otherwise barometric.">Alt<span class="th-sub">MSL</span></th>
+          <th title="IATA flight number, or the ADS-B callsign if no route lookup is available.">Flight<span class="th-sub">IATA / callsign</span></th>
+          <th title="ADS-B 24-bit ICAO hex code identifying the airframe.">ICAO<span class="th-sub">airframe hex</span></th>
+          <th title="Origin → Destination IATA codes from the adsbdb.com route lookup.">Route<span class="th-sub">from → to</span></th>
+        </tr>
+      </thead>
+      <tbody><tr class="empty"><td colspan="12">Tracking list empty.</td></tr></tbody>
+    </table>
+  </section>
+
   <div class="top-row">
     <div class="top-left">
-      <!-- LEFT column: Sky now and Detection funnel sit ABOVE the FOV
-           sketch — live state reads first, the sketch is the dominant
-           visual below. -->
+      <!-- LEFT column (v0.30.41): Sky now reads first, then the FOV
+           preview sketch (dominant visual), then the plan view + side
+           view geometry cells directly under it. -->
       <section id="sky-section">
         <h2>Sky now</h2>
         <table id="sky">
@@ -58,6 +100,54 @@
         <!-- Next naked-eye ISS pass (el > 20°, after dusk, station sunlit).
              Computed offline from the TLE; hidden until one is predicted. -->
         <p class="iss-pass" id="iss-pass" hidden></p>
+      </section>
+      <section id="fov-section">
+        <h2>
+          FOV preview
+          <span id="fov-mode" class="fov-mode" title="auto = best live candidate with sep &lt; 2° (preferring sep &lt; 1° when one exists). pinned = locked to your selection; cleared automatically when a newer qualifying tight candidate appears.">auto</span>
+        </h2>
+        <p class="hint" id="fov-hint">Waiting for a close approach (separation &lt; 1°). Click any tracking or history row to pin it here.</p>
+        <div id="fov-body" class="fov-body"></div>
+      </section>
+      <!-- Plan view + side view moved under FOV preview (left column, v0.30.41). -->
+      <div id="fov-map" class="fov-aux-cell" hidden></div>
+      <div id="fov-side" class="fov-aux-cell" hidden></div>
+    </div>
+    <aside class="top-right">
+      <!-- RIGHT column (v0.30.28 layout):
+             1. #total-live-section -- ALWAYS visible at top, max 20 rows
+                before the table itself scrolls internally. With the FOV
+                auto-pick now expanding to 2°, the live list would
+                otherwise hide behind a perma-active FOV; pinning it on
+                top keeps the "what's in the sky right now" overview
+                always reachable.
+             2. #detect-section (Detection funnel) -- always visible
+                under the live list.
+             3. airframe info card -- self-hides when empty (so an idle
+                right column collapses to live list + funnel). -->
+      <section id="total-live-section" class="total-live-section">
+        <h2>
+          Total live trackings
+          <span class="th-sub">all in range · sorted by SEP</span>
+        </h2>
+        <p class="hint">Everything dump1090 currently sees, with each contact's current angular distance to the nearest body. Scrollable when more than ~20 aircraft are in view.</p>
+        <div class="table-scroll">
+          <table id="total-live-table" class="total-live-table">
+            <thead>
+              <tr>
+                <th title="Current angular separation between this aircraft and the nearest observable body (Sun or Moon).">SEP</th>
+                <th>Flight</th>
+                <th>ICAO</th>
+                <th title="Origin → destination from the routes database (when available).">Route</th>
+                <th title="Slant range from observer to aircraft.">Dist</th>
+                <th title="Altitude MSL.">Alt</th>
+                <th title="Ground speed.">km/h</th>
+                <th title="Aircraft ground-track bearing (compass heading).">Brg</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </section>
       <section id="detect-section">
         <!-- Detection funnel (moved out of Alert learning in v0.27.0 so it
@@ -127,98 +217,10 @@
           </div>
         </div>
       </section>
-      <section id="fov-section">
-        <h2>
-          FOV preview
-          <span id="fov-mode" class="fov-mode" title="auto = best live candidate with sep &lt; 2° (preferring sep &lt; 1° when one exists). pinned = locked to your selection; cleared automatically when a newer qualifying tight candidate appears.">auto</span>
-        </h2>
-        <p class="hint" id="fov-hint">Waiting for a close approach (separation &lt; 1°). Click any tracking or history row to pin it here.</p>
-        <div id="fov-body" class="fov-body"></div>
-      </section>
-    </div>
-    <aside class="top-right">
-      <!-- RIGHT column (v0.30.28 layout):
-             1. #total-live-section -- ALWAYS visible at top, max 20 rows
-                before the table itself scrolls internally. With the FOV
-                auto-pick now expanding to 2°, the live list would
-                otherwise hide behind a perma-active FOV; pinning it on
-                top keeps the "what's in the sky right now" overview
-                always reachable.
-             2. plan / side / airframe cells -- under it, self-hide when
-                empty (so an idle right column collapses to just the
-                live list). -->
-      <section id="total-live-section" class="total-live-section">
-        <h2>
-          Total live trackings
-          <span class="th-sub">all in range · sorted by SEP</span>
-        </h2>
-        <p class="hint">Everything dump1090 currently sees, with each contact's current angular distance to the nearest body. Scrollable when more than ~20 aircraft are in view.</p>
-        <div class="table-scroll">
-          <table id="total-live-table" class="total-live-table">
-            <thead>
-              <tr>
-                <th title="Current angular separation between this aircraft and the nearest observable body (Sun or Moon).">SEP</th>
-                <th>Flight</th>
-                <th>ICAO</th>
-                <th title="Origin → destination from the routes database (when available).">Route</th>
-                <th title="Slant range from observer to aircraft.">Dist</th>
-                <th title="Altitude MSL.">Alt</th>
-                <th title="Ground speed.">km/h</th>
-                <th title="Aircraft ground-track bearing (compass heading).">Brg</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </section>
-      <div id="fov-map" class="fov-aux-cell" hidden></div>
-      <div id="fov-side" class="fov-aux-cell" hidden></div>
       <div id="fov-acinfo" class="fov-aux-right" hidden></div>
     </aside>
   </div>
   <div id="fov-specs" class="fov-specs" hidden></div>
-
-  <section>
-    <h2>Real candidates</h2>
-    <p class="hint">
-      Unified list, sorted by urgency. Status transitions in real time as
-      flights are detected, projected, and either confirmed or dropped:
-    </p>
-    <details class="legend-details">
-      <summary>Status legend (planned · radio · candidate · imminent · stale)</summary>
-      <ul class="legend">
-        <li><span class="status status-planned">📅 planned</span> watchlist entry expected within ~1 h; no live ADS-B match yet.</li>
-        <li><span class="status status-radio">📡 radio</span> in ADS-B range, projected to pass within the panel band (≤ 2°) of the body — early-warning.</li>
-        <li><span class="status status-candidate">✈️ candidate</span> projected to pass within 0.3° (tight transit band); camera-prep.</li>
-        <li><span class="status status-imminent">🎯 imminent</span> closest approach within ±30 s; press the shutter.</li>
-        <li><span class="status status-stale">❌ stale</span> tracking ended — the row carries the WHY beside the badge:
-          <b>past ETA</b> (the predicted closest moment is over),
-          <b>lost signal</b> (no more squitters from this aircraft),
-          <b>no fix</b> (still in dump1090 with a tight last projection but missing groundSpeed/track in the fix — pops back automatically when complete),
-          <b>faded</b> (still in dump1090 but the projected min-sep moved out of the panel band).
-          Stale rows leave the live panel 5 min after their ETA and reappear in History.</li>
-      </ul>
-    </details>
-    <table id="tracking">
-      <thead>
-        <tr>
-          <th class="th-icon" title="Visibility traffic-light = aircraft elevation above the horizon at closest approach. 🔴 below 30° (barely usable — long hazy/turbulent slant path, horizon clouds), 🟡 30–45° (workable), 🟢 45°+ (ideal)."><span aria-hidden="true">🚦</span><span class="th-sub">vis</span></th>
-          <th class="th-icon" title="Sun or Moon — which body this entry transits."><span aria-hidden="true">☀/🌙</span><span class="th-sub">body</span></th>
-          <th title="Lifecycle stage: planned → radio → candidate → imminent → stale. Driven live by the tracker + predictor.">Status<span class="th-sub">lifecycle</span></th>
-          <th title="Time until closest approach. Negative when the predicted moment has already passed.">ETA<span class="th-sub">until crossing</span></th>
-          <th title="Wall-clock time of the predicted closest approach (camera-ready moment) — NOT the detection time.">Time<span class="th-sub">predicted crossing</span></th>
-          <th title="Minimum angular separation between aircraft and the body disc at closest approach. Below ~0.27° = on-disc transit for the Sun.">Sep<span class="th-sub">min angular</span></th>
-          <th title="Line-of-sight distance from the observer to the aircraft at closest approach.">Dist<span class="th-sub">at closest</span></th>
-          <th title="Ground speed in km/h.">Speed<span class="th-sub">ground</span></th>
-          <th title="Aircraft altitude above mean sea level, rounded to the nearest 100 m. Uses GNSS altitude where available, otherwise barometric.">Alt<span class="th-sub">MSL</span></th>
-          <th title="IATA flight number, or the ADS-B callsign if no route lookup is available.">Flight<span class="th-sub">IATA / callsign</span></th>
-          <th title="ADS-B 24-bit ICAO hex code identifying the airframe.">ICAO<span class="th-sub">airframe hex</span></th>
-          <th title="Origin → Destination IATA codes from the adsbdb.com route lookup.">Route<span class="th-sub">from → to</span></th>
-        </tr>
-      </thead>
-      <tbody><tr class="empty"><td colspan="12">Tracking list empty.</td></tr></tbody>
-    </table>
-  </section>
 
   <section>
     <h2>History</h2>

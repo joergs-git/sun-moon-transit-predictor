@@ -397,10 +397,11 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
    The breakpoint stays generous (≥ 640 px) so anything wider than a
    portrait phone keeps the side-by-side arrangement — Alert learning is
    never full-width below the row on a normal browser window. */
-/* Top-of-page 2-column block (v0.27.1): LEFT = dominant FOV sketch.
-   RIGHT = compact stack of Sky now + Detection funnel + plan view +
-   side view + airframe details. Keeps the whole upper region short
-   instead of three full-width sections piling on top of each other. */
+/* Top-of-page 2-column block (v0.27.1, reordered v0.30.41): LEFT = Sky now
+   + dominant FOV sketch + plan/side geometry cells. RIGHT = Total live
+   trackings + Detection funnel + airframe details. The Real candidates
+   table now sits full-width ABOVE this block. Keeps the whole upper region
+   short instead of full-width sections piling on top of each other. */
 .top-row {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
@@ -419,22 +420,21 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
   min-width: 0;
 }
 /* Sections inside either column lose their outer margin so they pack
-   tightly. Sky now + Detection funnel live in .top-left ABOVE the FOV
-   sketch; plan/side/airframe cells live in .top-right parallel to them. */
+   tightly. Sky now + FOV sketch + plan/side cells live in .top-left;
+   Total live trackings + Detection funnel + airframe card in .top-right. */
 .top-left > section,
 .top-right > section { margin: 0; }
 
-/* Total live trackings: sits INSIDE .top-right, parallel to sky-now/
-   detect/fov on the left. Replaces plan/side/airframe while no real
-   candidate is in flight. Column is narrow (min ~280 px) so the table
-   uses a small font + tight padding — the user explicitly OK'd this in
-   exchange for keeping the table in the right column instead of stealing
-   a full-width row below the page header. */
+/* Total live trackings: sits at the TOP of .top-right, above the
+   Detection funnel + airframe card. Column is narrow (min ~280 px) so the
+   table uses a small font + tight padding — the user explicitly OK'd this
+   in exchange for keeping the table in the right column instead of
+   stealing a full-width row below the page header. */
 .total-live-section { margin: 0; }
 /* Always-visible at top of right column (v0.30.28). Fixed height of
    roughly 20 data rows + header + section title; section below the
-   top-row never jumps when traffic comes and goes, and the plan / side
-   / airframe cells underneath sit at a predictable y-offset. The
+   top-row never jumps when traffic comes and goes, and the Detection
+   funnel + airframe card underneath sit at a predictable y-offset. The
    sticky thead keeps column headers in view while the rest scrolls. */
 .total-live-section .table-scroll {
   height: 420px;
@@ -914,11 +914,13 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
    (~62 / 38). The AirNav column collapses when [hidden] so the sketch
    takes the full width on its own (auto-FOV, nothing clicked). Wraps to
    stacked on a very narrow pane. */
-/* Plan view, side view and airframe info card live inside .top-right
-   (under Sky now + Detection funnel). Each hides itself when empty.
-   11 px matches the SVG LABEL_SIZE so the whole right column reads at
-   one consistent size. */
+/* Plan view + side view live under FOV preview in .top-left (v0.30.41);
+   the airframe info card stays in .top-right under Total live trackings +
+   Detection funnel. Each hides itself when empty. 11 px matches the SVG
+   LABEL_SIZE so both columns read at one consistent size. */
+.top-left > [hidden],
 .top-right > [hidden] { display: none; }
+.top-left > .fov-aux-cell,
 .top-right > .fov-aux-cell,
 .top-right > .fov-aux-right {
   background: var(--panel);

@@ -1491,10 +1491,11 @@ function acinfoHtml(info) {
 // column collapses so the other takes the full width (e.g. auto-FOV =
 // map only, no AirNav until you click).
 function syncFovAux() {
-  // v0.27.1 layout: plan/side/airframe cells live inside .top-right next
-  // to Sky now + Detection funnel. Sky/detect are always visible, so we
-  // only toggle the three cells individually — the column itself never
-  // hides (it always has Sky + Detect on top).
+  // v0.30.41 layout: plan + side cells live in .top-left under the FOV
+  // preview; the airframe card lives in .top-right under Total live
+  // trackings + Detection funnel. Those anchor sections are always
+  // visible, so we only toggle the three cells individually — neither
+  // column ever fully hides.
   const mapHas = !!(fovMap && fovMap.innerHTML);
   const sideHas = !!(fovSide && fovSide.innerHTML);
   const acHas = !!(fovAcinfo && fovAcinfo.innerHTML);
