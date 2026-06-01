@@ -19,22 +19,26 @@
 # Already have the repo? Just run scripts/install-pi5.sh directly — this
 # script is only needed to get there from a clean OS image.
 #
-# What it does NOT do: install/configure dump1090-fa + the RTL-SDR. That is
-# hardware-specific (SDR drivers, antenna, the FlightAware apt repo) and is
-# the ADS-B *data source* this tool consumes — see the note printed at the
-# end and the README. Pass --with-dump1090 for a best-effort apt attempt.
+# dump1090-fa (the ADS-B decoder + RTL-SDR driver) is installed BY DEFAULT —
+# it is the ADS-B *data source* this tool consumes (FlightAware apt repo +
+# RTL-SDR drivers, DVB-T blacklist). Opt out with --no-dump1090 if you
+# already run an ADS-B feed elsewhere (an existing dump1090, a PiAware box,
+# a network aircraft.json). Antenna placement / sky view stays your job.
 
 set -euo pipefail
 
 REPO_URL="${STP_REPO_URL:-https://github.com/joergs-git/sun-moon-transit-predictor.git}"
 INSTALL_DIR="${STP_INSTALL_DIR:-$HOME/sun-moon-transit-predictor}"
-WITH_DUMP1090=0
+# Default ON (v0.30.42): the most common fresh-Pi case is "I just plugged in
+# an RTL-SDR dongle and want it to work". --no-dump1090 opts out.
+WITH_DUMP1090=1
 
 PASS_ARGS=()
 for arg in "$@"; do
   case "$arg" in
-    --with-dump1090) WITH_DUMP1090=1 ;;
-    *) PASS_ARGS+=("$arg") ;;
+    --with-dump1090) WITH_DUMP1090=1 ;;   # explicit; this is the default now
+    --no-dump1090)   WITH_DUMP1090=0 ;;   # skip — bring your own ADS-B feed
+    *) PASS_ARGS+=("$arg") ;;             # everything else → install-pi5.sh
   esac
 done
 
@@ -53,11 +57,12 @@ sudo_run apt-get update
 sudo_run apt-get install -y git curl ca-certificates
 
 # ---------------------------------------------------------------------------
-# 2. Optional dump1090-fa (AirNav FlightStick / any RTL-SDR). Same reliable
-#    path as the README "ADS-B receiver setup": FlightAware apt repo +
-#    dump1090-fa + DVB-T blacklist. Antenna/sky view stay the user's job.
-#    A reboot is recommended afterwards (the blacklist needs it) but is NOT
-#    forced here so the app install can continue in the same run.
+# 2. dump1090-fa (AirNav FlightStick / any RTL-SDR) — installed by default,
+#    skipped only with --no-dump1090. Same reliable path as the README
+#    "ADS-B receiver setup": FlightAware apt repo + dump1090-fa + DVB-T
+#    blacklist. Antenna/sky view stay the user's job. A reboot is recommended
+#    afterwards (the blacklist needs it) but is NOT forced here so the app
+#    install can continue in the same run.
 # ---------------------------------------------------------------------------
 if [ "$WITH_DUMP1090" -eq 1 ]; then
   log "Installing dump1090-fa via the FlightAware apt repository ..."
@@ -76,6 +81,8 @@ if [ "$WITH_DUMP1090" -eq 1 ]; then
   else
     log "Could not fetch the FlightAware repo package — install dump1090-fa manually."
   fi
+else
+  log "Skipping dump1090-fa (--no-dump1090) — point adsb.url at your existing feed."
 fi
 
 # ---------------------------------------------------------------------------
