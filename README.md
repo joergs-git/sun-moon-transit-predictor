@@ -1743,6 +1743,36 @@ average), but the long-tail (P95 ~2°) reflects ATC-vectoring drift
 that mathematically cannot be predicted from ADS-B alone. The
 predictor reports it honestly — it does not hide the long tail.
 
+**Field calibration (n=1014 episodes).** A larger run confirms the
+shape and sharpens the takeaways:
+
+- **Lead time barely matters.** Aggregate P50 is **0.09–0.18°** and
+  P95 **~0.93°** across *all* lead buckets — waiting from 90 s out to
+  10 s out buys only ~0.09°. There is no reason to hold out for a
+  late lock-in; the prediction does not meaningfully tighten as the
+  ETA approaches.
+- **Elevation is the real lever.** At ≥ 30° the > 90 s bucket is
+  already 0.09° (n=293); below 30° it sits at 0.21° (n=664) and is
+  what drags the aggregate down. Treat transits ≥ 30° as reliable;
+  keep more margin (or skepticism) below that. This validates the
+  default 30° Pushover gate — it is gating on the genuine accuracy
+  cliff, not an arbitrary line.
+- **Aim for the best, not the last.** The prediction drifts back out
+  after its tightest point — median 0.34°, P95 0.97° (`final − best`).
+  The *best* projected moment is more trustworthy than the *final*
+  one, which is exactly why the live table and SharpCap arming track
+  `bestSepDeg` rather than the latest value.
+
+**Sun vs Moon — no per-body difference, by design.** The error budget
+is entirely the *aircraft* trajectory; both body positions are known
+to arcsecond precision (topocentric, parallax-corrected), so there is
+**no physical reason for prediction accuracy to differ between the two
+discs**. `predictionAccuracy()` therefore blends both bodies on
+purpose — any Sun/Moon gap you could split out would be a *traffic-mix
+/ time-of-day* confound (Moon transits cluster at different hours →
+different elevations and traffic), not a property of the body. The
+elevation split above is the cut that actually carries signal.
+
 ### Wind-drift as a detector
 
 The drift-bias sampler runs every tick over every aircraft above 20°
