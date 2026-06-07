@@ -1116,12 +1116,15 @@ async function pollLearning() {
     const res = await fetch('/api/learning?windowDays=14');
     if (!res.ok) return;
     const { aggregates: a, windowDays } = await res.json();
-    // Graze rate: of all detected aircraft, the share that actually
-    // crossed each body's disc (sep < grazeThresholdDeg, default 0.3°).
+    // Graze rate: of all detected episodes, the share that produced a
+    // CONFIRMED (imminent-stage) transit crossing each body's disc
+    // (sep < grazeThresholdDeg, default 0.3°). Confirmed-only so it
+    // reconciles with the lifetime body-hits table — faded predictions
+    // that merely dipped tight no longer count.
     $('#learn-graze-sun').textContent  = fmtPct(a.sunGrazePct);
     $('#learn-graze-moon').textContent = fmtPct(a.moonGrazePct);
     $('#learn-graze-detail').textContent =
-      `${(a.sunGrazes ?? 0) + (a.moonGrazes ?? 0)} / ${a.totalEpisodes ?? 0} detected · sep < ${
+      `${(a.sunGrazes ?? 0) + (a.moonGrazes ?? 0)} confirmed / ${a.totalEpisodes ?? 0} detected · sep < ${
         a.grazeThresholdDeg != null ? a.grazeThresholdDeg.toFixed(2) : '0.30'
       }°`;
 

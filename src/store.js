@@ -954,6 +954,7 @@ export class HistoryStore {
    *     closestAtMs: number,
    *     stages: Array<'radio'|'candidate'|'imminent'>,
    *     minSepDeg: number|null,
+   *     confirmedMinSepDeg: number|null,
    *     outcome: 'graduated'|'faded'|'surprise',
    *     rowIds: number[],
    *   }>,
@@ -1008,6 +1009,7 @@ export class HistoryStore {
           closestAtMs: r.closest_at_ms,
           stages: new Set(),
           minSepDeg: null,
+          confirmedMinSepDeg: null,
           rowIds: [],
         };
         byKey.set(cur.key, cur);
@@ -1023,6 +1025,16 @@ export class HistoryStore {
       if (Number.isFinite(r.closest_sep_deg)) {
         if (cur.minSepDeg == null || r.closest_sep_deg < cur.minSepDeg) {
           cur.minSepDeg = r.closest_sep_deg;
+        }
+        // Confirmed min sep: only the 'imminent' stage counts as a REAL
+        // pass (mirrors closeApproachCounts / the lifetime body-hits table,
+        // which gate on stage='imminent'). A candidate/radio prediction that
+        // momentarily dipped tight then faded must NOT count as a graze —
+        // counting any projected stage was the projected-vs-confirmed
+        // overcount that made graze rate read ~3-7× the real transit count.
+        if (r.stage === 'imminent'
+            && (cur.confirmedMinSepDeg == null || r.closest_sep_deg < cur.confirmedMinSepDeg)) {
+          cur.confirmedMinSepDeg = r.closest_sep_deg;
         }
       }
     }
@@ -1046,19 +1058,22 @@ export class HistoryStore {
     const candidateOrImminent = episodes.filter(
       e => e.stages.includes('candidate') || e.stages.includes('imminent'),
     ).length;
-    // Disc-graze count per body. An episode counts as a "graze" when its
-    // tightest stage drove min separation below `grazeThresholdDeg` (default
-    // 0.3°). At typical airliner ranges (~10 km) the angular wingspan is
-    // ≈0.2°, the Sun/Moon disc radius is ≈0.27°, so a 0.3°-from-centre pass
-    // means the silhouette at least partially overlaps the disc edge — i.e.
-    // a real grazing transit, not a near-miss. The user wants this as a
-    // running quality signal that "refines with more data".
+    // Disc-graze count per body. An episode counts as a "graze" only when a
+    // CONFIRMED ('imminent') stage drove the separation below
+    // `grazeThresholdDeg` (default 0.3°) — i.e. the transit actually
+    // happened, not just a prediction that dipped tight then faded. At
+    // typical airliner ranges (~10 km) the angular wingspan is ≈0.2°, the
+    // Sun/Moon disc radius is ≈0.27°, so a 0.3°-from-centre pass means the
+    // silhouette at least partially overlaps the disc edge — a real grazing
+    // transit. Using confirmedMinSepDeg (not the projected minSepDeg) keeps
+    // this reconciled with the lifetime body-hits table, which counts only
+    // stage='imminent' rows.
     const grazeThresholdDeg = 0.3;
     const sunGrazes = episodes.filter(
-      e => e.body === 'Sun'  && Number.isFinite(e.minSepDeg) && e.minSepDeg < grazeThresholdDeg,
+      e => e.body === 'Sun'  && Number.isFinite(e.confirmedMinSepDeg) && e.confirmedMinSepDeg < grazeThresholdDeg,
     ).length;
     const moonGrazes = episodes.filter(
-      e => e.body === 'Moon' && Number.isFinite(e.minSepDeg) && e.minSepDeg < grazeThresholdDeg,
+      e => e.body === 'Moon' && Number.isFinite(e.confirmedMinSepDeg) && e.confirmedMinSepDeg < grazeThresholdDeg,
     ).length;
     const aggregates = {
       totalEpisodes: total,
@@ -1080,9 +1095,10 @@ export class HistoryStore {
       surpriseRatePct: candidateOrImminent > 0
         ? (surprises / candidateOrImminent) * 100
         : null,
-      // Disc-graze rates: % of ALL detected aircraft (both bodies pooled in
-      // the denominator) that actually skimmed each body's disc within the
-      // graze threshold. Refines as the rolling window accumulates events.
+      // Disc-graze rates: % of ALL detected episodes (both bodies pooled in
+      // the denominator) that produced a CONFIRMED transit skimming each
+      // body's disc within the graze threshold. Refines as the rolling
+      // window accumulates events.
       sunGrazePct:  total > 0 ? (sunGrazes  / total) * 100 : null,
       moonGrazePct: total > 0 ? (moonGrazes / total) * 100 : null,
     };
