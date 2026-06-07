@@ -170,30 +170,39 @@ describe('HistoryStore', () => {
     }
   });
 
-  it('aggregates per-body disc-graze rates from episode min separations', () => {
+  it('counts only CONFIRMED (imminent) transits as disc grazes', () => {
     const store = new HistoryStore(':memory:');
     try {
       const nowMs = 1_700_000_000_000;
-      const mk = (icao, body, sepDeg, closestAt) => {
+      const mk = (icao, body, sepDeg, closestAt, stage = 'imminent') => {
         const c = makeCandidate({ icao, body, sepDeg, closestInMs: 0 });
         c.closestApproachAtMs = closestAt;
-        store.recordEvent('candidate', c, null, closestAt);
+        store.recordEvent(stage, c, null, closestAt);
       };
-      // 4 episodes total: 2× Sun (one graze 0.18°, one miss 0.5°),
-      //                  2× Moon (one graze 0.22°, one miss 0.7°).
+      // 5 episodes total:
+      //   2× Sun  — one CONFIRMED graze 0.18°, one confirmed miss 0.50°
+      //   2× Moon — one CONFIRMED graze 0.22°, one confirmed miss 0.70°
+      //   1× Sun  — a tight 0.10° prediction that only ever reached
+      //             'candidate' and faded → must NOT count as a graze
+      //             (this is the projected-vs-confirmed overcount we fixed).
       mk('aaa', 'Sun',  0.18, nowMs - 1 * 3600_000);
       mk('bbb', 'Sun',  0.50, nowMs - 2 * 3600_000);
       mk('ccc', 'Moon', 0.22, nowMs - 3 * 3600_000);
       mk('ddd', 'Moon', 0.70, nowMs - 4 * 3600_000);
+      mk('eee', 'Sun',  0.10, nowMs - 5 * 3600_000, 'candidate');
 
-      const { aggregates: a } = store.episodes({ windowMs: 24 * 3600_000, nowMs });
-      expect(a.totalEpisodes).toBe(4);
-      expect(a.sunGrazes).toBe(1);
-      expect(a.moonGrazes).toBe(1);
+      const { episodes, aggregates: a } = store.episodes({ windowMs: 24 * 3600_000, nowMs });
+      expect(a.totalEpisodes).toBe(5);
+      expect(a.sunGrazes).toBe(1);    // aaa only — eee faded, doesn't count
+      expect(a.moonGrazes).toBe(1);   // ccc only
       expect(a.grazeThresholdDeg).toBe(0.3);
-      // Denominator is the full pool (4), so each body = 25 %.
-      expect(a.sunGrazePct).toBe(25);
-      expect(a.moonGrazePct).toBe(25);
+      // Denominator is the full pool (5), so each grazing body = 20 %.
+      expect(a.sunGrazePct).toBe(20);
+      expect(a.moonGrazePct).toBe(20);
+      // The faded candidate keeps a projected minSepDeg but no confirmed one.
+      const eee = episodes.find(e => e.icao === 'eee');
+      expect(eee.minSepDeg).toBeCloseTo(0.10, 5);
+      expect(eee.confirmedMinSepDeg).toBeNull();
     } finally {
       store.close();
     }
