@@ -73,9 +73,13 @@ keyed; if you wire the bare module, use these BCM pins:
 > Then reboot once and do step 5 (enable it in the web UI). The manual steps:
 
 1. **Enable SPI**: `sudo raspi-config` → *Interface Options* → *SPI* → *Yes*, then reboot.
-2. **Install Python deps**:
+2. **Install Python deps + the Waveshare driver** (the driver is not on PyPI —
+   it comes from Waveshare's GitHub):
    ```bash
-   pip3 install -r display/requirements.txt
+   sudo apt-get install -y git python3-pil python3-lgpio python3-gpiozero \
+     python3-spidev python3-rpi-lgpio
+   git clone --depth 1 https://github.com/waveshareteam/e-Paper /tmp/e-Paper
+   sudo pip3 install --break-system-packages --no-deps /tmp/e-Paper/RaspberryPi_JetsonNano/python
    ```
 3. **Add the service user to the spi/gpio groups** (so it can reach the panel):
    ```bash
@@ -126,15 +130,19 @@ STP_CONFIG_URL=http://192.168.1.50:8081 python3 epaper_client.py --dry-run
 
 ## Driver
 
-The PyPI package is **`waveshare-epd`**, which on the Pi 5 pulls in the
-gpiozero + **lgpio** backend (the legacy `RPi.GPIO` does **not** work on the Pi
-5). If `pip` can't find it for your OS, vendor the official driver instead:
+There is **no reliable PyPI package** for the Waveshare panel — install the
+official library from GitHub (this is what `--with-display` does):
 
 ```bash
-git clone https://github.com/waveshareteam/e-Paper
-cp -r e-Paper/RaspberryPi_JetsonNano/python/lib/waveshare_epd display/lib/
+git clone --depth 1 https://github.com/waveshareteam/e-Paper /tmp/e-Paper
+sudo pip3 install --break-system-packages --no-deps /tmp/e-Paper/RaspberryPi_JetsonNano/python
 ```
-…and run with `PYTHONPATH=display/lib`.
+
+`--no-deps` is important on the Pi 5: it stops pip pulling the Pi-4-only
+`RPi.GPIO`/`spidev` wheels. The runtime backends come from apt instead
+(`python3-lgpio python3-gpiozero python3-spidev python3-rpi-lgpio`). On the Pi 5
+the panel is driven via the **gpiozero lgpio** pin factory — the service sets
+`GPIOZERO_PIN_FACTORY=lgpio` so it skips the broken RPi.GPIO/pigpio fallbacks.
 
 Newer 4.2" boards use the `epd4in2_V2` driver (the default). If the panel shows
 nothing or garbage on first run, switch to the older driver via the unit's
@@ -147,7 +155,10 @@ nothing or garbage on first run, switch to the older driver via the unit's
 
 | Symptom | Fix |
 |---|---|
-| `failed to init panel driver` | SPI not enabled, `waveshare-epd` not installed, or wrong `STP_EPD_DRIVER`. See logs. |
+| `No module named 'waveshare_epd'` | Driver not installed — run the GitHub install in *Driver* above (or re-run `install-pi5.sh --with-display`). |
+| `Unable to load any default pin factory!` / `unable to open /dev/gpiomem` | GPIO blocked. Ensure the unit has **no** `ProtectHome`/`DeviceAllow` (v0.31.1 unit fixes this), the user is in the `gpio` group, and `python3-lgpio`/`python3-rpi-lgpio` are installed. Reboot once after group changes. |
+| `No module named 'waveshare_epd.epd4in2_V2'` | Older board — set `STP_EPD_DRIVER=epd4in2` in the unit, daemon-reload, restart. |
+| `failed to init panel driver` | SPI not enabled, driver not installed, or wrong `STP_EPD_DRIVER`. See logs. |
 | Nothing / garbage on screen | Try `STP_EPD_DRIVER=epd4in2` (older board) vs `epd4in2_V2`. |
 | `SERVER OFFLINE` | The **Data source URL** host is unreachable. Check the predictor is up and the IP/port are right. |
 | Permission denied on `/dev/spidev0.0` | Service user not in `spi`/`gpio` groups (step 3); re-login or reboot. |

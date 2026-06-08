@@ -280,16 +280,30 @@ if [ "$WITH_DISPLAY" -eq 1 ]; then
     log "WARN: raspi-config not found — enable SPI manually (Interface Options > SPI)."
   fi
 
-  # Panel libraries. Prefer apt packages (no compiler needed, bookworm-clean)
-  # for Pillow + the GPIO/SPI backends; pip only for the Waveshare driver,
-  # which is not packaged. --break-system-packages is required on bookworm's
-  # externally-managed Python; fall back without it on older pip.
+  # Panel libraries via apt (no compiler needed, bookworm-clean): Pillow for
+  # rendering, and the Pi 5 GPIO/SPI backends — lgpio + gpiozero, plus
+  # python3-rpi-lgpio which provides the RPi.GPIO API on top of lgpio (some
+  # Waveshare driver revisions import RPi.GPIO; on the Pi 5 the real RPi.GPIO
+  # doesn't work, this shim does).
   sudo_run apt-get update
-  sudo_run apt-get install -y python3-pip python3-pil python3-spidev python3-lgpio python3-gpiozero \
-    || log "WARN: some apt python packages were unavailable — pip will be tried next."
-  if ! sudo_run pip3 install --break-system-packages waveshare-epd 2>/dev/null; then
-    sudo_run pip3 install waveshare-epd \
-      || log "WARN: 'waveshare-epd' pip install failed — vendor the driver per display/README.md."
+  sudo_run apt-get install -y git python3-pip python3-pil python3-spidev \
+    python3-lgpio python3-gpiozero python3-rpi-lgpio \
+    || log "WARN: some apt packages were unavailable — check the names for your OS."
+
+  # Waveshare driver. There is no reliable PyPI package, so install the official
+  # library straight from Waveshare's GitHub. --no-deps: we already provided the
+  # runtime backends via apt above and do NOT want pip dragging in the Pi-4-only
+  # RPi.GPIO/spidev wheels (they fail to build / don't work on the Pi 5).
+  WS_SRC="${STP_WAVESHARE_SRC:-/tmp/stp-e-Paper}"
+  if [ ! -d "$WS_SRC/.git" ]; then
+    rm -rf "$WS_SRC"
+    git clone --depth 1 https://github.com/waveshareteam/e-Paper "$WS_SRC" \
+      || log "WARN: could not clone the Waveshare driver — vendor it per display/README.md."
+  fi
+  if [ -d "$WS_SRC/RaspberryPi_JetsonNano/python" ]; then
+    sudo_run pip3 install --break-system-packages --no-deps "$WS_SRC/RaspberryPi_JetsonNano/python" \
+      || sudo_run pip3 install --no-deps "$WS_SRC/RaspberryPi_JetsonNano/python" \
+      || log "WARN: 'waveshare_epd' install failed — see display/README.md (Driver)."
   fi
 
   # Service user needs spi + gpio group membership to reach the panel. Takes

@@ -17,3 +17,8 @@ config/service.json
 # Python bytecode
 __pycache__/
 *.pyc
+
+# lgpio notify files dropped in the e-paper client's working dir at runtime
+.lgd-nfy*
+# Vendored Waveshare driver (installed by install-pi5.sh --with-display)
+display/lib/

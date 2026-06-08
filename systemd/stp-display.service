@@ -26,17 +26,19 @@ StandardError=journal
 Environment=STP_CONFIG_URL=http://127.0.0.1:8081
 # For older 4.2" boards that show nothing on first run, switch to: epd4in2
 Environment=STP_EPD_DRIVER=epd4in2_V2
+# Pi 5: use the lgpio pin factory directly (RPi.GPIO/pigpio don't work on the
+# Pi 5's RP1 GPIO). Skips gpiozero's noisy fallback chain.
+Environment=GPIOZERO_PIN_FACTORY=lgpio
 
-# SPI + GPIO access for the panel. The service user must be in the spi/gpio
-# groups (the bootstrap script handles this). Light sandboxing otherwise.
+# Hardware access: driving the panel needs /dev/gpiomem*, /dev/gpiochip* and
+# /dev/spidev*, and lgpio writes a small .lgd-nfy* notify file in the working
+# directory. So this service deliberately does NOT use ProtectHome/ProtectSystem
+# /DeviceAllow — those blocked gpiomem and the lgpio notify file and broke every
+# pin factory. It stays a non-privileged user in the spi+gpio groups (the
+# installer adds them); keep the two lightweight protections that don't impede
+# the panel.
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=read-only
-# /dev/spidev* and the gpiochip are needed to drive the panel.
-DeviceAllow=/dev/spidev0.0 rw
-DeviceAllow=/dev/spidev0.1 rw
-DeviceAllow=char-gpiochip rw
 SupplementaryGroups=spi gpio
 
 [Install]

@@ -8,6 +8,26 @@
 - **Rule:** <what to always/never do instead>
 - **Applies to:** <context>
 
+## [2026-06-08] — Don't assume a PyPI package exists; don't over-sandbox HW services
+- **Mistake (1):** Install script ran `pip install waveshare-epd` — that package
+  is not reliably on PyPI, so the driver was missing → `No module named
+  'waveshare_epd'` and the display service fail-looped 100+ times on the Pi.
+- **Mistake (2):** The stp-display systemd unit used `ProtectHome=read-only`,
+  `ProtectSystem=strict` and a `DeviceAllow=` whitelist. That whitelist made
+  `DevicePolicy` closed and omitted `/dev/gpiomem`, and read-only home blocked
+  lgpio's `.lgd-nfy` notify file in the working dir → every gpiozero pin factory
+  failed → `Unable to load any default pin factory!`.
+- **Root cause:** Wrote hardware-install + sandbox config from memory without a
+  real Pi 5 to test on; copied the main service's strict sandbox onto a service
+  that needs raw GPIO/SPI device access.
+- **Rule:** (a) Verify a dependency is actually installable from the source you
+  name — for vendor hardware libs default to the official Git repo + `pip install
+  --no-deps`, not an assumed PyPI name. (b) Services that touch GPIO/SPI need
+  `/dev/gpiomem*`, `/dev/gpiochip*`, `/dev/spidev*` and a writable CWD for lgpio;
+  do NOT apply `ProtectHome`/`ProtectSystem=strict`/`DeviceAllow` whitelists to
+  them — use group membership (spi/gpio) + `GPIOZERO_PIN_FACTORY=lgpio` on Pi 5.
+- **Applies to:** install-pi5.sh, systemd units for hardware, any Pi 5 GPIO work.
+
 ## [2026-06-08] — Validate config patches transactionally, not field-by-field
 - **Mistake:** The new `display` config validator in `applyConfigUpdate`
   mutated `config.display.<field>` in place as it validated each field, then
