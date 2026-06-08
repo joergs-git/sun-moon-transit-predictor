@@ -163,6 +163,7 @@ for the cases where you want to push the setup further.
 | **External USB-C SSD** | Move `data/history.db` and `data/lifecycle.json` off the SD card by symlinking the `data/` directory. Massively extends SD-card life for multi-year deployments. |
 | **Pushover account** ([pushover.net](https://pushover.net)) | Phone notifications for the three transit stages. The pipeline runs fine without it (`pushover.enabled=false`), but you'll only see transits in the web UI. |
 | **Windows PC running [SharpCap](https://www.sharpcap.co.uk/)** + camera | Only if you want the predictor to *automatically start a capture* the moment a transit goes imminent (too tight a window — often < 30 s — for SharpCap's own Sequencer). Runs a tiny stdlib-only Python listener inside SharpCap (4.x uses embedded **CPython**, not IronPython — the listener is portable across both); the Pi triggers it over TCP. Multi-rig: drive several scopes/PCs in parallel via `sharpcap.targets[]`. See **[SharpCap capture trigger](#sharpcap-capture-trigger-optional)**. Off by default. |
+| **Waveshare 4.2" B/W e-paper panel** (SPI, 400×300) | A **browserless** physical readout — clock, location, live count and the soonest Real candidates (ETA, altitude, speed, distance, angle) plus a Sky-now / FOV footer. Plugs onto the Pi's 40-pin header (SPI, **not** I2C). Configured entirely from the web Settings panel; can also be driven from a **remote** predictor over the LAN. See **[E-paper display](#-e-paper-display-optional-v0310)**. Off by default. |
 
 ### Required software (installed by `scripts/install-pi5.sh`)
 
@@ -772,6 +773,87 @@ recomputed in memory each tick and only graduate to the DB if they trip a
 notification. If you want every detected near-miss persisted, you would
 need to call `store.recordEvent` from the tracker tick rather than only
 from the notifier — happy to add that as a config switch if useful.
+
+## 🖥️ E-paper display (optional, v0.31.0)
+
+A standalone client that drives a **Waveshare 4.2" B/W SPI e-paper panel**
+(400×300) on the Pi 5 for a **browserless** at-a-glance readout — no browser, no
+monitor needed:
+
+- **Clock + date**, **observer location**
+- **LIVE** total live-tracking count and **CAND** real-candidate count
+- the **soonest Real candidates** as a list — each with **ETA, angle, altitude,
+  speed, distance, elevation** (all metric: m, km/h, km)
+- a **Sky-now** footer (Sun/Moon az/el/observable) + a small **FOV preview** of
+  the #1 candidate against the body disc
+
+The client lives in `display/` and carries no logic of its own — it polls the
+predictor's `/api/state`, so it can render data from **this Pi or a remote Pi on
+the LAN**.
+
+### Configured entirely from the browser
+
+Open ⚙ **Settings → E-paper display** and the client picks the changes up live
+(within a few seconds, no restart):
+
+| Setting | Meaning |
+|---|---|
+| **Enabled** | Master on/off. Off → the panel clears once and idles. |
+| **Data source URL** | Blank = this Pi (localhost). Set a LAN URL like `http://192.168.1.50:8081` to drive a **local** panel from a **remote** ADS-B/Node host. |
+| **Quick refresh (s)** | Partial-refresh cadence — fast, flash-free text update. Default 2, floor 1. |
+| **Long refresh (s)** | Full-refresh cadence — the periodic brief flash that clears e-paper ghosting. Default 60, must be ≥ Quick. |
+| **Candidate count** | How many of the soonest candidates to list (1–6). Default 3. |
+| **Compact list** | One line per candidate (more rows, no footer) vs. the two-line layout with footer. |
+
+> **E-paper isn't a video display.** A full refresh flashes for a couple of
+> seconds; a partial refresh is quick (~0.3–0.5 s) but builds up ghosting. The
+> two-cadence design (quick partial + periodic full clear) gives a lively yet
+> clean panel; ~1–2 s is the practical floor for the quick refresh.
+
+### Quick install (Pi 5)
+
+> **SPI, not I2C** — the 4.2" panel plugs onto the 40-pin header and talks SPI.
+> The Pi 5's new GPIO needs Waveshare's **gpiozero/lgpio** driver (the old
+> `RPi.GPIO` does not work on the Pi 5).
+
+**Easiest — let the installer do everything** (enables SPI, installs the Python
+panel libraries, adds the spi/gpio groups, installs + enables the service):
+
+```bash
+# fresh box, with the panel, in one line:
+curl -fsSL https://raw.githubusercontent.com/joergs-git/sun-moon-transit-predictor/main/scripts/bootstrap-pi5.sh | bash -s -- --with-display
+
+# already have the repo:
+bash scripts/install-pi5.sh --with-display
+```
+
+Then **reboot once** (so SPI + group membership take effect) and turn the panel
+on in the web UI: ⚙ **Settings → E-paper display → Enabled → Save**.
+
+<details><summary>Manual install (if you'd rather not use the flag)</summary>
+
+```bash
+# 1. Enable SPI, then reboot.
+sudo raspi-config nonint do_spi 0 && sudo reboot
+
+# 2. Python deps + group access for the panel.
+pip3 install -r display/requirements.txt
+sudo usermod -aG spi,gpio "$USER"
+
+# 3. Install + start the service (fills in install dir + user).
+sudo cp systemd/stp-display.service /etc/systemd/system/
+sudo sed -i "s|__INSTALL_DIR__|$(pwd)|g; s|__USER__|$USER|g" /etc/systemd/system/stp-display.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now stp-display.service
+
+# 4. Turn it on in the web UI: ⚙ Settings → E-paper display → Enabled → Save
+journalctl -u stp-display -f
+```
+</details>
+
+Full wiring table, the **two-Pi (remote source)** setup, the `--dry-run`
+hardware-free preview and troubleshooting are in
+**[`display/README.md`](display/README.md)**.
 
 ## ISS transits (v0.9.0)
 
@@ -1417,14 +1499,19 @@ Default 0 is fine if you only see GPS-equipped aircraft (`alt_geom`).
   "pushover": { "token": "...", "user": "...", "enabled": true },
   "server":   { "port": 8081, "host": "0.0.0.0", "publicUrl": "" },
   "store":    { "path": "./data/history.db" },
-  "routes":   { "enabled": true, "ttlMs": 3600000, "negativeTtlMs": 300000 }
+  "routes":   { "enabled": true, "ttlMs": 3600000, "negativeTtlMs": 300000 },
+  "display":  { "enabled": false, "sourceUrl": "", "quickRefreshS": 2, "longRefreshS": 60, "candidateCount": 3, "compactList": false }
 }
 ```
+
+`display` configures the optional [e-paper panel](#-e-paper-display-optional-v0310)
+client — edit it from the web Settings panel rather than by hand; the Python
+client reads it live from `/api/config`.
 
 For the complete list of currently-supported fields (`sharpcap.targets[]`,
 `tracker.minAltitudeM`, `tracker.minBodyElevationDeg`, `iss.*`,
 `predictor.*`, `lifecycle.*`, `update.*`, `driftPersist.*`,
-`lifecyclePersist.*`, etc.) refer to
+`lifecyclePersist.*`, `display.*`, etc.) refer to
 [`config/service.example.json`](config/service.example.json) — that
 file is kept in sync with the installer defaults.
 
@@ -1519,12 +1606,14 @@ aircraft passing in front of it is *not* reported, by design.
 | `<repo>/data/iss.tle`                 | ISS two-line elements for the offline SGP4 (written by `refresh-tle.js`). Feature inactive until present. | no — gitignored |
 | `<repo>/data/update.request`          | Transient click-to-update trigger; consumed by `stp-update.path`. | no — gitignored |
 | `<repo>/web/`                         | Static frontend served at `http://<host>:<port>/`.          | yes |
+| `<repo>/display/`                     | Optional e-paper panel client (Python) + its README.        | yes |
 | `<repo>/bin/stp.js`                   | Service entry point.                                        | yes |
 | `<repo>/scripts/install-pi5.sh`       | Idempotent Pi installer (interactive or `--non-interactive`). | yes |
 | `<repo>/scripts/auto-update.sh`       | Pull + install-deps + restart-on-change. Backs up local config first. | yes |
 | `<repo>/scripts/refresh-tle.js`       | Opt-in ISS TLE fetcher (Celestrak); run by `stp-tle.timer`. | yes |
 | `<repo>/scripts/test-push.js`         | One-shot Pushover sanity check.                             | yes |
 | `<repo>/systemd/stp.service`          | Template for the main systemd unit.                         | yes |
+| `<repo>/systemd/stp-display.service`  | Template for the optional e-paper display client unit.       | yes |
 | `<repo>/systemd/stp-update.{service,timer,path}` | Auto-update + click-to-update watcher templates.  | yes |
 | `<repo>/systemd/stp-tle.{service,timer}` | Daily ISS TLE refresh templates.                         | yes |
 | `/etc/systemd/system/stp.service`     | Generated unit (paths and user templated by the installer). | n/a (system) |

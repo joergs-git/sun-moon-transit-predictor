@@ -1,0 +1,43 @@
+[Unit]
+Description=Sun-Moon Transit Predictor — e-paper display client
+Documentation=https://github.com/joergs-git/sun-moon-transit-predictor
+# Start after the predictor so /api/config and /api/state are already up when
+# the panel first polls. Wants (not Requires) so the display still runs and
+# shows "SERVER OFFLINE" if the predictor is down or points at a remote host.
+After=network-online.target stp.service
+Wants=network-online.target stp.service
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__INSTALL_DIR__/display
+ExecStart=/usr/bin/python3 __INSTALL_DIR__/display/epaper_client.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# The single bootstrap value: where to read the live `display` config block
+# from (everything else is configured in the browser Settings panel). Point
+# this at a remote host only if the predictor's web UI itself lives elsewhere;
+# to merely pull DATA from another Pi, leave this as localhost and set the
+# "Data source URL" field in Settings instead.
+Environment=STP_CONFIG_URL=http://127.0.0.1:8081
+# For older 4.2" boards that show nothing on first run, switch to: epd4in2
+Environment=STP_EPD_DRIVER=epd4in2_V2
+
+# SPI + GPIO access for the panel. The service user must be in the spi/gpio
+# groups (the bootstrap script handles this). Light sandboxing otherwise.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# /dev/spidev* and the gpiochip are needed to drive the panel.
+DeviceAllow=/dev/spidev0.0 rw
+DeviceAllow=/dev/spidev0.1 rw
+DeviceAllow=char-gpiochip rw
+SupplementaryGroups=spi gpio
+
+[Install]
+WantedBy=multi-user.target

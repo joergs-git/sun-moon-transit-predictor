@@ -322,3 +322,58 @@ nutzbaren treffer auftreten" — sep < 0.5°, split by Sun/Moon, elevation
 - Tests 165 → 171. Full suite green; node --check clean.
 
 Status: complete, awaiting commit/push/merge confirmation.
+
+---
+
+# E-paper display client (v0.31.0)
+
+Branch: feature/epaper-display
+
+User ask: Waveshare 4.2" e-paper on the Pi 5, ~2 s updates of the key data so
+no browser is needed — clock, date, local coordinates, total live trackings,
+real candidates, sky now, FOV preview. Follow-ups: at least the next 3 real
+candidates as a list with altitude/speed/distance/angle/ETA each; all metric
+(km); allow a remote Pi by IP as data source; configure via the browser
+Settings panel (host URL, quick/long refresh, enabled, compact, count);
+extend the README with an install section.
+
+## Decisions (locked with user)
+- Panel: 4.2" B/W SPI (partial-refresh capable) — corrected from "i2c"; SPI.
+- Refresh: partial every 2 s + full every 60 s (both Settings-editable).
+- Language: Python (mature Waveshare driver) — decoupled HTTP client.
+- Units: all metric (m / km/h / km), no toggle.
+- Data source: localhost OR remote LAN IP, set in the browser.
+- All knobs in the web Settings panel (incl. compactList + candidateCount).
+
+## Tasks
+- [x] Node: new `display` config block (DEFAULT_CONFIG, mergeConfig,
+      publicConfig, transactional applyConfigUpdate validation, persist).
+- [x] Web: "E-paper display" fieldset in the Settings modal (app.js generic
+      load/save already covers `display.*` — no app.js change needed).
+- [x] Python client `display/`: config.py (bootstrap + live config fetch),
+      fov.py (sketch.js math port), render.py (Pillow, two-line + compact +
+      offline + disabled screens), epaper_client.py (loop, driver wrapper,
+      --dry-run, signal-safe sleep).
+- [x] systemd/stp-display.service; display/requirements.txt; display/README.md.
+- [x] config/service.example.json + README (display section, BOM row, config
+      doc, project layout, file table) + MILESTONES M79; version 0.31.0.
+- [x] install-pi5.sh: --with-display / STP_WITH_DISPLAY=1 → enable SPI, install
+      Python panel libs (apt Pillow/lgpio/gpiozero/spidev + pip waveshare-epd),
+      add spi/gpio groups, install+enable stp-display.service. Off by default
+      (optional hardware; panel stays off until enabled in Settings so no
+      fail-loop on a panel-less box). bootstrap-pi5.sh forwards the flag/env.
+
+## Results
+- Verified end-to-end on the Mac: server starts, GET/POST /api/config carry the
+  `display` block, validation rejects bad URL / out-of-range count / long<quick
+  with the correct per-cause error, and (after the transactional fix) a failed
+  save no longer wedges later saves. Client renders real /api/state to PNG
+  (two-line + compact layouts both legible) and shows SERVER OFFLINE / disabled
+  screens correctly. `npm test` 205 pass.
+- Pi 5 hardware verification (SPI, real panel, live refresh cadences) is the one
+  step left to the user — code is Pi 5-correct (gpiozero/lgpio, SPI device
+  allow-list in the unit).
+- Lesson logged: validate config patches with cross-field invariants
+  transactionally (tasks/lessons.md 2026-06-08).
+
+Status: complete, awaiting commit/push/merge confirmation; Pi hardware test by user.

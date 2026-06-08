@@ -8,6 +8,24 @@
 - **Rule:** <what to always/never do instead>
 - **Applies to:** <context>
 
+## [2026-06-08] — Validate config patches transactionally, not field-by-field
+- **Mistake:** The new `display` config validator in `applyConfigUpdate`
+  mutated `config.display.<field>` in place as it validated each field, then
+  ran a cross-field check (`longRefreshS ≥ quickRefreshS`) at the end. A POST
+  with `quick=10, long=5` wrote both values BEFORE the cross-check threw — so
+  `config.display` was left invalid (quick=10, long=5), and every SUBSEQUENT
+  save then failed the cross-check too, wedging all config writes.
+- **Root cause:** Copied the existing per-field in-place pattern (pushover /
+  tracker) without realising it only works when fields are independent. Adding
+  a cross-field invariant on top of in-place mutation leaves partial state
+  behind on a failed validation.
+- **Rule:** When a config block has ANY cross-field invariant, validate into a
+  working copy (`const next = { ...config.block }`) and commit
+  (`config.block = next`) only after EVERY check passes. Never mutate live
+  config before all validation (incl. cross-field) succeeds.
+- **Applies to:** `applyConfigUpdate` in src/service.js, any future config
+  block with interdependent fields.
+
 ## [2026-05-18] — Don't add config knobs for deterministic values
 - **Mistake:** Added an "External links / dump1090 URL" Settings section +
   `externalLinks` config plumbing. The dump1090 page is always

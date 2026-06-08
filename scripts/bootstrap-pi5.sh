@@ -16,6 +16,11 @@
 #   curl -fsSL .../bootstrap-pi5.sh | STP_LAT=52.28 STP_LON=7.44 STP_ELEV=50 \
 #     bash -s -- --non-interactive
 #
+# With the optional Waveshare e-paper panel (sets up SPI + Python libraries +
+# the display service too): add --with-display, e.g.
+#
+#   curl -fsSL .../bootstrap-pi5.sh | bash -s -- --with-display
+#
 # Already have the repo? Just run scripts/install-pi5.sh directly — this
 # script is only needed to get there from a clean OS image.
 #
