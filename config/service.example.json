@@ -94,5 +94,13 @@
     "connectTimeoutMs": 2000,
     "notifyOnTrigger": true,
     "targets": []
+  },
+  "display": {
+    "enabled": false,
+    "sourceUrl": "",
+    "quickRefreshS": 2,
+    "longRefreshS": 60,
+    "candidateCount": 3,
+    "compactList": false
   }
 }

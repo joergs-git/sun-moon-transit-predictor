@@ -6,6 +6,7 @@
 #   bash scripts/install-pi5.sh --overwrite       # re-prompt for everything
 #   bash scripts/install-pi5.sh --non-interactive # zero prompts; reads env vars
 #   bash scripts/install-pi5.sh --no-auto-update  # skip the nightly timer
+#   bash scripts/install-pi5.sh --with-display     # also set up the e-paper panel
 #
 # Env vars honoured in --non-interactive mode (or as defaults otherwise):
 #   STP_OBSERVER_NAME    e.g. "City"
@@ -18,6 +19,7 @@
 #   STP_PUBLIC_URL       public URL for Pushover links, default ""
 #   STP_PUSHOVER_TOKEN   Pushover application token (blank = disable)
 #   STP_PUSHOVER_USER    Pushover user / group key  (blank = disable)
+#   STP_WITH_DISPLAY     set to 1 to do the --with-display setup non-interactively
 #
 # What it does:
 #   1. Ensures Node.js >= 22 (installed from NodeSource if missing).
@@ -28,6 +30,10 @@
 #   5. Unless --no-auto-update: installs `stp-update.timer` for nightly
 #      `git pull && (npm install) && systemctl restart` and grants the user a
 #      narrowly scoped sudoers rule so the timer can restart the service.
+#   6. With --with-display (or STP_WITH_DISPLAY=1): enables SPI, installs the
+#      Python e-paper libraries (Pillow + Waveshare driver + lgpio/gpiozero/
+#      spidev), adds the user to the spi/gpio groups, and installs+enables the
+#      `stp-display.service` unit. Skipped by default (optional hardware).
 
 set -euo pipefail
 
@@ -38,19 +44,24 @@ UPDATE_TIMER_FILE="/etc/systemd/system/stp-update.timer"
 UPDATE_PATH_FILE="/etc/systemd/system/stp-update.path"
 TLE_SERVICE_FILE="/etc/systemd/system/stp-tle.service"
 TLE_TIMER_FILE="/etc/systemd/system/stp-tle.timer"
+DISPLAY_SERVICE_FILE="/etc/systemd/system/stp-display.service"
 SUDOERS_FILE="/etc/sudoers.d/stp-update"
 TARGET_USER="${SUDO_USER:-$USER}"
 
 OVERWRITE_CONFIG=0
 NONINTERACTIVE=0
 ENABLE_AUTO_UPDATE=1
+# Optional e-paper panel: off by default (minority hardware). Opt in with
+# --with-display, or STP_WITH_DISPLAY=1 for non-interactive/bootstrap runs.
+WITH_DISPLAY="${STP_WITH_DISPLAY:-0}"
 
 for arg in "$@"; do
   case "$arg" in
     --overwrite)         OVERWRITE_CONFIG=1 ;;
     --non-interactive)   NONINTERACTIVE=1 ;;
     --no-auto-update)    ENABLE_AUTO_UPDATE=0 ;;
-    -h|--help)           sed -n '2,30p' "$0"; exit 0 ;;
+    --with-display)      WITH_DISPLAY=1 ;;
+    -h|--help)           sed -n '2,36p' "$0"; exit 0 ;;
     *) echo "Unknown arg: $arg" >&2; exit 2 ;;
   esac
 done
@@ -73,6 +84,7 @@ log "Repo directory: $REPO_DIR"
 log "Target user:    $TARGET_USER"
 log "Mode:           $( [ "$NONINTERACTIVE" -eq 1 ] && echo non-interactive || echo interactive )"
 log "Auto-update:    $( [ "$ENABLE_AUTO_UPDATE" -eq 1 ] && echo enabled || echo disabled )"
+log "E-paper panel:  $( [ "$WITH_DISPLAY" -eq 1 ] && echo "setup (--with-display)" || echo "skipped (use --with-display)" )"
 
 # ---------------------------------------------------------------------------
 # 1. Node.js >= 22
@@ -252,6 +264,55 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 5c. Optional e-paper display client (only with --with-display /
+#     STP_WITH_DISPLAY=1). Enables SPI, installs the Python panel libraries,
+#     grants the user spi/gpio access, and installs + enables the unit. The
+#     panel itself stays OFF until you toggle it on in the web Settings panel
+#     (display.enabled), so the service won't fail-loop on a box with no panel.
+# ---------------------------------------------------------------------------
+if [ "$WITH_DISPLAY" -eq 1 ]; then
+  log "Setting up the e-paper display client (--with-display) ..."
+
+  # Enable SPI (idempotent). nonint do_spi 0 = enable. Takes effect on reboot.
+  if command -v raspi-config >/dev/null 2>&1; then
+    sudo_run raspi-config nonint do_spi 0 || log "WARN: could not enable SPI via raspi-config — enable it manually."
+  else
+    log "WARN: raspi-config not found — enable SPI manually (Interface Options > SPI)."
+  fi
+
+  # Panel libraries. Prefer apt packages (no compiler needed, bookworm-clean)
+  # for Pillow + the GPIO/SPI backends; pip only for the Waveshare driver,
+  # which is not packaged. --break-system-packages is required on bookworm's
+  # externally-managed Python; fall back without it on older pip.
+  sudo_run apt-get update
+  sudo_run apt-get install -y python3-pip python3-pil python3-spidev python3-lgpio python3-gpiozero \
+    || log "WARN: some apt python packages were unavailable — pip will be tried next."
+  if ! sudo_run pip3 install --break-system-packages waveshare-epd 2>/dev/null; then
+    sudo_run pip3 install waveshare-epd \
+      || log "WARN: 'waveshare-epd' pip install failed — vendor the driver per display/README.md."
+  fi
+
+  # Service user needs spi + gpio group membership to reach the panel. Takes
+  # effect after the next login / reboot.
+  sudo_run usermod -aG spi,gpio "$TARGET_USER" || log "WARN: could not add $TARGET_USER to spi/gpio groups."
+
+  # Install + enable the unit (placeholders substituted like the other units).
+  TMP_DISPLAY_SVC="$(mktemp)"
+  sed -e "s|__USER__|$TARGET_USER|g" \
+      -e "s|__INSTALL_DIR__|$REPO_DIR|g" \
+      "$REPO_DIR/systemd/stp-display.service" > "$TMP_DISPLAY_SVC"
+  sudo_run install -m 0644 "$TMP_DISPLAY_SVC" "$DISPLAY_SERVICE_FILE"
+  rm -f "$TMP_DISPLAY_SVC"
+  sudo_run systemctl daemon-reload
+  sudo_run systemctl enable --now stp-display.service || true
+
+  log "E-paper client installed. Reboot once so SPI + group membership take effect,"
+  log "then enable the panel in the web UI: Settings > E-paper display > Enabled."
+else
+  log "Skipping e-paper display setup (pass --with-display to set it up)."
+fi
+
+# ---------------------------------------------------------------------------
 # 6. Status summary
 # ---------------------------------------------------------------------------
 log "Service status:"
@@ -266,4 +327,8 @@ log "Logs:         journalctl -u stp.service -f"
 if [ "$ENABLE_AUTO_UPDATE" -eq 1 ]; then
   log "Update logs:  journalctl -u stp-update.service -f"
   log "Test update:  sudo systemctl start stp-update.service"
+fi
+if [ "$WITH_DISPLAY" -eq 1 ]; then
+  log "Display logs: journalctl -u stp-display.service -f"
+  log "Display:      enable it in the web UI (Settings > E-paper display); reboot once for SPI."
 fi

@@ -194,6 +194,30 @@ export const DEFAULT_CONFIG = {
     //     { "name":"Moon","host":"192.168.1.50","bodies":["Moon"] } ]
     targets: [],
   },
+  // Standalone e-paper display client (display/epaper_client.py on the Pi 5).
+  // The Node service itself never drives the panel — these knobs are just
+  // persisted here and surfaced via /api/config so the Python client (which
+  // polls /api/config every few seconds) can be configured entirely from the
+  // browser Settings panel, no SSH/env editing needed. See display/README.md.
+  display: {
+    enabled: false,
+    // Data source the panel renders from. Blank → the client falls back to its
+    // own bootstrap host (STP_CONFIG_URL, default http://127.0.0.1:8081), i.e.
+    // "this same Pi". Set to a LAN URL like http://192.168.1.50:8081 to drive a
+    // local display from a remote ADS-B/Node host (same pattern as pushover.url:
+    // '' = auto/self, explicit = override).
+    sourceUrl: '',
+    // Partial-refresh cadence (s) — the fast, no-flash update of the text.
+    quickRefreshS: 2,
+    // Full-refresh cadence (s) — the periodic flash that clears e-paper ghosting.
+    longRefreshS: 60,
+    // How many of the soonest real candidates to list (sorted by ETA).
+    candidateCount: 3,
+    // Compact list: one line per candidate (fits more rows, drops the
+    // Sky-now / FOV footer). false → the two-line-per-candidate layout with
+    // the footer. See display/README.md for both layouts.
+    compactList: false,
+  },
   // ISS transits (offline SGP4 from a TLE file). Inactive until a TLE is
   // present at tlePath — fetch it opt-in with scripts/refresh-tle.js. The
   // forward scan is rare-event work, so it runs on recomputeMs cadence and
@@ -296,6 +320,7 @@ function mergeConfig(user) {
     lifecycle: { ...DEFAULT_CONFIG.lifecycle, ...(user.lifecycle ?? {}) },
     optics:    { ...DEFAULT_CONFIG.optics,    ...(user.optics    ?? {}) },
     sharpcap:  { ...DEFAULT_CONFIG.sharpcap,  ...(user.sharpcap  ?? {}) },
+    display:   { ...DEFAULT_CONFIG.display,   ...(user.display   ?? {}) },
     lifecyclePersist: { ...DEFAULT_CONFIG.lifecyclePersist, ...(user.lifecyclePersist ?? {}) },
     driftPersist: { ...DEFAULT_CONFIG.driftPersist, ...(user.driftPersist ?? {}) },
   };
@@ -866,6 +891,9 @@ export async function runService({
           hasToken: Boolean(t.token ?? config.sharpcap.token),
         })),
       },
+      // E-paper display client config (no secrets). The Python client reads
+      // this block from /api/config and configures itself live from the UI.
+      display: { ...config.display },
       _servicePath: configPaths.service ?? null,
     };
   }
@@ -1026,6 +1054,62 @@ export async function runService({
       applied.optics = { ...config.optics };
     }
 
+    if (patch.display && typeof patch.display === 'object') {
+      // E-paper panel client knobs. Validated here so a bad value from the UI
+      // never reaches the Python client (which would otherwise refresh-spam or
+      // poll a malformed URL). All fields hot-apply: the client re-reads this
+      // block from /api/config within a few seconds, no service restart.
+      //
+      // Transactional: validate into a working copy and only commit it once
+      // EVERY field passes. A field-by-field mutate would leave config.display
+      // half-applied on a later cross-field failure (e.g. long < quick), which
+      // then wedges all subsequent saves.
+      const d = patch.display;
+      const next = { ...config.display };
+      if (typeof d.enabled === 'boolean') next.enabled = d.enabled;
+      if ('sourceUrl' in d) {
+        // Blank → client uses its own bootstrap host. Otherwise must be a
+        // syntactically valid http(s) URL so the client never polls garbage.
+        const raw = String(d.sourceUrl ?? '').trim();
+        if (raw) {
+          let parsed;
+          try { parsed = new URL(raw); } catch { throw new Error('display.sourceUrl must be a valid URL like http://192.168.1.50:8081'); }
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            throw new Error('display.sourceUrl must use http:// or https://');
+          }
+        }
+        next.sourceUrl = raw;
+      }
+      if ('quickRefreshS' in d) {
+        const v = Number(d.quickRefreshS);
+        // 1 s floor: e-paper partial refresh physically takes ~0.3–0.5 s, so
+        // anything below ~1 s just queues up and lags.
+        if (!Number.isFinite(v) || v < 1) throw new Error('display.quickRefreshS must be ≥ 1 second');
+        next.quickRefreshS = v;
+      }
+      if ('longRefreshS' in d) {
+        const v = Number(d.longRefreshS);
+        if (!Number.isFinite(v) || v < 5) throw new Error('display.longRefreshS must be ≥ 5 seconds');
+        next.longRefreshS = v;
+      }
+      // Full (long) refresh must not be more frequent than the partial (quick)
+      // one — the long cycle is the ghosting-clear superset of the quick tick.
+      if (next.longRefreshS < next.quickRefreshS) {
+        throw new Error('display.longRefreshS must be ≥ display.quickRefreshS');
+      }
+      if ('candidateCount' in d) {
+        const v = Number(d.candidateCount);
+        // 1–6: below 1 the list is pointless; above ~6 nothing more fits on the
+        // 400×300 panel even in compact mode.
+        if (!Number.isInteger(v) || v < 1 || v > 6) throw new Error('display.candidateCount must be an integer 1–6');
+        next.candidateCount = v;
+      }
+      if (typeof d.compactList === 'boolean') next.compactList = d.compactList;
+      // All checks passed → commit atomically.
+      config.display = next;
+      applied.display = { ...config.display };
+    }
+
     if (patch.airnav && typeof patch.airnav === 'object') {
       const a = patch.airnav;
       // Never accept the masked placeholder back as the real token.
@@ -1182,6 +1266,7 @@ export async function runService({
           optics:        { ...(existing.optics   ?? {}), ...config.optics },
           airnav:        { ...(existing.airnav   ?? {}), ...config.airnav },
           sharpcap:      { ...(existing.sharpcap ?? {}), ...config.sharpcap },
+          display:       { ...(existing.display  ?? {}), ...config.display },
         };
         await fsp.writeFile(configPaths.service, JSON.stringify(merged, null, 2), 'utf8');
       } catch (e) {
