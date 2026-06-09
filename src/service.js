@@ -211,12 +211,6 @@ export const DEFAULT_CONFIG = {
     quickRefreshS: 2,
     // Full-refresh cadence (s) — the periodic flash that clears e-paper ghosting.
     longRefreshS: 60,
-    // How many of the soonest real candidates to list (sorted by ETA).
-    candidateCount: 3,
-    // Compact list: one line per candidate (fits more rows, drops the
-    // Sky-now / FOV footer). false → the two-line-per-candidate layout with
-    // the footer. See display/README.md for both layouts.
-    compactList: false,
   },
   // ISS transits (offline SGP4 from a TLE file). Inactive until a TLE is
   // present at tlePath — fetch it opt-in with scripts/refresh-tle.js. The
@@ -1097,14 +1091,6 @@ export async function runService({
       if (next.longRefreshS < next.quickRefreshS) {
         throw new Error('display.longRefreshS must be ≥ display.quickRefreshS');
       }
-      if ('candidateCount' in d) {
-        const v = Number(d.candidateCount);
-        // 1–6: below 1 the list is pointless; above ~6 nothing more fits on the
-        // 400×300 panel even in compact mode.
-        if (!Number.isInteger(v) || v < 1 || v > 6) throw new Error('display.candidateCount must be an integer 1–6');
-        next.candidateCount = v;
-      }
-      if (typeof d.compactList === 'boolean') next.compactList = d.compactList;
       // All checks passed → commit atomically.
       config.display = next;
       applied.display = { ...config.display };

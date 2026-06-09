@@ -99,8 +99,6 @@
     "enabled": false,
     "sourceUrl": "",
     "quickRefreshS": 2,
-    "longRefreshS": 60,
-    "candidateCount": 3,
-    "compactList": false
+    "longRefreshS": 60
   }
 }

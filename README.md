@@ -163,7 +163,7 @@ for the cases where you want to push the setup further.
 | **External USB-C SSD** | Move `data/history.db` and `data/lifecycle.json` off the SD card by symlinking the `data/` directory. Massively extends SD-card life for multi-year deployments. |
 | **Pushover account** ([pushover.net](https://pushover.net)) | Phone notifications for the three transit stages. The pipeline runs fine without it (`pushover.enabled=false`), but you'll only see transits in the web UI. |
 | **Windows PC running [SharpCap](https://www.sharpcap.co.uk/)** + camera | Only if you want the predictor to *automatically start a capture* the moment a transit goes imminent (too tight a window — often < 30 s — for SharpCap's own Sequencer). Runs a tiny stdlib-only Python listener inside SharpCap (4.x uses embedded **CPython**, not IronPython — the listener is portable across both); the Pi triggers it over TCP. Multi-rig: drive several scopes/PCs in parallel via `sharpcap.targets[]`. See **[SharpCap capture trigger](#sharpcap-capture-trigger-optional)**. Off by default. |
-| **Waveshare 4.2" B/W e-paper panel** (SPI, 400×300) | A **browserless** physical readout — clock, location, live count and the soonest Real candidates (ETA, altitude, speed, distance, angle) plus a Sky-now / FOV footer. Plugs onto the Pi's 40-pin header (SPI, **not** I2C). Configured entirely from the web Settings panel; can also be driven from a **remote** predictor over the LAN. See **[E-paper display](#-e-paper-display-optional-v0310)**. Off by default. |
+| **Waveshare 4.2" B/W e-paper panel** (SPI, 400×300) | A **browserless** physical readout — clock, location, live count and the soonest Real candidates (ETA, altitude, speed, distance, angle) plus Sky-now + an FOV preview. Plugs onto the Pi's 40-pin header (SPI, **not** I2C). Configured entirely from the web Settings panel; can also be driven from a **remote** predictor over the LAN. See **[E-paper display](#-e-paper-display-optional-v0310)**. Off by default. |
 
 ### Required software (installed by `scripts/install-pi5.sh`)
 
@@ -780,12 +780,16 @@ A standalone client that drives a **Waveshare 4.2" B/W SPI e-paper panel**
 (400×300) on the Pi 5 for a **browserless** at-a-glance readout — no browser, no
 monitor needed:
 
-- **Clock + date**, **observer location**
-- **LIVE** total live-tracking count and **CAND** real-candidate count
-- the **soonest Real candidates** as a list — each with **ETA, angle, altitude,
-  speed, distance, elevation** (all metric: m, km/h, km)
-- a **Sky-now** footer (Sun/Moon az/el/observable) + a small **FOV preview** of
-  the #1 candidate against the body disc
+A fixed three-paragraph layout:
+
+- **Header line** — bold **clock**, then **date · place · GPS** (left) and
+  **LIVE** / **CAND** counts (right), all on one line
+- **Nearest candidate** — the #1 Real candidate in detail (**ETA, angle,
+  elevation, altitude, speed, distance**; all metric) on the left, with a
+  **FOV preview** against the body disc on the right
+- **Sky-now + list** — Sun/Moon az/el/observable (left) and the **next
+  candidates** — or the tracked **aircraft** when there are none — as a compact
+  list (right)
 
 The client lives in `display/` and carries no logic of its own — it polls the
 predictor's `/api/state`, so it can render data from **this Pi or a remote Pi on
@@ -802,8 +806,9 @@ Open ⚙ **Settings → E-paper display** and the client picks the changes up li
 | **Data source URL** | Blank = this Pi (localhost). Set a LAN URL like `http://192.168.1.50:8081` to drive a **local** panel from a **remote** ADS-B/Node host. |
 | **Quick refresh (s)** | Partial-refresh cadence — fast, flash-free text update. Default 2, floor 1. |
 | **Long refresh (s)** | Full-refresh cadence — the periodic brief flash that clears e-paper ghosting. Default 60, must be ≥ Quick. |
-| **Candidate count** | How many of the soonest candidates to list (1–6). Default 3. |
-| **Compact list** | One line per candidate (more rows, no footer) vs. the two-line layout with footer. |
+
+The on-panel layout itself is fixed (the three paragraphs above) — there are no
+list-length or compact toggles.
 
 > **E-paper isn't a video display.** A full refresh flashes for a couple of
 > seconds; a partial refresh is quick (~0.3–0.5 s) but builds up ghosting. The
@@ -1500,7 +1505,7 @@ Default 0 is fine if you only see GPS-equipped aircraft (`alt_geom`).
   "server":   { "port": 8081, "host": "0.0.0.0", "publicUrl": "" },
   "store":    { "path": "./data/history.db" },
   "routes":   { "enabled": true, "ttlMs": 3600000, "negativeTtlMs": 300000 },
-  "display":  { "enabled": false, "sourceUrl": "", "quickRefreshS": 2, "longRefreshS": 60, "candidateCount": 3, "compactList": false }
+  "display":  { "enabled": false, "sourceUrl": "", "quickRefreshS": 2, "longRefreshS": 60 }
 }
 ```
 

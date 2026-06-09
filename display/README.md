@@ -3,15 +3,17 @@
 A standalone, browserless readout for the Sun-Moon Transit Predictor on a
 **Waveshare 4.2" B/W SPI e-paper panel** (400×300) driven by a **Raspberry Pi 5**.
 
-It shows, updating in near-real time:
+It shows, updating in near-real time, a fixed three-paragraph layout:
 
-- **Clock + date** (local time)
-- **Observer location** (name + coordinates)
-- **LIVE** total live-tracking count and **CAND** real-candidate count
-- the **soonest Real candidates** as a list — each with **ETA, angle, altitude,
-  speed, distance, elevation** (all metric: m, km/h, km)
-- a **Sky-now** footer (Sun/Moon azimuth/elevation/observable) and a small
-  **FOV preview** of the #1 candidate against the body disc
+1. **Header line** — bold **clock**, then **date · place · GPS** on the left,
+   and **LIVE** (live-tracking count) / **CAND** (real-candidate count) on the
+   right — all on one line.
+2. **Nearest candidate** — the #1 Real candidate in detail (callsign, body,
+   **ETA, angle, elevation, altitude, speed, distance**; all metric: m, km/h,
+   km) on the left, with a **FOV preview** against the body disc on the right.
+3. **Sky-now + list** — Sun/Moon azimuth/elevation/observable on the left, and
+   the **next candidates** (or, when there are none, the tracked **aircraft**)
+   as a compact list on the right.
 
 The client carries no business logic — it polls the predictor's HTTP API and
 renders. So the data can come from **the same Pi** or a **remote Pi on the LAN**
@@ -32,8 +34,9 @@ within a few seconds, no restart:
 | **Data source URL** | Blank = read from this Pi (localhost). Set a LAN URL (e.g. `http://192.168.1.50:8081`) to drive a local panel from a remote ADS-B/Node host. |
 | **Quick refresh (s)** | Partial-refresh cadence — fast, flash-free text update. Default 2. Floor 1. |
 | **Long refresh (s)** | Full-refresh cadence — periodic brief flash that clears e-paper ghosting. Default 60. Must be ≥ Quick. |
-| **Candidate count** | How many of the soonest candidates to list (1–6). Default 3. |
-| **Compact list** | One line per candidate (more rows, no footer) vs. the two-line layout with footer. |
+
+The layout itself is fixed (the three paragraphs above) — there are no
+list-length or compact knobs.
 
 > **Why e-paper can't truly do "video".** A full refresh flashes for ~2–4 s; a
 > partial refresh is fast (~0.3–0.5 s) but accumulates ghosting. The two-cadence

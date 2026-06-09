@@ -690,11 +690,6 @@
             <small class="field-hint">Partial-refresh cadence — the fast, flash-free text update. <b>Default 2 s.</b> Floor 1 s (the panel physically needs ~0.3–0.5 s per partial refresh).</small></label>
           <label>Long refresh (s)<input name="display.longRefreshS" type="number" step="1" min="5" placeholder="60">
             <small class="field-hint">Full-refresh cadence — the periodic brief flash that clears e-paper ghosting. <b>Default 60 s.</b> Must be ≥ Quick refresh.</small></label>
-          <label>Candidate count<input name="display.candidateCount" type="number" step="1" min="1" max="6" placeholder="3">
-            <small class="field-hint">How many of the soonest Real candidates to list (sorted by ETA). <b>Default 3.</b> Range 1–6 — beyond ~6 nothing more fits on the panel.</small></label>
-          <label class="checkbox-row">
-            <input name="display.compactList" type="checkbox"> Compact list
-            <small class="field-hint">One line per candidate (fits more rows, drops the Sky-now/FOV footer). Off → the two-line-per-candidate layout with the footer.</small></label>
         </fieldset>
 
         </div><!-- /.settings-col (right) -->

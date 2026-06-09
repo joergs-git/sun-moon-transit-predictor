@@ -377,3 +377,48 @@ extend the README with an install section.
   transactionally (tasks/lessons.md 2026-06-08).
 
 Status: complete, awaiting commit/push/merge confirmation; Pi hardware test by user.
+
+---
+
+# Backlog (planned / hardware pending)
+
+## Piezo buzzer audio alert (Pi 5)
+Status: **planned** — piezo summer ordered (user, 2026-06-09), arrives later.
+
+Context: Pi 5 has no 3.5 mm jack and no onboard sound. A passive piezo
+buzzer on a GPIO pin (PWM via `gpiozero` / `lgpio`) is the minimal way to
+get an audible transit alert without a DAC/USB sound card.
+
+- [ ] Wire a passive piezo to a free GPIO pin (+ GND); confirm pin choice
+      doesn't clash with the ADS-B HAT / PoE HAT GPIO usage.
+- [ ] Small Python (or Node→gpio) beep helper: short/long patterns for
+      `candidate` vs `imminent` stages; respect a quiet-hours / mute config.
+- [ ] Hook the beep into the existing notifier stage transitions (reuse the
+      same stage gating as Pushover — do NOT duplicate the funnel logic).
+- [ ] Config knob: enable/disable + which stages beep (default: imminent
+      only, so it isn't noisy). One legitimate default — keep it minimal.
+- [ ] Test on real Pi 5 hardware once the buzzer arrives.
+
+---
+
+# E-paper layout redesign — three-paragraph grid (v0.31.2)
+
+User ask (2026-06-09): restructure the 4.2" panel into three paragraphs.
+
+- [x] Para 1: one line — bold clock · date · place · GPS (left), LIVE · CAND
+      (right) + rule. Adaptive trail font (12→10 px) keeps the place name on
+      the Pi's narrow DejaVu mono before dropping it as a last resort.
+- [x] Para 2: nearest candidate (#1) detail on the left + FOV frame on the right.
+- [x] Para 3: SKY NOW (left) + next candidates (#2–#4) on the right; when there
+      are NO candidates, fall back to tracked aircraft from `lifecycle`
+      (the only aircraft-keyed list in /api/state), numbered from 1.
+- [x] Bold-font support in render._font(); compact GPS formatters (no ° glyph).
+- [x] Removed now-dead Settings knobs `candidateCount` + `compactList` from
+      service.js (defaults + validation), web/index.html, display/config.py,
+      service.example.json, README + display/README (layout is fixed now).
+- [x] Verified: 205 node tests pass, python syntax OK, both layouts (with +
+      without candidates) rendered via a dry-run fixture harness.
+
+## Results
+Layout is a fixed 3×(left/right) grid; no list-length/compact toggles. Pi
+hardware refresh (real panel cadences) still to be eyeballed by the user.

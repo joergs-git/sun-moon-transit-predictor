@@ -1,6 +1,6 @@
 """
 Bootstrap + live configuration for the e-paper display client.
-v0.31.0
+v0.31.2
 
 Design: there is exactly ONE local/bootstrap value — STP_CONFIG_URL — which
 tells the client where to read its live `display` config block from. Everything
@@ -42,8 +42,6 @@ DEFAULTS = {
     "sourceUrl": "",
     "quickRefreshS": 2,
     "longRefreshS": 60,
-    "candidateCount": 3,
-    "compactList": False,
 }
 
 
