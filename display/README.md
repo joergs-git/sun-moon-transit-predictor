@@ -20,6 +20,15 @@ It shows, updating in near-real time, a fixed three-paragraph layout:
 The planes come from the unified live-tracking list, so the panel keeps showing
 nearby traffic even when nothing currently qualifies as a Real candidate.
 
+**At-a-glance cues**
+- **SEP trend arrow** — ▼ next to the separation means the plane is closing in
+  (closest approach still ahead), ▲ means it is receding (already past).
+- **`>> TRANSIT NOW <<`** — an inverted banner over the detail block the moment a
+  plane's separation drops inside the body's disc (an actual transit).
+- **Sun / Moon glyphs** — a rayed disc / a crescent instead of `S` / `M`.
+- **`! STALE Ns`** — a contact that has lost its live ADS-B fix (data is N s old);
+  list rows get a leading `!`.
+
 The client carries no business logic — it polls the predictor's HTTP API and
 renders. So the data can come from **the same Pi** or a **remote Pi on the LAN**
 (see *Remote data source* below).

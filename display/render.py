@@ -1,6 +1,6 @@
 """
 Pillow renderer for the 4.2" e-paper panel (400×300, 1-bit black/white).
-v0.31.5
+v0.31.6
 
 render_state() turns an /api/state snapshot into a PIL Image. The layout is
 deliberately monospace so columns self-align, and fixed into three paragraphs.
@@ -11,6 +11,11 @@ Throughout, captions stay tiny and the payload (ETA / SEP / elevation) is large:
      (left) + a large FOV frame (right)
   3. Bottom block  — Sky-now elevation (left, narrow) + the tracked aircraft
      (right, wide) with a (candidates / total live) counter
+
+Affordances: a SEP trend arrow (▼ closing in / ▲ receding), an inverted
+">> TRANSIT NOW <<" banner when a plane's separation drops inside the body
+disc, Sun/Moon glyphs instead of letters, and a "! STALE Ns" marker when a
+contact has lost its live ADS-B fix.
 
 Planes come from the unified `lifecycle` list (the superset of everything the
 panel tracks; Real candidates float to the top), so the panel shows traffic
@@ -181,6 +186,13 @@ def _make_view(meta, cand, now_ms):
     spd = _num(ac.get("groundSpeedMs"))   # …not on the az/el closest-point dict
     trk = _num(ac.get("trackDeg"))
 
+    # Trend: closest approach still ahead → closing in (sep shrinking); past → receding.
+    approaching = at is not None and (at - now_ms) >= 0
+    # Freshness: a stale lifecycle entry has no recent live ADS-B match.
+    status = meta.get("status")
+    lu = _num(meta.get("lastUpdateMs"))
+    age_s = (now_ms - lu) / 1000.0 if lu else None
+
     return {
         "cs": cs[:8],
         "body": body,
@@ -194,11 +206,16 @@ def _make_view(meta, cand, now_ms):
         "dist": "%dkm" % round(dist / 1000.0) if dist is not None else "--",
         "brg": "%03d°" % round(trk) if trk is not None else "--",
         "route": _route_str(meta.get("route") or cand.get("route")),
-        # raw numbers kept for the FOV preview
+        # raw numbers kept for the FOV preview + transit/trend logic
         "az": az,
         "el_raw": el,
+        "has_eta": at is not None,
+        "approaching": approaching,
         # candidate/imminent → a true "Real candidate"; radio/planned/stale → not
-        "is_real": meta.get("status") in ("candidate", "imminent"),
+        "is_real": status in ("candidate", "imminent"),
+        "stale": status == "stale",
+        "coasting": bool(meta.get("coasting")),
+        "age_s": age_s,
     }
 
 
@@ -245,6 +262,36 @@ def _lv(draw, x, y, label, value, vsize, lsize=10, gap=3, pad=12):
         x += draw.textlength(label, font=fl) + gap
     draw.text((x, y), value, font=fv, fill=BLACK)
     return x + draw.textlength(value, font=fv) + pad
+
+
+# 8 unit directions for the Sun's rays (kept literal — no math import needed).
+_RAYS = ((1, 0), (-1, 0), (0, 1), (0, -1),
+         (0.7, 0.7), (0.7, -0.7), (-0.7, 0.7), (-0.7, -0.7))
+
+
+def _draw_body(draw, cx, cy, r, body, ink=BLACK, bg=WHITE):
+    """Draw a small 1-bit body glyph: a rayed disc for the Sun, a crescent for
+    the Moon. Clearer at a glance than an 'S' / 'M' letter."""
+    if body == "Moon":
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=ink)
+        # Carve the crescent with a bg-coloured disc offset to the right.
+        o = r * 0.8
+        draw.ellipse((cx - r + o, cy - r - 1, cx + r + o, cy + r + 1), fill=bg)
+    else:  # Sun (and any unknown body)
+        for dx, dy in _RAYS:
+            draw.line((cx + dx * (r + 1), cy + dy * (r + 1),
+                       cx + dx * (r + 4), cy + dy * (r + 4)), fill=ink, width=1)
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=ink)
+
+
+def _tri(draw, x, y, w, h, up):
+    """Small filled triangle (apex up or down) in the bbox (x, y, w, h).
+    Used as a SEP trend arrow: down = closing in, up = receding."""
+    if up:
+        pts = [(x + w / 2.0, y), (x, y + h), (x + w, y + h)]
+    else:
+        pts = [(x, y), (x + w, y), (x + w / 2.0, y + h)]
+    draw.polygon(pts, fill=BLACK)
 
 
 # Block boundaries (y) for the three-paragraph grid. The panel is 400×300.
@@ -332,20 +379,42 @@ def _primary(draw, state, view):
         _draw_fov(draw, state, None, (bx0, by0, bx1, by1))
         return
 
-    heading = "REAL CANDIDATE" if view["is_real"] else "NEAREST PLANE"
-    draw.text((4, y0), heading, font=_font(12), fill=BLACK)
+    # Transit test: the plane silhouette overlaps the disc when the separation
+    # drops below the body's angular radius — the moment everything builds to.
+    body = view["body"]
+    b = (state.get("bodies") or {}).get(body) or {}
+    range_m = _num(b.get("rangeM"))
+    radius = (fov.body_disc_deg(body, range_m) if range_m else 0.5) / 2.0
+    sep_num = view["sep_num"]
+    transit = sep_num is not None and sep_num <= radius
 
-    # Callsign + body, bold.
-    draw.text((4, y0 + 14), "%s %s" % (view["cs"], view["body"]),
-              font=_font(19, bold=True), fill=BLACK)
+    # Heading row — an inverted banner during an actual transit, else the plane
+    # class plus a stale / coasting freshness marker on the right.
+    if transit:
+        draw.rectangle((2, y0 - 2, 234, y0 + 15), fill=BLACK)
+        draw.text((10, y0), ">> TRANSIT NOW <<", font=_font(13, bold=True), fill=WHITE)
+    else:
+        heading = "REAL CANDIDATE" if view["is_real"] else "NEAREST PLANE"
+        draw.text((4, y0), heading, font=_font(12), fill=BLACK)
+        if view["stale"]:
+            s = "! STALE %ds" % int(view["age_s"]) if view["age_s"] is not None else "! STALE"
+            _right(draw, 234, y0, s, _font(11))
+        elif view["coasting"]:
+            _right(draw, 234, y0, "~ coasting", _font(11))
 
-    # Headline figures: ETA and SEP, big and bold, with small labels.
-    fbig = _font(24, bold=True)
-    flbl = _font(13)
-    draw.text((4, 96), "ETA", font=flbl, fill=BLACK)
-    draw.text((52, 91), view["eta"], font=fbig, fill=BLACK)
-    draw.text((4, 124), "SEP", font=flbl, fill=BLACK)
-    draw.text((52, 119), view["sep"], font=fbig, fill=BLACK)
+    # Callsign + a Sun/Moon glyph.
+    cs_font = _font(19, bold=True)
+    cs_y = y0 + 16
+    draw.text((4, cs_y), view["cs"], font=cs_font, fill=BLACK)
+    gx = 4 + draw.textlength(view["cs"], font=cs_font) + 14
+    _draw_body(draw, gx, cs_y + 10, 8, body)
+
+    # Headline figures: ETA and SEP, big + bold, tiny captions.
+    _lv(draw, 4, 91, "ETA", view["eta"], 24, 13, gap=4, pad=10)
+    x = _lv(draw, 4, 119, "SEP", view["sep"], 24, 13, gap=4, pad=6)
+    # SEP trend arrow: down = closing in (approaching), up = receding.
+    if view["has_eta"] and sep_num is not None:
+        _tri(draw, x, 125, 13, 15, up=not view["approaching"])
 
     # Secondary fields, small: route + bearing, then distance / altitude / speed.
     fsm = _font(12)
@@ -362,21 +431,19 @@ def _sky_and_list(draw, state, pool):
     draw.line((0, _BLK2_RULE, WIDTH, _BLK2_RULE), fill=BLACK, width=1)
     top = _BLK2_RULE + 5
 
-    # ── Left: SKY NOW — elevation only, large ──
+    # ── Left: SKY NOW — Sun/Moon glyph + elevation, large ──
     draw.text((4, top), "SKY NOW", font=_font(11), fill=BLACK)
     bodies = state.get("bodies") or {}
-    sy = top + 16
+    sy = top + 18
     for name in ("Sun", "Moon"):
         b = bodies.get(name) or {}
         el = _num(b.get("elevationDeg"))
         ok = "+" if b.get("observable") else "-"
-        x = 4
-        draw.text((x, sy + 4), name, font=_font(14), fill=BLACK)
-        x += draw.textlength(name, font=_font(14)) + 7
+        _draw_body(draw, 11, sy + 9, 7, name)
         val = "%d°" % round(el) if el is not None else "--"
-        x = _lv(draw, x, sy, "el", val, 18, 11, gap=5, pad=8)
-        draw.text((x, sy + 4), ok, font=_font(13), fill=BLACK)
-        sy += 26
+        x = _lv(draw, 24, sy, "el", val, 18, 11, gap=5, pad=8)
+        draw.text((x, sy + 4), ok, font=_font(14), fill=BLACK)
+        sy += 28
 
     # ── Right: AIRCRAFT (cand / total live), wide + large ──
     live = state.get("aircraftCount")
@@ -384,7 +451,7 @@ def _sky_and_list(draw, state, pool):
         live = len(state.get("lifecycle") or [])
     cand = len(state.get("candidates") or [])
 
-    rx = 140
+    rx = 138
     fhd = _font(11)
     draw.text((rx, top), "AIRCRAFT", font=fhd, fill=BLACK)
     hx = rx + draw.textlength("AIRCRAFT ", font=fhd)
@@ -397,13 +464,19 @@ def _sky_and_list(draw, state, pool):
         return
     for v in rest:
         x = rx
-        # callsign + body marker, then big labelled SEP / ETA payloads.
-        draw.text((x, ry + 2), v["cs"], font=_font(14), fill=BLACK)
-        x += draw.textlength(v["cs"], font=_font(14)) + 4
-        draw.text((x, ry + 4), v["bsym"], font=_font(12), fill=BLACK)
-        x += draw.textlength(v["bsym"], font=_font(12)) + 8
-        x = _lv(draw, x, ry, "SEP", v["sep"], 16, 10, gap=3, pad=9)
-        x = _lv(draw, x, ry, "ETA", v["eta"], 16, 10, gap=3, pad=8)
+        if v["stale"]:
+            draw.text((x, ry + 2), "!", font=_font(14, bold=True), fill=BLACK)
+            x += 9
+        # Sun/Moon glyph, then callsign + big labelled SEP / ETA payloads.
+        _draw_body(draw, x + 5, ry + 9, 5, v["body"])
+        x += 14
+        draw.text((x, ry + 2), v["cs"], font=_font(13), fill=BLACK)
+        x += draw.textlength(v["cs"], font=_font(13)) + 7
+        x = _lv(draw, x, ry, "SEP", v["sep"], 16, 10, gap=3, pad=4)
+        if v["has_eta"] and v["sep_num"] is not None:
+            _tri(draw, x, ry + 3, 8, 10, up=not v["approaching"])
+            x += 11
+        x = _lv(draw, x, ry, "ETA", v["eta"], 16, 10, gap=3, pad=6)
         ry += 24
 
 

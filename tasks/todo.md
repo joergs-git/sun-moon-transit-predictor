@@ -484,3 +484,22 @@ User feedback (2026-06-09):
 Further ideas offered to the user (pending pick): SEP trend arrow
 (approaching/leaving), transit-imminent emphasis (SEP < disc → banner/invert),
 disc-crossing time for #1, Sun/Moon glyphs instead of S/M, stale-data warning.
+
+---
+
+# E-paper at-a-glance cues (v0.31.6)
+
+User picked ideas 1, 2, 4, 5 (2026-06-09):
+- [x] (1) SEP trend arrow: ▼ closing in (closest approach ahead) / ▲ receding
+      (past) — derived from the ETA sign; in the detail block + each list row.
+- [x] (2) Transit banner: inverted ">> TRANSIT NOW <<" over the detail heading
+      when sep ≤ the body's angular radius (fov.body_disc_deg/2).
+- [x] (4) Sun/Moon glyphs (rayed disc / crescent) instead of S/M, in the detail
+      callsign, SKY NOW, and the aircraft rows (new _draw_body/_tri helpers).
+- [x] (5) Stale marker: "! STALE Ns" in the detail heading + a leading "!" on
+      stale list rows (status=='stale', age from lastUpdateMs); "~ coasting" too.
+- [x] Verified normal / transit / empty states via the fixture harness; 205
+      node tests pass.
+
+Not taken this round (offered): #3 disc-crossing time, #6 rise/set countdown.
+Piezo buzzer (backlog) pairs naturally with the transit banner.
