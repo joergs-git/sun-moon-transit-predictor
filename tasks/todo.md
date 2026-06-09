@@ -454,3 +454,15 @@ restarted after a pull — restarting only stp-display is not enough.
 Readable from across the room; planes always visible. Open: header can't fit
 big clock + date + place + GPS + counts on one line — GPS is dropped on the
 narrow Pi font. If the user wants GPS guaranteed, a two-line header is the fix.
+
+---
+
+# E-paper two-line header (v0.31.4)
+
+User chose a two-line header (2026-06-09) so the full GPS stays legible:
+- [x] Line 1: big bold clock + date (left), LIVE / CAND (right).
+- [x] Line 2: place + full GPS (with ° — room now).
+- [x] Shifted the primary/bottom bands down (_HDR_RULE 46, _BLK2_RULE 178);
+      re-tuned ETA/SEP/detail y-positions; NEXT PLANES font 14 + tightened row
+      so sep never clips on wider fonts.
+- [x] Verified both states via the fixture harness.

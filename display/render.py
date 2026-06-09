@@ -1,12 +1,12 @@
 """
 Pillow renderer for the 4.2" e-paper panel (400×300, 1-bit black/white).
-v0.31.3
+v0.31.4
 
 render_state() turns an /api/state snapshot into a PIL Image. The layout is
 deliberately monospace so columns self-align, and fixed into three paragraphs
 with large, legible body text (ETA / SEP are the headline figures):
 
-  1. Header line  — big clock · date · place · GPS (left) / LIVE · CAND (right)
+  1. Header (two lines) — clock · date / LIVE · CAND, then place · GPS
   2. Primary block — the nearest tracked plane in detail, ETA/SEP big + bold
      (left) + a large FOV frame (right)
   3. Bottom block  — Sky-now (left) + the next tracked planes (right)
@@ -231,15 +231,17 @@ def _right(draw, x_right, y, text, font):
 
 # Block boundaries (y) for the three-paragraph grid. The panel is 400×300.
 # Generous bands so the body text can be large and legible from across a room.
-_HDR_RULE = 28          # divider under the header line
-_BLK2_RULE = 172        # divider between the candidate/FOV block and the bottom
+# The header is two lines (clock/date/counts, then place/GPS) so everything
+# stays at a readable size — nothing has to shrink to fit one line.
+_HDR_RULE = 46          # divider under the two-line header
+_BLK2_RULE = 178        # divider between the candidate/FOV block and the bottom
 
 
 def _header(draw, state):
-    """Paragraph 1 — one line: big bold clock, then date · place · GPS in a
-    readable size gradient (most-glanceable biggest), with LIVE / CAND counts
-    right-aligned. Trailing pieces are dropped only if they would truly collide
-    with the counts; the static place/GPS are intentionally the smallest."""
+    """Paragraph 1 — two lines, all at a readable size:
+      line 1: big bold clock · date (left)        · LIVE / CAND (right)
+      line 2: place · GPS (left)
+    """
     obs = state.get("observer") or {}
     live = state.get("aircraftCount")
     if live is None:
@@ -250,33 +252,18 @@ def _header(draw, state):
     clock = time.strftime("%H:%M:%S", lt)
     date = time.strftime("%d.%m.%y", lt)
 
-    # Big bold clock anchors the line.
+    # ── Line 1: big bold clock, date, and the LIVE / CAND counts on the right ──
     fc = _font(20, bold=True)
-    draw.text((4, 2), clock, font=fc, fill=BLACK)
-    x = 4 + draw.textlength(clock, font=fc) + 10
+    draw.text((4, 1), clock, font=fc, fill=BLACK)
+    x = 4 + draw.textlength(clock, font=fc) + 12
+    draw.text((x, 8), date, font=_font(14), fill=BLACK)
+    _right(draw, WIDTH - 4, 8, "LIVE %d  CAND %d" % (live, cand), _font(14, bold=True))
 
-    # LIVE / CAND on the right, bold and readable.
-    fr = _font(14, bold=True)
-    right = "LIVE %d  CAND %d" % (live, cand)
-    right_x = WIDTH - 4 - draw.textlength(right, font=fr)
-    draw.text((right_x, 7), right, font=fr, fill=BLACK)
-
-    # Trailing pieces in a descending size gradient. Date is the most useful so
-    # it is largest; the static location prints smaller and is dropped first if
-    # space runs out before the counts.
+    # ── Line 2: place + full GPS (with ° — there's room now) ──
     name = (obs.get("name") or "").strip()
-    gps = "%s %s" % (_fmt_lat_compact(obs.get("latitudeDeg")),
-                     _fmt_lon_compact(obs.get("longitudeDeg")))
-    limit_x = right_x - 8
-    for text, size in ((date, 14), (name, 13), (gps, 12)):
-        if not text:
-            continue
-        f = _font(size)
-        w = draw.textlength(text, font=f)
-        if x + w > limit_x:
-            break
-        draw.text((x, 8), text, font=f, fill=BLACK)
-        x += w + 9
+    gps = "%s  %s" % (_fmt_lat(obs.get("latitudeDeg")), _fmt_lon(obs.get("longitudeDeg")))
+    line2 = ("%s   %s" % (name, gps)) if name else gps
+    draw.text((4, 27), line2, font=_font(14), fill=BLACK)
 
     draw.line((0, _HDR_RULE, WIDTH, _HDR_RULE), fill=BLACK, width=1)
 
@@ -321,13 +308,13 @@ def _primary(draw, state, view):
     """Paragraph 2 — the nearest plane in detail (left) + a large FOV frame
     (right). ETA and SEP are the headline figures (big + bold); route, bearing,
     distance, altitude and speed print small underneath."""
-    y0 = 33
-    bx0, by0, bx1, by1 = 240, 44, WIDTH - 6, _BLK2_RULE - 6
+    y0 = 50
+    bx0, by0, bx1, by1 = 240, 58, WIDTH - 6, _BLK2_RULE - 6
     draw.text((bx0, y0), "FOV", font=_font(12), fill=BLACK)
 
     if not view:
         draw.text((4, y0), "NEAREST PLANE", font=_font(12), fill=BLACK)
-        draw.text((6, y0 + 24), "— none right now —", font=_font(16), fill=BLACK)
+        draw.text((6, y0 + 26), "— none right now —", font=_font(16), fill=BLACK)
         _draw_fov(draw, state, None, (bx0, by0, bx1, by1))
         return
 
@@ -341,15 +328,15 @@ def _primary(draw, state, view):
     # Headline figures: ETA and SEP, big and bold, with small labels.
     fbig = _font(24, bold=True)
     flbl = _font(13)
-    draw.text((4, 80), "ETA", font=flbl, fill=BLACK)
-    draw.text((52, 75), view["eta"], font=fbig, fill=BLACK)
-    draw.text((4, 110), "SEP", font=flbl, fill=BLACK)
-    draw.text((52, 105), view["sep"], font=fbig, fill=BLACK)
+    draw.text((4, 96), "ETA", font=flbl, fill=BLACK)
+    draw.text((52, 91), view["eta"], font=fbig, fill=BLACK)
+    draw.text((4, 124), "SEP", font=flbl, fill=BLACK)
+    draw.text((52, 119), view["sep"], font=fbig, fill=BLACK)
 
     # Secondary fields, small: route + bearing, then distance / altitude / speed.
     fsm = _font(12)
-    draw.text((4, 140), "%s  brg %s" % (view["route"], view["brg"]), font=fsm, fill=BLACK)
-    draw.text((4, 155), "%s  %s  %s" % (view["dist"], view["alt"], view["spd"]), font=fsm, fill=BLACK)
+    draw.text((4, 150), "%s  brg %s" % (view["route"], view["brg"]), font=fsm, fill=BLACK)
+    draw.text((4, 164), "%s  %s  %s" % (view["dist"], view["alt"], view["spd"]), font=fsm, fill=BLACK)
 
     _draw_fov(draw, state, view, (bx0, by0, bx1, by1))
 
@@ -378,17 +365,18 @@ def _sky_and_list(draw, state, pool):
         ly += 22
 
     # ── Right: the next tracked planes (after the detailed #1) ──
-    rx = 200
+    rx = 196
     draw.text((rx, top), "NEXT PLANES", font=_font(12), fill=BLACK)
     rest = pool[1:4]
-    frow = _font(15)
+    frow = _font(14)
     ry = top + 18
     if not rest:
         draw.text((rx + 2, ry), "— none —", font=frow, fill=BLACK)
         return
     for i, v in enumerate(rest, 2):
-        # number · callsign · body · ETA · SEP — kept compact to fit the column.
-        row = "%d %-7s%s %5s %5s" % (i, v["cs"], v["bsym"], v["eta"], v["sep"])
+        # number · callsign · body · ETA · SEP — kept compact to fit the column
+        # at this size on both the Pi's DejaVu mono and wider preview fonts.
+        row = "%d %-7s%s %6s %5s" % (i, v["cs"], v["bsym"], v["eta"], v["sep"])
         draw.text((rx, ry), row, font=frow, fill=BLACK)
         ry += 22
 

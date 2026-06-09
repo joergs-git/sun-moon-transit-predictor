@@ -782,8 +782,8 @@ monitor needed:
 
 A fixed three-paragraph layout with large, legible body text:
 
-- **Header line** — big bold **clock**, then **date · place · GPS** (left) and
-  **LIVE** / **CAND** counts (right), all on one line
+- **Header** (two lines) — big bold **clock** + **date** and **LIVE** / **CAND**
+  counts on line 1; **place** + **GPS** on line 2
 - **Nearest plane** — the nearest tracked plane in detail, with **ETA** and
   **SEP** as the big bold headline figures and route/bearing/distance/altitude/
   speed small underneath, plus a large **FOV preview** on the right

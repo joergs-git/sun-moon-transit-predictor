@@ -5,10 +5,9 @@ A standalone, browserless readout for the Sun-Moon Transit Predictor on a
 
 It shows, updating in near-real time, a fixed three-paragraph layout:
 
-1. **Header line** — big bold **clock**, then **date · place · GPS** on the
-   left (descending size; place/GPS are static so they print smallest and the
-   GPS is dropped first if the line runs out of room), and **LIVE** / **CAND**
-   counts on the right.
+1. **Header** (two lines) — line 1: big bold **clock** + **date** (left) and
+   **LIVE** / **CAND** counts (right); line 2: **place** + **GPS**. Two lines so
+   everything stays at a readable size (the full GPS always fits).
 2. **Nearest plane** — the nearest tracked plane in detail: callsign + body,
    with **ETA** and **SEP** as the big, bold headline figures and **route,
    bearing, distance, altitude, speed** small underneath, plus a large **FOV
