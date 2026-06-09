@@ -780,16 +780,18 @@ A standalone client that drives a **Waveshare 4.2" B/W SPI e-paper panel**
 (400×300) on the Pi 5 for a **browserless** at-a-glance readout — no browser, no
 monitor needed:
 
-A fixed three-paragraph layout:
+A fixed three-paragraph layout with large, legible body text:
 
-- **Header line** — bold **clock**, then **date · place · GPS** (left) and
+- **Header line** — big bold **clock**, then **date · place · GPS** (left) and
   **LIVE** / **CAND** counts (right), all on one line
-- **Nearest candidate** — the #1 Real candidate in detail (**ETA, angle,
-  elevation, altitude, speed, distance**; all metric) on the left, with a
-  **FOV preview** against the body disc on the right
-- **Sky-now + list** — Sun/Moon az/el/observable (left) and the **next
-  candidates** — or the tracked **aircraft** when there are none — as a compact
-  list (right)
+- **Nearest plane** — the nearest tracked plane in detail, with **ETA** and
+  **SEP** as the big bold headline figures and route/bearing/distance/altitude/
+  speed small underneath, plus a large **FOV preview** on the right
+- **Sky-now + planes** — Sun/Moon az/el/observable (left) and the **next
+  tracked planes** (right)
+
+Planes come from the unified live-tracking list, so the panel keeps showing
+nearby traffic even when nothing is a Real candidate.
 
 The client lives in `display/` and carries no logic of its own — it polls the
 predictor's `/api/state`, so it can render data from **this Pi or a remote Pi on

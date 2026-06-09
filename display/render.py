@@ -1,14 +1,19 @@
 """
 Pillow renderer for the 4.2" e-paper panel (400×300, 1-bit black/white).
-v0.31.2
+v0.31.3
 
 render_state() turns an /api/state snapshot into a PIL Image. The layout is
-deliberately monospace so columns self-align, and fixed into three paragraphs:
+deliberately monospace so columns self-align, and fixed into three paragraphs
+with large, legible body text (ETA / SEP are the headline figures):
 
-  1. Header line  — bold clock · date · place · GPS (left) / LIVE · CAND (right)
-  2. Primary block — the #1 Real candidate in detail (left) + FOV frame (right)
-  3. Bottom block  — Sky-now (left) + the next candidates, or the tracked
-     aircraft when there are none, as a compact list (right)
+  1. Header line  — big clock · date · place · GPS (left) / LIVE · CAND (right)
+  2. Primary block — the nearest tracked plane in detail, ETA/SEP big + bold
+     (left) + a large FOV frame (right)
+  3. Bottom block  — Sky-now (left) + the next tracked planes (right)
+
+Planes come from the unified `lifecycle` list (the superset of everything the
+panel tracks; Real candidates float to the top), so the panel shows traffic
+even when nothing currently qualifies as a Real candidate.
 
 This module never touches hardware; epaper_client.py owns the panel. That keeps
 rendering testable on any machine via the client's --dry-run flag.
@@ -130,60 +135,90 @@ def _num(v):
         return None
 
 
-def _candidate_view(c, now_ms):
-    """Flatten one /api/state candidate into display-ready strings (metric)."""
-    ac = c.get("aircraftAtClosest") or {}
-    cs = (c.get("callsign") or c.get("flight") or c.get("icao") or "?").strip()
+def _route_str(route):
+    """Format a route dict ({origin,destination}) as 'AAA→BBB' (IATA or ICAO)."""
+    route = route or {}
+    o = route.get("origin") or {}
+    d = route.get("destination") or {}
+    a = o.get("iata") or o.get("icao")
+    b = d.get("iata") or d.get("icao")
+    if a and b:
+        return "%s→%s" % (a, b)
+    return a or b or "—"
 
-    at_ms = _num(c.get("closestApproachAtMs"))
-    eta = _fmt_eta((at_ms - now_ms)) if at_ms is not None else "--"
 
-    sep = _num(c.get("closestApproachSepDeg"))
-    sep_s = "%.2f°" % sep if sep is not None else "--"
+def _make_view(meta, cand, now_ms):
+    """Flatten one tracked plane into display-ready strings (all metric).
 
-    el = _num(c.get("closestApproachElDeg"))
-    if el is None:
-        el = _num(ac.get("elevationDeg"))
-    el_s = "el%d°" % round(el) if el is not None else "el--"
+    `meta` carries the identity/closest-approach summary (a lifecycle entry or
+    a raw candidate); `cand` carries the raw tracker geometry (aircraftAtClosest
+    az/el/range + the raw ADS-B aircraft for altitude/speed/track). The two can
+    be the same object (candidates[]) or entry + entry.candidate (lifecycle).
+    """
+    cand = cand or {}
+    ac = cand.get("aircraft") or {}            # raw ADS-B → alt / speed / track
+    azel = cand.get("aircraftAtClosest") or {}  # topocentric az / el / range
 
-    alt = _num(ac.get("altMmsl"))
-    alt_s = "%dm" % round(alt) if alt is not None else "--"
+    cs = (meta.get("callsign") or meta.get("flight") or meta.get("icao") or "?").strip()
+    body = meta.get("body") or cand.get("body") or ""
 
-    spd = _num(ac.get("groundSpeedMs"))
-    spd_s = "%dkm/h" % round(spd * 3.6) if spd is not None else "--"
+    at = _num(meta.get("closestApproachAtMs"))
+    if at is None:
+        at = _num(cand.get("closestApproachAtMs"))
+    sep = _num(meta.get("closestApproachSepDeg"))
+    if sep is None:
+        sep = _num(cand.get("closestApproachSepDeg"))
 
-    dist = _num(ac.get("rangeM"))
-    dist_s = "%dkm" % round(dist / 1000.0) if dist is not None else "--"
+    el = _num(azel.get("elevationDeg"))
+    az = _num(azel.get("azimuthDeg"))
+    dist = _num(azel.get("rangeM"))
+    alt = _num(ac.get("altMmsl"))         # altitude is on the ADS-B record…
+    spd = _num(ac.get("groundSpeedMs"))   # …not on the az/el closest-point dict
+    trk = _num(ac.get("trackDeg"))
 
-    body = c.get("body") or ""
     return {
-        "cs": cs[:7],
+        "cs": cs[:8],
         "body": body,
         "bsym": "S" if body == "Sun" else ("M" if body == "Moon" else "?"),
-        "eta": eta,
-        "sep": sep_s,
-        "el": el_s,
-        "alt": alt_s,
-        "spd": spd_s,
-        "dist": dist_s,
+        "eta": _fmt_eta(at - now_ms) if at is not None else "--",
+        "sep": "%.2f°" % sep if sep is not None else "--",
+        "sep_num": sep,
+        "el": "el%d°" % round(el) if el is not None else "el--",
+        "alt": "%dm" % round(alt) if alt is not None else "--",
+        "spd": "%dkm/h" % round(spd * 3.6) if spd is not None else "--",
+        "dist": "%dkm" % round(dist / 1000.0) if dist is not None else "--",
+        "brg": "%03d°" % round(trk) if trk is not None else "--",
+        "route": _route_str(meta.get("route") or cand.get("route")),
         # raw numbers kept for the FOV preview
-        "az": _num(c.get("closestApproachAzDeg")) or _num(ac.get("azimuthDeg")),
+        "az": az,
         "el_raw": el,
+        # candidate/imminent → a true "Real candidate"; radio/planned/stale → not
+        "is_real": meta.get("status") in ("candidate", "imminent"),
     }
 
 
-def _sorted_candidates(state, limit):
-    """The soonest `limit` real candidates, sorted by ETA, recent past dropped."""
+def _pool(state):
+    """Unified list of tracked-plane views, nearest (smallest sep) first.
+
+    The lifecycle list is the superset of everything the panel tracks — real
+    candidates are simply the entries whose status reached candidate/imminent —
+    so we build the panel's planes from it and never show an empty list while
+    aircraft are still being tracked. Real candidates float to the top, then
+    ties break by separation. Falls back to the raw candidates[] array only if
+    lifecycle is somehow absent.
+    """
     now_ms = _num(state.get("nowMs")) or (time.time() * 1000.0)
-    cands = state.get("candidates") or []
-    # Keep upcoming + just-passed (within 60 s) so a transit at the moment of
-    # closest approach doesn't blink out of the list.
-    def at(c):
-        v = _num(c.get("closestApproachAtMs"))
-        return v if v is not None else float("inf")
-    fresh = [c for c in cands if (at(c) - now_ms) > -60_000]
-    fresh.sort(key=at)
-    return [_candidate_view(c, now_ms) for c in fresh[:limit]], now_ms
+
+    lifecycle = state.get("lifecycle") or []
+    if lifecycle:
+        views = [_make_view(e, e.get("candidate"), now_ms) for e in lifecycle]
+    else:
+        views = [_make_view(c, c, now_ms) for c in (state.get("candidates") or [])]
+
+    INF = float("inf")
+    views.sort(key=lambda v: (0 if v["is_real"] else 1,
+                              v["sep_num"] if v["sep_num"] is not None else INF))
+    return views, now_ms
 
 
 # ── Drawing ─────────────────────────────────────────────────────────────────
@@ -195,13 +230,16 @@ def _right(draw, x_right, y, text, font):
 
 
 # Block boundaries (y) for the three-paragraph grid. The panel is 400×300.
-_HDR_RULE = 27         # divider under the header line
-_BLK2_RULE = 154       # divider between the candidate/FOV block and the bottom
+# Generous bands so the body text can be large and legible from across a room.
+_HDR_RULE = 28          # divider under the header line
+_BLK2_RULE = 172        # divider between the candidate/FOV block and the bottom
 
 
 def _header(draw, state):
-    """Paragraph 1 — one line: bold clock · date · place · GPS (left), and
-    LIVE / CAND counts (right). A single rule closes the band off."""
+    """Paragraph 1 — one line: big bold clock, then date · place · GPS in a
+    readable size gradient (most-glanceable biggest), with LIVE / CAND counts
+    right-aligned. Trailing pieces are dropped only if they would truly collide
+    with the counts; the static place/GPS are intentionally the smallest."""
     obs = state.get("observer") or {}
     live = state.get("aircraftCount")
     if live is None:
@@ -212,42 +250,33 @@ def _header(draw, state):
     clock = time.strftime("%H:%M:%S", lt)
     date = time.strftime("%d.%m.%y", lt)
 
-    # Bold clock anchors the line; everything else trails in a smaller face,
-    # vertically centred against the clock so the row reads as one unit.
-    fc = _font(18, bold=True)
-    draw.text((4, 1), clock, font=fc, fill=BLACK)
-    x_after_clock = 4 + draw.textlength(clock, font=fc) + 8
+    # Big bold clock anchors the line.
+    fc = _font(20, bold=True)
+    draw.text((4, 2), clock, font=fc, fill=BLACK)
+    x = 4 + draw.textlength(clock, font=fc) + 10
 
-    # Right cluster first, so we know how much room the trail has.
-    fs = _font(12)
+    # LIVE / CAND on the right, bold and readable.
+    fr = _font(14, bold=True)
     right = "LIVE %d  CAND %d" % (live, cand)
-    right_w = draw.textlength(right, font=fs)
-    right_x = WIDTH - 4 - right_w
-    draw.text((right_x, 7), right, font=fs, fill=BLACK)
+    right_x = WIDTH - 4 - draw.textlength(right, font=fr)
+    draw.text((right_x, 7), right, font=fr, fill=BLACK)
 
-    # Left trail: date · place · GPS. GPS is rendered without the ° sign here to
-    # save width on the single line. If the trail would collide with the right
-    # cluster, drop the place name, then shrink the font a step — so a long site
-    # name never pushes the counts off-panel.
+    # Trailing pieces in a descending size gradient. Date is the most useful so
+    # it is largest; the static location prints smaller and is dropped first if
+    # space runs out before the counts.
     name = (obs.get("name") or "").strip()
     gps = "%s %s" % (_fmt_lat_compact(obs.get("latitudeDeg")),
                      _fmt_lon_compact(obs.get("longitudeDeg")))
-    # Prefer keeping all three pieces (date · place · GPS), shrinking the font
-    # down to 10 px before sacrificing the place name — so the place survives on
-    # the Pi's narrow DejaVu mono even though it can't fit at the larger sizes.
-    avail = right_x - 6 - x_after_clock
-    for parts, size in (
-        ((date, name, gps), 12),
-        ((date, name, gps), 11),
-        ((date, name, gps), 10),
-        ((date, gps), 11),
-        ((date, gps), 10),
-    ):
+    limit_x = right_x - 8
+    for text, size in ((date, 14), (name, 13), (gps, 12)):
+        if not text:
+            continue
         f = _font(size)
-        trail = "  ".join(p for p in parts if p)
-        if draw.textlength(trail, font=f) <= avail:
+        w = draw.textlength(text, font=f)
+        if x + w > limit_x:
             break
-    draw.text((x_after_clock, 8), trail, font=f, fill=BLACK)
+        draw.text((x, 8), text, font=f, fill=BLACK)
+        x += w + 9
 
     draw.line((0, _HDR_RULE, WIDTH, _HDR_RULE), fill=BLACK, width=1)
 
@@ -272,103 +301,70 @@ def _draw_fov(draw, state, view, box):
         fov_w = 1.0  # ~1° default frame if optics missing
     px_per_deg = (bx1 - bx0) / fov_w
 
-    # Body disc, centred.
+    # Body disc, centred. Filled so it reads as a clear solid Sun/Moon on e-ink.
     disc_deg = fov.body_disc_deg(body, range_m) if range_m else 0.5
-    r = max(2.0, (disc_deg / 2.0) * px_per_deg)
+    r = max(3.0, (disc_deg / 2.0) * px_per_deg)
     draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=BLACK)
 
     # Candidate marker, offset from the disc centre, clamped into the frame.
     if body_az is not None and body_el is not None and view["az"] is not None and view["el_raw"] is not None:
         dx, dy = fov.offset_deg(body_az, body_el, view["az"], view["el_raw"])
         px, py = fov.deg_to_px(dx, dy, cx, cy, px_per_deg)
-        px = min(max(px, bx0 + 2), bx1 - 2)
-        py = min(max(py, by0 + 2), by1 - 2)
-        draw.line((px - 4, py, px + 4, py), fill=BLACK, width=1)
-        draw.line((px, py - 4, px, py + 4), fill=BLACK, width=1)
+        px = min(max(px, bx0 + 3), bx1 - 3)
+        py = min(max(py, by0 + 3), by1 - 3)
+        # A small filled plane marker — a bold plus, thicker than before.
+        draw.line((px - 6, py, px + 6, py), fill=BLACK, width=2)
+        draw.line((px, py - 6, px, py + 6), fill=BLACK, width=2)
 
 
-def _primary(draw, state, views):
-    """Paragraph 2 — nearest real candidate's detail (left) + FOV frame (right)."""
-    y0 = 32
-    draw.text((4, y0), "REAL CANDIDATE", font=_font(11), fill=BLACK)
+def _primary(draw, state, view):
+    """Paragraph 2 — the nearest plane in detail (left) + a large FOV frame
+    (right). ETA and SEP are the headline figures (big + bold); route, bearing,
+    distance, altitude and speed print small underneath."""
+    y0 = 33
+    bx0, by0, bx1, by1 = 240, 44, WIDTH - 6, _BLK2_RULE - 6
+    draw.text((bx0, y0), "FOV", font=_font(12), fill=BLACK)
 
-    # FOV frame on the right half.
-    bx0, by0, bx1, by1 = 250, y0 + 16, WIDTH - 6, _BLK2_RULE - 4
-    draw.text((bx0, y0), "FOV", font=_font(11), fill=BLACK)
-
-    if not views:
-        draw.text((10, y0 + 26), "— none right now —", font=_font(13), fill=BLACK)
+    if not view:
+        draw.text((4, y0), "NEAREST PLANE", font=_font(12), fill=BLACK)
+        draw.text((6, y0 + 24), "— none right now —", font=_font(16), fill=BLACK)
         _draw_fov(draw, state, None, (bx0, by0, bx1, by1))
         return
 
-    v = views[0]
-    draw.text((4, y0 + 16), "%s  %s" % (v["cs"], v["body"]), font=_font(15, bold=True), fill=BLACK)
-    f = _font(12)
-    rows = [
-        "ETA  %s" % v["eta"],
-        "sep  %s  %s" % (v["sep"], v["el"]),
-        "alt  %s" % v["alt"],
-        "spd  %s" % v["spd"],
-        "dist %s" % v["dist"],
-    ]
-    yy = y0 + 40
-    for r in rows:
-        draw.text((6, yy), r, font=f, fill=BLACK)
-        yy += 16
+    heading = "REAL CANDIDATE" if view["is_real"] else "NEAREST PLANE"
+    draw.text((4, y0), heading, font=_font(12), fill=BLACK)
 
-    _draw_fov(draw, state, v, (bx0, by0, bx1, by1))
+    # Callsign + body, bold.
+    draw.text((4, y0 + 14), "%s %s" % (view["cs"], view["body"]),
+              font=_font(19, bold=True), fill=BLACK)
 
+    # Headline figures: ETA and SEP, big and bold, with small labels.
+    fbig = _font(24, bold=True)
+    flbl = _font(13)
+    draw.text((4, 80), "ETA", font=flbl, fill=BLACK)
+    draw.text((52, 75), view["eta"], font=fbig, fill=BLACK)
+    draw.text((4, 110), "SEP", font=flbl, fill=BLACK)
+    draw.text((52, 105), view["sep"], font=fbig, fill=BLACK)
 
-def _list_section(state, primary_views):
-    """The right-hand list for paragraph 3.
+    # Secondary fields, small: route + bearing, then distance / altitude / speed.
+    fsm = _font(12)
+    draw.text((4, 140), "%s  brg %s" % (view["route"], view["brg"]), font=fsm, fill=BLACK)
+    draw.text((4, 155), "%s  %s  %s" % (view["dist"], view["alt"], view["spd"]), font=fsm, fill=BLACK)
 
-    With real candidates present, list the ones *after* the detailed #1 (so the
-    nearest never repeats); numbering continues from 2. With no candidates at
-    all, fall back to the tracked aircraft from `lifecycle` (the only
-    aircraft-keyed list in /api/state), numbered from 1.
-    Returns (views, heading, start_index).
-    """
-    if state.get("candidates"):
-        return primary_views[1:4], "NEXT CANDIDATES", 2
-    return _aircraft_views(state, 3), "AIRCRAFT", 1
+    _draw_fov(draw, state, view, (bx0, by0, bx1, by1))
 
 
-def _aircraft_views(state, limit):
-    """Flatten the soonest `limit` non-stale lifecycle entries to list rows."""
-    now_ms = _num(state.get("nowMs")) or (time.time() * 1000.0)
-
-    def at(e):
-        v = _num(e.get("closestApproachAtMs"))
-        return v if v is not None else float("inf")
-
-    entries = [e for e in (state.get("lifecycle") or [])
-               if e.get("status") != "stale" and (at(e) - now_ms) > -60_000]
-    entries.sort(key=at)
-
-    out = []
-    for e in entries[:limit]:
-        cs = (e.get("callsign") or e.get("flight") or e.get("icao") or "?").strip()
-        body = e.get("body") or ""
-        sep = _num(e.get("closestApproachSepDeg"))
-        out.append({
-            "cs": cs[:7],
-            "bsym": "S" if body == "Sun" else ("M" if body == "Moon" else "?"),
-            "eta": _fmt_eta(at(e) - now_ms) if at(e) != float("inf") else "--",
-            "sep": "%.2f°" % sep if sep is not None else "--",
-        })
-    return out
-
-
-def _sky_and_list(draw, state, views):
-    """Paragraph 3 — Sky-now (left) + next-candidates / aircraft list (right)."""
+def _sky_and_list(draw, state, pool):
+    """Paragraph 3 — Sky-now (left) + the next tracked planes (right), both in a
+    larger, legible face. The list shows the planes after the detailed #1."""
     draw.line((0, _BLK2_RULE, WIDTH, _BLK2_RULE), fill=BLACK, width=1)
     top = _BLK2_RULE + 6
-    f = _font(12)
 
     # ── Left: SKY NOW ──
-    draw.text((4, top), "SKY NOW", font=_font(11), fill=BLACK)
+    draw.text((4, top), "SKY NOW", font=_font(12), fill=BLACK)
+    fbody = _font(16)
     bodies = state.get("bodies") or {}
-    ly = top + 16
+    ly = top + 18
     for name, sym in (("Sun", "Sun "), ("Moon", "Moon")):
         b = bodies.get(name) or {}
         az = _num(b.get("azimuthDeg"))
@@ -378,42 +374,44 @@ def _sky_and_list(draw, state, views):
             txt = "%s --" % sym
         else:
             txt = "%s az%03d el%02d %s" % (sym, round(az), round(el), ok)
-        draw.text((4, ly), txt, font=f, fill=BLACK)
-        ly += 16
+        draw.text((4, ly), txt, font=fbody, fill=BLACK)
+        ly += 22
 
-    # ── Right: next candidates, or aircraft when there are none ──
-    rx = 206
-    list_views, heading, start = _list_section(state, views)
-    draw.text((rx, top), heading, font=_font(11), fill=BLACK)
-    ry = top + 16
-    if not list_views:
-        draw.text((rx + 4, ry), "— none —", font=f, fill=BLACK)
+    # ── Right: the next tracked planes (after the detailed #1) ──
+    rx = 200
+    draw.text((rx, top), "NEXT PLANES", font=_font(12), fill=BLACK)
+    rest = pool[1:4]
+    frow = _font(15)
+    ry = top + 18
+    if not rest:
+        draw.text((rx + 2, ry), "— none —", font=frow, fill=BLACK)
         return
-    for i, v in enumerate(list_views, start):
-        row = "%d %-7s%s %6s %6s" % (i, v["cs"], v["bsym"], v["eta"], v["sep"])
-        draw.text((rx, ry), row, font=f, fill=BLACK)
-        ry += 16
+    for i, v in enumerate(rest, 2):
+        # number · callsign · body · ETA · SEP — kept compact to fit the column.
+        row = "%d %-7s%s %5s %5s" % (i, v["cs"], v["bsym"], v["eta"], v["sep"])
+        draw.text((rx, ry), row, font=frow, fill=BLACK)
+        ry += 22
 
 
 def render_state(state, display_cfg=None):
     """Render a full /api/state snapshot to a 1-bit PIL Image.
 
-    Fixed three-paragraph grid — the layout is not configurable (it always shows
-    the #1 candidate in detail plus up to three more in the bottom list), so
-    `display_cfg` is accepted for call-site compatibility but unused:
-      1) header line   — clock · date · place · GPS / LIVE · CAND
-      2) primary block — nearest candidate detail + FOV frame
-      3) bottom block  — Sky-now + next-candidates (or aircraft) list
+    Fixed three-paragraph grid (not configurable — `display_cfg` is accepted for
+    call-site compatibility but unused):
+      1) header line   — big clock · date · place · GPS / LIVE · CAND
+      2) primary block — the nearest tracked plane in detail (ETA/SEP big) + FOV
+      3) bottom block  — Sky-now + the next tracked planes
+    The planes come from the unified `lifecycle` list (real candidates float to
+    the top), so the panel shows traffic even when nothing is a Real candidate.
     """
     img = Image.new("1", (WIDTH, HEIGHT), WHITE)
     draw = ImageDraw.Draw(img)
 
-    # #1 gets the detailed block; up to three more fill the bottom list.
-    views, _now = _sorted_candidates(state, 4)
+    pool, _now = _pool(state)
 
     _header(draw, state)
-    _primary(draw, state, views)
-    _sky_and_list(draw, state, views)
+    _primary(draw, state, pool[0] if pool else None)
+    _sky_and_list(draw, state, pool)
     return img
 
 

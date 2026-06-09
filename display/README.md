@@ -5,15 +5,20 @@ A standalone, browserless readout for the Sun-Moon Transit Predictor on a
 
 It shows, updating in near-real time, a fixed three-paragraph layout:
 
-1. **Header line** — bold **clock**, then **date · place · GPS** on the left,
-   and **LIVE** (live-tracking count) / **CAND** (real-candidate count) on the
-   right — all on one line.
-2. **Nearest candidate** — the #1 Real candidate in detail (callsign, body,
-   **ETA, angle, elevation, altitude, speed, distance**; all metric: m, km/h,
-   km) on the left, with a **FOV preview** against the body disc on the right.
-3. **Sky-now + list** — Sun/Moon azimuth/elevation/observable on the left, and
-   the **next candidates** (or, when there are none, the tracked **aircraft**)
-   as a compact list on the right.
+1. **Header line** — big bold **clock**, then **date · place · GPS** on the
+   left (descending size; place/GPS are static so they print smallest and the
+   GPS is dropped first if the line runs out of room), and **LIVE** / **CAND**
+   counts on the right.
+2. **Nearest plane** — the nearest tracked plane in detail: callsign + body,
+   with **ETA** and **SEP** as the big, bold headline figures and **route,
+   bearing, distance, altitude, speed** small underneath, plus a large **FOV
+   preview** against the body disc on the right. (Labelled *REAL CANDIDATE*
+   when it has reached candidate/imminent, else *NEAREST PLANE*.)
+3. **Sky-now + planes** — Sun/Moon azimuth/elevation/observable on the left,
+   and the **next tracked planes** as a compact list on the right.
+
+The planes come from the unified live-tracking list, so the panel keeps showing
+nearby traffic even when nothing currently qualifies as a Real candidate.
 
 The client carries no business logic — it polls the predictor's HTTP API and
 renders. So the data can come from **the same Pi** or a **remote Pi on the LAN**

@@ -422,3 +422,35 @@ User ask (2026-06-09): restructure the 4.2" panel into three paragraphs.
 ## Results
 Layout is a fixed 3×(left/right) grid; no list-length/compact toggles. Pi
 hardware refresh (real panel cadences) still to be eyeballed by the user.
+
+---
+
+# E-paper readability + plane list fixes (v0.31.3)
+
+User feedback (2026-06-09): fonts too small except the clock; no planes shown
+when there are no Real candidates; ETA/SEP/FOV should be big+bold, route/
+bearing/dist/alt/speed small; frontend still showed 0.31.1.
+
+- [x] Big/bold body text: clock 20-bold header; primary block — callsign 19-bold,
+      ETA + SEP 24-bold headline figures with small labels; route/bearing on one
+      small line + dist/alt/speed on another; large FOV frame; SKY NOW + list at
+      15–16 px.
+- [x] Header size gradient (date 14 · place 13 · GPS 12) right of the big clock;
+      static place/GPS smallest, GPS dropped first if the line is full.
+- [x] PLANES now come from the unified `lifecycle` list (candidates ⊂ lifecycle),
+      sorted real-first then by separation → the panel always shows tracked
+      traffic, even with zero Real candidates. #1 → detail block, #2–4 → list.
+- [x] Data-source fix: altitude/speed read from `candidate.aircraft`
+      (aircraftAtClosest only carries az/el/range → was always "--"); added
+      route (`route.origin/destination.iata`) and bearing (`aircraft.trackDeg`).
+- [x] Verified both states (with/without Real candidates) via the dry-run
+      fixture harness (now using the real /api/state shape); 205 node tests pass.
+
+NOTE — the "frontend shows 0.31.1" is NOT a code bug: PKG_VERSION is read from
+package.json at server start, so the running Node service (stp.service) must be
+restarted after a pull — restarting only stp-display is not enough.
+
+## Results
+Readable from across the room; planes always visible. Open: header can't fit
+big clock + date + place + GPS + counts on one line — GPS is dropped on the
+narrow Pi font. If the user wants GPS guaranteed, a two-line header is the fix.
