@@ -466,3 +466,21 @@ User chose a two-line header (2026-06-09) so the full GPS stays legible:
       re-tuned ETA/SEP/detail y-positions; NEXT PLANES font 14 + tightened row
       so sep never clips on wider fonts.
 - [x] Verified both states via the fixture harness.
+
+---
+
+# E-paper readability pass 2 (v0.31.5)
+
+User feedback (2026-06-09):
+- [x] SKY NOW: drop azimuth, show elevation only, larger, "el <space> NN°".
+- [x] Aircraft block widened (SKY NOW is narrow now) + larger font; cryptic
+      "S T-7:50" replaced with labelled "SEP <val>  ETA <val>" (tiny caption,
+      double-size payload — new `_lv()` helper applies this everywhere).
+- [x] ETA loses the "T" prefix (now always carries an ETA label) → "-7:50".
+- [x] Header: removed LIVE/CAND. The count moved down next to the AIRCRAFT
+      heading as "(cand/total)" e.g. (3/88) = 3 candidates of 88 live planes.
+- [x] Verified both states via the fixture harness; 205 node tests pass.
+
+Further ideas offered to the user (pending pick): SEP trend arrow
+(approaching/leaving), transit-imminent emphasis (SEP < disc → banner/invert),
+disc-crossing time for #1, Sun/Moon glyphs instead of S/M, stale-data warning.

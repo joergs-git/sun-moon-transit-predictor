@@ -5,16 +5,17 @@ A standalone, browserless readout for the Sun-Moon Transit Predictor on a
 
 It shows, updating in near-real time, a fixed three-paragraph layout:
 
-1. **Header** (two lines) — line 1: big bold **clock** + **date** (left) and
-   **LIVE** / **CAND** counts (right); line 2: **place** + **GPS**. Two lines so
-   everything stays at a readable size (the full GPS always fits).
+1. **Header** (two lines) — line 1: big bold **clock** + **date**; line 2:
+   **place** + **GPS**. Two lines so everything stays readable (the full GPS
+   always fits). The live counts moved down to the aircraft heading.
 2. **Nearest plane** — the nearest tracked plane in detail: callsign + body,
    with **ETA** and **SEP** as the big, bold headline figures and **route,
    bearing, distance, altitude, speed** small underneath, plus a large **FOV
    preview** against the body disc on the right. (Labelled *REAL CANDIDATE*
    when it has reached candidate/imminent, else *NEAREST PLANE*.)
-3. **Sky-now + planes** — Sun/Moon azimuth/elevation/observable on the left,
-   and the **next tracked planes** as a compact list on the right.
+3. **Sky-now + aircraft** — Sun/Moon **elevation** (large, left) and the tracked
+   **aircraft** on the right, each with big **SEP** and **ETA** payloads. The
+   aircraft heading shows a **(candidates / total live)** counter.
 
 The planes come from the unified live-tracking list, so the panel keeps showing
 nearby traffic even when nothing currently qualifies as a Real candidate.

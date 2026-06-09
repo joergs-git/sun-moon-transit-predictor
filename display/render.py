@@ -1,15 +1,16 @@
 """
 Pillow renderer for the 4.2" e-paper panel (400×300, 1-bit black/white).
-v0.31.4
+v0.31.5
 
 render_state() turns an /api/state snapshot into a PIL Image. The layout is
-deliberately monospace so columns self-align, and fixed into three paragraphs
-with large, legible body text (ETA / SEP are the headline figures):
+deliberately monospace so columns self-align, and fixed into three paragraphs.
+Throughout, captions stay tiny and the payload (ETA / SEP / elevation) is large:
 
-  1. Header (two lines) — clock · date / LIVE · CAND, then place · GPS
+  1. Header (two lines) — clock · date, then place · GPS
   2. Primary block — the nearest tracked plane in detail, ETA/SEP big + bold
      (left) + a large FOV frame (right)
-  3. Bottom block  — Sky-now (left) + the next tracked planes (right)
+  3. Bottom block  — Sky-now elevation (left, narrow) + the tracked aircraft
+     (right, wide) with a (candidates / total live) counter
 
 Planes come from the unified `lifecycle` list (the superset of everything the
 panel tracks; Real candidates float to the top), so the panel shows traffic
@@ -115,11 +116,15 @@ def _fmt_lon_compact(v):
 
 
 def _fmt_eta(ms_to_closest):
-    """T-minus string from milliseconds-to-closest-approach (T+ if past)."""
+    """Countdown to closest approach: '-3:21' (in the future) or '+5s' (past).
+
+    No 'T' prefix — every place that shows this now carries an explicit ETA
+    label, so the bare sign + time reads as a plain countdown.
+    """
     if ms_to_closest is None:
         return "--"
     s = int(round(ms_to_closest / 1000.0))
-    sign = "T-" if s >= 0 else "T+"
+    sign = "-" if s >= 0 else "+"
     s = abs(s)
     core = "%ds" % s if s < 60 else "%d:%02d" % (s // 60, s % 60)
     return sign + core
@@ -229,6 +234,19 @@ def _right(draw, x_right, y, text, font):
     draw.text((x_right - w, y), text, font=font, fill=BLACK)
 
 
+def _lv(draw, x, y, label, value, vsize, lsize=10, gap=3, pad=12):
+    """Draw a small `label` followed by a big bold `value` (the principle: tiny
+    captions, double-size payload). `y` is the top of the value; the label is
+    bottom-aligned to it. Returns the x just past the value (+ padding)."""
+    fl = _font(lsize)
+    fv = _font(vsize, bold=True)
+    if label:
+        draw.text((x, y + (vsize - lsize)), label, font=fl, fill=BLACK)
+        x += draw.textlength(label, font=fl) + gap
+    draw.text((x, y), value, font=fv, fill=BLACK)
+    return x + draw.textlength(value, font=fv) + pad
+
+
 # Block boundaries (y) for the three-paragraph grid. The panel is 400×300.
 # Generous bands so the body text can be large and legible from across a room.
 # The header is two lines (clock/date/counts, then place/GPS) so everything
@@ -238,26 +256,22 @@ _BLK2_RULE = 178        # divider between the candidate/FOV block and the bottom
 
 
 def _header(draw, state):
-    """Paragraph 1 — two lines, all at a readable size:
-      line 1: big bold clock · date (left)        · LIVE / CAND (right)
-      line 2: place · GPS (left)
+    """Paragraph 1 — two lines, all at a readable size (the LIVE/CAND counts
+    moved down to the AIRCRAFT line):
+      line 1: big bold clock · date
+      line 2: place · GPS
     """
     obs = state.get("observer") or {}
-    live = state.get("aircraftCount")
-    if live is None:
-        live = len(state.get("lifecycle") or [])
-    cand = len(state.get("candidates") or [])
 
     lt = time.localtime()
     clock = time.strftime("%H:%M:%S", lt)
     date = time.strftime("%d.%m.%y", lt)
 
-    # ── Line 1: big bold clock, date, and the LIVE / CAND counts on the right ──
+    # ── Line 1: big bold clock + date ──
     fc = _font(20, bold=True)
     draw.text((4, 1), clock, font=fc, fill=BLACK)
     x = 4 + draw.textlength(clock, font=fc) + 12
     draw.text((x, 8), date, font=_font(14), fill=BLACK)
-    _right(draw, WIDTH - 4, 8, "LIVE %d  CAND %d" % (live, cand), _font(14, bold=True))
 
     # ── Line 2: place + full GPS (with ° — there's room now) ──
     name = (obs.get("name") or "").strip()
@@ -342,43 +356,55 @@ def _primary(draw, state, view):
 
 
 def _sky_and_list(draw, state, pool):
-    """Paragraph 3 — Sky-now (left) + the next tracked planes (right), both in a
-    larger, legible face. The list shows the planes after the detailed #1."""
+    """Paragraph 3 — Sky-now elevation (left, narrow) + the tracked aircraft
+    (right, wide). Captions stay tiny; the payload (elevation, SEP, ETA) is
+    large. The aircraft heading carries a (candidates / total live) counter."""
     draw.line((0, _BLK2_RULE, WIDTH, _BLK2_RULE), fill=BLACK, width=1)
-    top = _BLK2_RULE + 6
+    top = _BLK2_RULE + 5
 
-    # ── Left: SKY NOW ──
-    draw.text((4, top), "SKY NOW", font=_font(12), fill=BLACK)
-    fbody = _font(16)
+    # ── Left: SKY NOW — elevation only, large ──
+    draw.text((4, top), "SKY NOW", font=_font(11), fill=BLACK)
     bodies = state.get("bodies") or {}
-    ly = top + 18
-    for name, sym in (("Sun", "Sun "), ("Moon", "Moon")):
+    sy = top + 16
+    for name in ("Sun", "Moon"):
         b = bodies.get(name) or {}
-        az = _num(b.get("azimuthDeg"))
         el = _num(b.get("elevationDeg"))
         ok = "+" if b.get("observable") else "-"
-        if az is None or el is None:
-            txt = "%s --" % sym
-        else:
-            txt = "%s az%03d el%02d %s" % (sym, round(az), round(el), ok)
-        draw.text((4, ly), txt, font=fbody, fill=BLACK)
-        ly += 22
+        x = 4
+        draw.text((x, sy + 4), name, font=_font(14), fill=BLACK)
+        x += draw.textlength(name, font=_font(14)) + 7
+        val = "%d°" % round(el) if el is not None else "--"
+        x = _lv(draw, x, sy, "el", val, 18, 11, gap=5, pad=8)
+        draw.text((x, sy + 4), ok, font=_font(13), fill=BLACK)
+        sy += 26
 
-    # ── Right: the next tracked planes (after the detailed #1) ──
-    rx = 196
-    draw.text((rx, top), "NEXT PLANES", font=_font(12), fill=BLACK)
+    # ── Right: AIRCRAFT (cand / total live), wide + large ──
+    live = state.get("aircraftCount")
+    if live is None:
+        live = len(state.get("lifecycle") or [])
+    cand = len(state.get("candidates") or [])
+
+    rx = 140
+    fhd = _font(11)
+    draw.text((rx, top), "AIRCRAFT", font=fhd, fill=BLACK)
+    hx = rx + draw.textlength("AIRCRAFT ", font=fhd)
+    draw.text((hx, top - 1), "(%d/%d)" % (cand, live), font=_font(13, bold=True), fill=BLACK)
+
     rest = pool[1:4]
-    frow = _font(14)
-    ry = top + 18
+    ry = top + 16
     if not rest:
-        draw.text((rx + 2, ry), "— none —", font=frow, fill=BLACK)
+        draw.text((rx + 2, ry + 4), "— none nearby —", font=_font(14), fill=BLACK)
         return
-    for i, v in enumerate(rest, 2):
-        # number · callsign · body · ETA · SEP — kept compact to fit the column
-        # at this size on both the Pi's DejaVu mono and wider preview fonts.
-        row = "%d %-7s%s %6s %5s" % (i, v["cs"], v["bsym"], v["eta"], v["sep"])
-        draw.text((rx, ry), row, font=frow, fill=BLACK)
-        ry += 22
+    for v in rest:
+        x = rx
+        # callsign + body marker, then big labelled SEP / ETA payloads.
+        draw.text((x, ry + 2), v["cs"], font=_font(14), fill=BLACK)
+        x += draw.textlength(v["cs"], font=_font(14)) + 4
+        draw.text((x, ry + 4), v["bsym"], font=_font(12), fill=BLACK)
+        x += draw.textlength(v["bsym"], font=_font(12)) + 8
+        x = _lv(draw, x, ry, "SEP", v["sep"], 16, 10, gap=3, pad=9)
+        x = _lv(draw, x, ry, "ETA", v["eta"], 16, 10, gap=3, pad=8)
+        ry += 24
 
 
 def render_state(state, display_cfg=None):
