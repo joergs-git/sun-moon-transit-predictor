@@ -783,13 +783,14 @@ monitor needed:
 A fixed three-paragraph layout with large, legible body text:
 
 - **Header** (two lines) — big bold **clock** + **date** on line 1; **place** +
-  **GPS** on line 2
+  **GPS** on line 2; a compact **Sky-now** (Sun/Moon elevation) in the top-right
 - **Nearest plane** — the nearest tracked plane in detail, with **ETA** and
   **SEP** as the big bold headline figures and route/bearing/distance/altitude/
   speed small underneath, plus a large **FOV preview** on the right
-- **Sky-now + aircraft** — Sun/Moon **elevation** (left) and the tracked
-  **aircraft** with big **SEP** / **ETA** per plane (right); the aircraft
-  heading carries a **(candidates / total live)** counter
+- **Recent + aircraft** — **RECENT** learned transits on the left (flight, how
+  long ago, achieved **SEP**) and the live tracked **aircraft** with big
+  **SEP** / **ETA** per plane (right); the heading carries a **(candidates /
+  total live)** counter
 
 Planes come from the unified live-tracking list, so the panel keeps showing
 nearby traffic even when nothing is a Real candidate.

@@ -765,6 +765,9 @@ export async function runService({
       bandDeg: config.tracker.looseThresholdDeg, nearDeg: 0.5, veryNearDeg: 0.2,
       sinceMs: state_sinceMs,
     },
+    // Last few real (candidate/imminent) transits that were recorded — a compact
+    // "recently learned" strip for the e-paper. Refreshed on a slow cadence.
+    recentTransits: [],
   };
 
   // Lifecycle map persists across ticks — that's what gives the UI the
@@ -774,6 +777,7 @@ export async function runService({
   /** @type {Map<string, import('./lifecycle.js').LifecycleEntry>} */
   let lifecycleMap = new Map();
   let lastLifecycleSnapshotMs = 0;
+  let lastRecentTransitsMs = 0;   // slow-cadence cache for state.recentTransits
 
   if (config.lifecyclePersist?.path) {
     try {
@@ -2067,6 +2071,30 @@ export async function runService({
     }
 
     state.lifecycle = lifecycleArray(lifecycleMap, nowMs);
+
+    // Recent real transits (confirmed/predicted, aircraft only) for the e-paper
+    // "recently learned" strip. Slow cadence — history changes a few times/hour.
+    if (store && nowMs - lastRecentTransitsMs >= 20_000) {
+      lastRecentTransitsMs = nowMs;
+      try {
+        state.recentTransits = store
+          .consolidatedHistory({ limit: 50, windowMs: 14 * 24 * 3600_000, nowMs })
+          .filter((e) => (e.outcome === 'confirmed' || e.outcome === 'predicted') && e.icao !== 'ISS')
+          .sort((a, b) => (b.closest_at_ms ?? 0) - (a.closest_at_ms ?? 0))
+          .slice(0, 4)
+          .map((e) => ({
+            callsign: e.callsign ?? e.flight ?? null,
+            icao: e.icao ?? null,
+            body: e.body ?? null,
+            sepDeg: e.closest_sep_deg ?? null,
+            closestAtMs: e.closest_at_ms ?? null,
+            outcome: e.outcome,
+            confirmed: Boolean(e.sepConfirmed),
+          }));
+      } catch (e) {
+        logger.warn?.('recentTransits compute failed:', e?.message ?? e);
+      }
+    }
 
     // Persist lifecycle on a slow cadence so a restart can repopulate the UI.
     // Cheap (< 5 KB), async, and we never block the tick on the write.

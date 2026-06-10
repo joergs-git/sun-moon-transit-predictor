@@ -613,3 +613,18 @@ User (2026-06-10):
       and the web inputs.
 - [x] Verified: scheduler harness (pinned cfg), test_sequence reflects defaults,
       205 node tests, JSON valid, fieldsets balanced.
+
+---
+
+# E-paper: Sky-now to header corner + RECENT learned-transits strip (v0.31.12)
+
+User (2026-06-10):
+- [x] Moved Sky-now (Sun/Moon elevation) to a compact top-right corner of the
+      two-line header (small glyph + elevation per body).
+- [x] Bottom-left (freed by Sky-now) now shows a RECENT strip: the last 3–4 real
+      (candidate/imminent) transits that were recorded — flight, how-long-ago,
+      achieved SEP, with a Sun/Moon glyph.
+- [x] Server: /api/state.recentTransits — last 4 confirmed/predicted episodes
+      (ISS excluded) from store.consolidatedHistory(), computed on a 20 s cache.
+- [x] render.py: _fmt_ago() helper; header + bottom rewritten. Verified both
+      states via the fixture harness; 205 node tests pass.

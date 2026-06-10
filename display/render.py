@@ -1,16 +1,17 @@
 """
 Pillow renderer for the 4.2" e-paper panel (400×300, 1-bit black/white).
-v0.31.10
+v0.31.12
 
 render_state() turns an /api/state snapshot into a PIL Image. The layout is
 deliberately monospace so columns self-align, and fixed into three paragraphs.
 Throughout, captions stay tiny and the payload (ETA / SEP / elevation) is large:
 
-  1. Header (two lines) — clock · date, then place · GPS
+  1. Header (two lines) — clock · date, then place · GPS; a compact Sky-now
+     (Sun/Moon elevation) sits in the top-right corner
   2. Primary block — the nearest tracked plane in detail, ETA/SEP big + bold
      (left) + a large FOV frame (right)
-  3. Bottom block  — Sky-now elevation (left, narrow) + the tracked aircraft
-     (right, wide) with a (candidates / total live) counter
+  3. Bottom block  — RECENT learned transits (left: flight · how-long-ago · SEP)
+     + the live tracked aircraft (right) with a (candidates / total live) counter
 
 Affordances: a SEP trend arrow (▼ closing in / ▲ receding), an inverted
 ">> TRANSIT NOW <<" banner when a plane's separation drops inside the body
@@ -135,6 +136,20 @@ def _fmt_eta(ms_to_closest):
     s = abs(s)
     core = "%ds" % s if s < 60 else "%d:%02d" % (s // 60, s % 60)
     return sign + core
+
+
+def _fmt_ago(ms_since):
+    """'How long ago' from milliseconds-since: 'now' / '5m' / '2h' / '3d'."""
+    if ms_since is None:
+        return "--"
+    s = int(ms_since / 1000.0)
+    if s < 60:
+        return "now"
+    if s < 3600:
+        return "%dm" % (s // 60)
+    if s < 86400:
+        return "%dh" % (s // 3600)
+    return "%dd" % (s // 86400)
 
 
 def _num(v):
@@ -322,16 +337,26 @@ _BLK2_RULE = 178        # divider between the candidate/FOV block and the bottom
 
 
 def _header(draw, state):
-    """Paragraph 1 — two lines, all at a readable size (the LIVE/CAND counts
-    moved down to the AIRCRAFT line):
-      line 1: big bold clock · date
-      line 2: place · GPS
+    """Paragraph 1 — two lines plus a compact Sky-now in the top-right corner:
+      line 1: big bold clock · date          ☀ <el> (right)
+      line 2: place · GPS                     ☾ <el> (right)
     """
     obs = state.get("observer") or {}
 
     lt = time.localtime()
     clock = time.strftime("%H:%M:%S", lt)
     date = time.strftime("%d.%m.%y", lt)
+
+    # ── Sky-now in the top-right corner: Sun on line 1, Moon on line 2, small ──
+    bodies = state.get("bodies") or {}
+    fsky = _font(13)
+    for name, y in (("Sun", 3), ("Moon", 27)):
+        b = bodies.get(name) or {}
+        el = _num(b.get("elevationDeg"))
+        txt = "%d°" % round(el) if el is not None else "--"
+        w = draw.textlength(txt, font=fsky)
+        draw.text((WIDTH - 4 - w, y + 2), txt, font=fsky, fill=BLACK)
+        _draw_body(draw, WIDTH - 4 - w - 13, y + 9, 6, name)
 
     # ── Line 1: big bold clock + date ──
     fc = _font(20, bold=True)
@@ -444,25 +469,33 @@ def _primary(draw, state, view):
 
 
 def _sky_and_list(draw, state, pool):
-    """Paragraph 3 — Sky-now elevation (left, narrow) + the tracked aircraft
-    (right, wide). Captions stay tiny; the payload (elevation, SEP, ETA) is
-    large. The aircraft heading carries a (candidates / total live) counter."""
+    """Paragraph 3 — RECENT learned transits (left, narrow) + the live tracked
+    aircraft (right, wide). The aircraft heading carries a (candidates / total
+    live) counter. Sky-now elevation now lives in the header's top-right."""
     draw.line((0, _BLK2_RULE, WIDTH, _BLK2_RULE), fill=BLACK, width=1)
     top = _BLK2_RULE + 5
 
-    # ── Left: SKY NOW — Sun/Moon glyph + elevation, large ──
-    draw.text((4, top), "SKY NOW", font=_font(11), fill=BLACK)
-    bodies = state.get("bodies") or {}
-    sy = top + 18
-    for name in ("Sun", "Moon"):
-        b = bodies.get(name) or {}
-        el = _num(b.get("elevationDeg"))
-        ok = "+" if b.get("observable") else "-"
-        _draw_body(draw, 11, sy + 9, 7, name)
-        val = "%d°" % round(el) if el is not None else "--"
-        x = _lv(draw, 24, sy, "el", val, 18, 11, gap=5, pad=8)
-        draw.text((x, sy + 4), ok, font=_font(14), fill=BLACK)
-        sy += 28
+    # ── Left: RECENT — the last few real (candidate/imminent) transits that were
+    # recorded, with how long ago + the achieved separation. ──
+    draw.text((4, top), "RECENT", font=_font(11), fill=BLACK)
+    recents = state.get("recentTransits") or []
+    now_ms = _num(state.get("nowMs")) or (time.time() * 1000.0)
+    ry = top + 17
+    if not recents:
+        draw.text((4, ry), "— none yet —", font=_font(12), fill=BLACK)
+    else:
+        f = _font(11)
+        for r in recents[:4]:
+            cs = (r.get("callsign") or r.get("icao") or "?")[:6]
+            body = r.get("body") or ""
+            sep = _num(r.get("sepDeg"))
+            at = _num(r.get("closestAtMs"))
+            ago = _fmt_ago(now_ms - at) if at is not None else "--"
+            sep_s = "%.2f°" % sep if sep is not None else "--"
+            _draw_body(draw, 8, ry + 6, 4, body)
+            row = "%-6s %3s %s" % (cs, ago, sep_s)
+            draw.text((16, ry), row, font=f, fill=BLACK)
+            ry += 18
 
     # ── Right: AIRCRAFT (cand / total live), wide + large ──
     live = state.get("aircraftCount")
