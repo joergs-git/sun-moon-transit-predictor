@@ -227,18 +227,24 @@ export const DEFAULT_CONFIG = {
     // only once it is within `newEtaMaxS` seconds of closest approach, so distant
     // candidates many minutes out don't beep.
     newEtaMaxS: 120,
-    newBeeps: 3, newOnMs: 100, newGapMs: 50,
+    // Per signal: `FadePct` (0–100) ramps the beep's volume down over its tail
+    // so it ends soft instead of clicking — less penetrant; `Echo` adds that many
+    // quieter, sparser repeats after the group (an echo tail). 0/0 = a plain beep.
+    newBeeps: 3, newOnMs: 100, newGapMs: 50, newFadePct: 0, newEcho: 0,
     // "Candidate lost / closest approach passed" signal (default: 1 × 1.5 s),
-    // sounded at its own lower frequency so it's instantly distinguishable.
-    lostBeeps: 1, lostOnMs: 1500, lostFreqHz: 1000,
+    // sounded at its own lower frequency so it's instantly distinguishable, with
+    // a gentle fade tail.
+    lostBeeps: 1, lostOnMs: 1500, lostFreqHz: 1000, lostFadePct: 30, lostEcho: 0,
     // Accelerating pre-transit countdown — three phases by time-to-closest.
-    // Each: window start (s before transit), interval (s), beep count, length (ms).
-    phase1BeforeS: 40, phase1EveryS: 10, phase1Beeps: 1, phase1OnMs: 500,
-    phase2BeforeS: 15, phase2EveryS: 5,  phase2Beeps: 1, phase2OnMs: 500,
-    phase3BeforeS: 8,  phase3EveryS: 2,  phase3Beeps: 2, phase3OnMs: 50,
+    // Each: window start (s before transit), interval (s), beep count, length (ms),
+    // fade %, echo taps.
+    phase1BeforeS: 40, phase1EveryS: 10, phase1Beeps: 1, phase1OnMs: 500, phase1FadePct: 0, phase1Echo: 0,
+    phase2BeforeS: 15, phase2EveryS: 5,  phase2Beeps: 1, phase2OnMs: 500, phase2FadePct: 0, phase2Echo: 0,
+    phase3BeforeS: 8,  phase3EveryS: 2,  phase3Beeps: 2, phase3OnMs: 50,  phase3FadePct: 0, phase3Echo: 0,
     // "Entry" final blast — fires once, starting `entryBeforeS` before the plane
-    // actually enters the disc, to signal the transit itself (default 1 × 5 s).
-    entryBeforeS: 2, entryBeeps: 1, entryOnMs: 5000,
+    // actually enters the disc, to signal the transit itself (default 1 × 5 s),
+    // with a soft fade-out so the long tone doesn't end abruptly.
+    entryBeforeS: 2, entryBeeps: 1, entryOnMs: 5000, entryFadePct: 40, entryEcho: 0,
   },
   // ISS transits (offline SGP4 from a TLE file). Inactive until a TLE is
   // present at tlePath — fetch it opt-in with scripts/refresh-tle.js. The
@@ -1145,11 +1151,17 @@ export async function runService({
         sepThresholdDeg: [0.01, 5, false],
         newEtaMaxS: [1, 3600, true],
         newBeeps: [0, 10, true], newOnMs: [50, 5000, true], newGapMs: [0, 5000, true],
+        newFadePct: [0, 100, true], newEcho: [0, 8, true],
         lostBeeps: [0, 10, true], lostOnMs: [50, 10000, true], lostFreqHz: [50, 20000, true],
+        lostFadePct: [0, 100, true], lostEcho: [0, 8, true],
         phase1BeforeS: [1, 600, true], phase1EveryS: [1, 600, true], phase1Beeps: [0, 10, true], phase1OnMs: [50, 5000, true],
+        phase1FadePct: [0, 100, true], phase1Echo: [0, 8, true],
         phase2BeforeS: [1, 600, true], phase2EveryS: [1, 600, true], phase2Beeps: [0, 10, true], phase2OnMs: [50, 5000, true],
+        phase2FadePct: [0, 100, true], phase2Echo: [0, 8, true],
         phase3BeforeS: [1, 600, true], phase3EveryS: [1, 600, true], phase3Beeps: [0, 10, true], phase3OnMs: [50, 5000, true],
+        phase3FadePct: [0, 100, true], phase3Echo: [0, 8, true],
         entryBeforeS: [0, 60, true], entryBeeps: [0, 10, true], entryOnMs: [100, 15000, true],
+        entryFadePct: [0, 100, true], entryEcho: [0, 8, true],
       };
       for (const [k, [lo, hi, isInt]] of Object.entries(NUM)) {
         if (k in d) {

@@ -1,6 +1,6 @@
 """
 Pillow renderer for the 4.2" e-paper panel (400×300, 1-bit black/white).
-v0.31.8
+v0.31.10
 
 render_state() turns an /api/state snapshot into a PIL Image. The layout is
 deliberately monospace so columns self-align, and fixed into three paragraphs.
@@ -18,8 +18,10 @@ disc, Sun/Moon glyphs instead of letters, and a "! STALE Ns" marker when a
 contact has lost its live ADS-B fix.
 
 Planes come from the unified `lifecycle` list (the superset of everything the
-panel tracks; Real candidates float to the top), so the panel shows traffic
-even when nothing currently qualifies as a Real candidate.
+panel tracks), ordered by IMMINENCE — the soonest upcoming closest-approach is
+featured first, not the one with the smallest predicted separation. So the panel
+shows traffic even when nothing currently qualifies as a Real candidate, and a
+far-future prediction never buries an imminent pass.
 
 This module never touches hardware; epaper_client.py owns the panel. That keeps
 rendering testable on any machine via the client's --dry-run flag.
@@ -243,8 +245,19 @@ def _pool(state):
     # keep dominating the detail block / list. Approaching + just-passed stay.
     views = [v for v in views if v["_eta_s"] is None or v["_eta_s"] >= -60.0]
 
+    # Sort by IMMINENCE, not by separation: the soonest upcoming closest-approach
+    # is featured first, then the just-passed (most recent), then no-ETA. A plane
+    # 22 s from its closest is more useful than one 11 min out that merely has a
+    # smaller predicted separation. Separation only breaks near-equal ETAs.
     INF = float("inf")
-    views.sort(key=lambda v: (0 if v["is_real"] else 1,
+
+    def _imminence(v):
+        eta = v["_eta_s"]
+        if eta is None:
+            return (2, 0.0)
+        return (0, eta) if eta >= 0 else (1, -eta)
+
+    views.sort(key=lambda v: (_imminence(v),
                               v["sep_num"] if v["sep_num"] is not None else INF))
     return views, now_ms
 

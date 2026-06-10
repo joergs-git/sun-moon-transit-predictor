@@ -265,9 +265,9 @@ describe('maxEntries cap', () => {
 });
 
 describe('lifecycleArray', () => {
-  it('sorts newest-first by firstSeenMs', () => {
-    // Two ticks: the first seeds 'first', the second adds 'second'. The
-    // second one is newer, so it should land at the top of the array.
+  it('sorts by imminence (soonest closest-approach first)', () => {
+    // Two ticks: 'first' is 200 s out, 'second' is 25 s out. The sooner one
+    // ('second') lands at the top — position is by imminence, not detection age.
     const after1 = updateLifecycle({
       prev: new Map(),
       nowMs: NOW,
@@ -292,7 +292,7 @@ describe('lifecycleArray', () => {
     expect(arr[1].status).toBe('candidate');
   });
 
-  it('breaks firstSeenMs ties by ETA', () => {
+  it('orders by ETA — nearer before farther', () => {
     const map = updateLifecycle({
       prev: new Map(),
       nowMs: NOW,

@@ -574,3 +574,26 @@ User asks (2026-06-10):
 
 Open question from user: an "echo"/fade-out tail proportional to beep length —
 feasible via a PWM duty ramp (volume envelope). Offered; not yet built.
+
+---
+
+# Imminence ordering + fade/echo + settings move (v0.31.10)
+
+User feedback (2026-06-10), incl. a display photo showing ETA -11:55 featured
+over an imminent ETA -22s:
+- [x] FIX display logic: order by IMMINENCE (soonest upcoming closest-approach
+      first), not by smallest predicted separation. Fixed at the source —
+      lifecycle.js lifecycleArray() now sorts by ETA (so the WEB "Real
+      candidates" table is fixed too) — and render.py _pool mirrors it. Verified
+      against the photo scenario (EXS2WA -22s now featured, AAB11J -11:55 last).
+- [x] Fade-out + echo per signal type: buzzer.py `_signal()` builds a (on,off,
+      duty) envelope — fadePct ramps the volume down over the beep tail (softer,
+      less penetrant), echoTaps add quieter sparser repeats. Per-signal config
+      (FadePct/Echo ×6) in server defaults+validation, config.py, example, web.
+      Default gentle fade on lost (30%) + entry (40%).
+- [x] Moved the Audio/buzzer settings fieldset to the LEFT column, under
+      Pushover.
+- [x] Verified: scheduler harness (envelope + echo), e-paper render, 205 node
+      tests (lifecycle ordering tests updated to imminence).
+
+Open: user asked about echo — implemented. (#3/#6 still dropped.)

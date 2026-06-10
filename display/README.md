@@ -220,9 +220,17 @@ then a frequency sweep — note the loudest and set it as **Drive frequency**.
 
 A **Test signals** button in Settings plays the whole sequence once on the Pi
 (enable audio + Save first). The lost signal has its own frequency so it's
-instantly recognisable. Tune beep length, count, intervals, the new-candidate
-window and per-phase windows in Settings. Note: the countdown can't beep faster
-than the panel's **Quick refresh** (shared poll tick) — keep it ~2 s.
+instantly recognisable. Each signal can **fade out** (a % of the beep whose
+volume ramps down — softer, less penetrant) and add **echo** taps; both are
+per-signal in Settings (defaults: a gentle fade on the lost + entry tones).
+Tune beep length, count, frequency, intervals, the new-candidate window and the
+per-phase windows too. Note: the countdown can't beep faster than the panel's
+**Quick refresh** (shared poll tick) — keep it ~2 s.
+
+> **Panel/web ordering.** Both the panel's featured plane and the web "Real
+> candidates" list are ordered by **imminence** — the soonest upcoming
+> closest-approach first — so a far-future prediction with a small predicted
+> separation never sits above an imminent pass.
 
 ### Notes
 

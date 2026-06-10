@@ -1,6 +1,6 @@
 """
 Bootstrap + live configuration for the e-paper display client.
-v0.31.9
+v0.31.10
 
 Design: there is exactly ONE local/bootstrap value — STP_CONFIG_URL — which
 tells the client where to read its live `display` config block from. Everything
@@ -53,12 +53,12 @@ BUZZER_DEFAULTS = {
     "freqHz": 2000,
     "sepThresholdDeg": 0.3,
     "newEtaMaxS": 120,
-    "newBeeps": 3, "newOnMs": 100, "newGapMs": 50,
-    "lostBeeps": 1, "lostOnMs": 1500, "lostFreqHz": 1000,
-    "phase1BeforeS": 40, "phase1EveryS": 10, "phase1Beeps": 1, "phase1OnMs": 500,
-    "phase2BeforeS": 15, "phase2EveryS": 5, "phase2Beeps": 1, "phase2OnMs": 500,
-    "phase3BeforeS": 8, "phase3EveryS": 2, "phase3Beeps": 2, "phase3OnMs": 50,
-    "entryBeforeS": 2, "entryBeeps": 1, "entryOnMs": 5000,
+    "newBeeps": 3, "newOnMs": 100, "newGapMs": 50, "newFadePct": 0, "newEcho": 0,
+    "lostBeeps": 1, "lostOnMs": 1500, "lostFreqHz": 1000, "lostFadePct": 30, "lostEcho": 0,
+    "phase1BeforeS": 40, "phase1EveryS": 10, "phase1Beeps": 1, "phase1OnMs": 500, "phase1FadePct": 0, "phase1Echo": 0,
+    "phase2BeforeS": 15, "phase2EveryS": 5, "phase2Beeps": 1, "phase2OnMs": 500, "phase2FadePct": 0, "phase2Echo": 0,
+    "phase3BeforeS": 8, "phase3EveryS": 2, "phase3Beeps": 2, "phase3OnMs": 50, "phase3FadePct": 0, "phase3Echo": 0,
+    "entryBeforeS": 2, "entryBeeps": 1, "entryOnMs": 5000, "entryFadePct": 40, "entryEcho": 0,
 }
 
 

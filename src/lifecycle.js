@@ -357,22 +357,32 @@ function bestStatus(a, b) {
 /**
  * Convert a lifecycle map to a sorted array suitable for /api/state.
  *
- * Order: newest first (highest `firstSeenMs`). A freshly-detected aircraft
- * always appears at the top of the table; the next time another one
- * appears, the previous head row slides down by one. Within identical
- * firstSeenMs values the secondary sort is ETA, which keeps the order
- * stable across ticks. Status urgency is conveyed by the per-row colour
- * coding and the status pill, not by position.
+ * Order: by imminence — the soonest upcoming closest-approach first, then the
+ * just-passed ones (most recent first), then anything without a sane ETA. This
+ * puts the transit that is about to happen at the top of both the web table and
+ * the e-paper panel, instead of a far-future prediction that merely has the
+ * smallest predicted separation. Separation breaks near-equal ETAs so the order
+ * stays stable across ticks. Status urgency is still conveyed by the per-row
+ * colour coding and the status pill.
  *
  * @param {Map<string, LifecycleEntry>} map
  * @param {number} nowMs
  */
 export function lifecycleArray(map, nowMs) {
+  // Sort value: upcoming entries by ETA ascending (soonest first); past entries
+  // sorted after all upcoming ones, most-recent first; missing ETA last.
+  const sortVal = (e) => {
+    const eta = (e.closestApproachAtMs ?? NaN) - nowMs;
+    if (!Number.isFinite(eta)) return Number.MAX_SAFE_INTEGER;
+    return eta >= 0 ? eta : (1e12 - eta);   // -eta = age; recent → smaller value
+  };
   return Array.from(map.values())
     .map(e => ({ ...e, etaMs: e.closestApproachAtMs - nowMs }))
     .sort((a, b) => {
-      const seenDelta = (b.firstSeenMs ?? 0) - (a.firstSeenMs ?? 0);
-      if (seenDelta !== 0) return seenDelta;
-      return (a.closestApproachAtMs - nowMs) - (b.closestApproachAtMs - nowMs);
+      const d = sortVal(a) - sortVal(b);
+      if (d !== 0) return d;
+      const sa = a.closestApproachSepDeg ?? Infinity;
+      const sb = b.closestApproachSepDeg ?? Infinity;
+      return sa - sb;
     });
 }

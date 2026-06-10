@@ -1,6 +1,6 @@
 """
 Piezo buzzer driver + transit beep scheduler (Pi-side).
-v0.31.9
+v0.31.10
 
 Wiring: a piezo buzzer between a GPIO pin (default GPIO13) and GND.
 
@@ -101,12 +101,12 @@ class Buzzer:
                 except Exception:
                     pass
 
-    def _tone_on(self, freq):
+    def _tone_on(self, freq, duty):
         with self._lock:
             if self._dev is not None:
                 try:
                     self._dev.frequency = freq
-                    self._dev.value = self.duty
+                    self._dev.value = duty       # duty = loudness (fade ramps this)
                 except Exception:
                     pass
 
@@ -120,19 +120,25 @@ class Buzzer:
 
     def _run(self):
         # Sleeps happen OUTSIDE the lock so reconfigure() never blocks on a tone.
+        # A pattern step is (on_s, off_s[, duty]); duty defaults to self.duty so
+        # fade-out (duty ramped down) and echo taps (quieter repeats) just work.
         while not self._stop.is_set():
             try:
                 pattern, freq = self._q.get(timeout=0.2)
             except queue.Empty:
                 continue
             use_freq = float(freq) if freq else self.freq   # per-pattern override
-            for on_s, off_s in pattern:
+            for step in pattern:
                 if self._stop.is_set():
                     break
-                if on_s > 0:
-                    self._tone_on(use_freq)
+                on_s, off_s = step[0], step[1]
+                duty = step[2] if (len(step) > 2 and step[2] is not None) else self.duty
+                if on_s > 0 and duty > 0:
+                    self._tone_on(use_freq, duty)
                     time.sleep(on_s)
                     self._tone_off()
+                elif on_s > 0:
+                    time.sleep(on_s)             # silent step (duty 0) — just wait
                 if off_s > 0:
                     time.sleep(off_s)
 
@@ -162,12 +168,44 @@ class Buzzer:
                     pass
 
 
-def _pattern(beeps, on_ms, gap_ms):
-    """Build a (on_s, off_s)×beeps pattern from millisecond config values."""
+def _signal(beeps, on_ms, gap_ms, fade_pct=0, echo_taps=0, full_duty=0.5):
+    """Build a pattern (list of (on_s, off_s, duty) steps) for one signal.
+
+    * `fade_pct` (0–100): the last fraction of each beep ramps the volume (PWM
+      duty) down to ~0, so the beep ends soft instead of clicking off — a gentle
+      decay that sounds far less penetrant.
+    * `echo_taps`: short, ever-quieter repeats after the group with growing gaps,
+      like an echo tail.
+    With fade_pct=0 and echo_taps=0 this is just `beeps` flat tones — identical to
+    a plain beep pattern.
+    """
     on_s = max(0.0, float(on_ms) / 1000.0)
     gap_s = max(0.0, float(gap_ms) / 1000.0)
-    n = max(0, int(beeps))
-    return [(on_s, gap_s)] * n
+    fade = min(1.0, max(0.0, float(fade_pct) / 100.0))
+    n_beeps = max(0, int(beeps))
+
+    out = []
+    for _ in range(n_beeps):
+        if fade <= 0.0 or on_s <= 0.0:
+            out.append((on_s, gap_s, full_duty))
+            continue
+        body = on_s * (1.0 - fade)
+        tail = on_s * fade
+        if body > 0:
+            out.append((body, 0.0, full_duty))
+        steps = max(1, min(20, int(tail / 0.02)))    # ~20 ms fade steps, capped
+        for i in range(steps):
+            d = full_duty * (1.0 - (i + 1) / steps)  # ramp full_duty → 0
+            last = (i == steps - 1)
+            out.append((tail / steps, gap_s if last else 0.0, max(0.0, d)))
+
+    # Echo tail: quieter, sparser taps after the last beep.
+    d, gap, tap = full_duty * 0.5, 0.12, 0.05
+    for _ in range(max(0, int(echo_taps))):
+        out.append((tap, gap, d))
+        d *= 0.55
+        gap *= 1.5
+    return out
 
 
 def test_sequence(cfg):
@@ -177,19 +215,21 @@ def test_sequence(cfg):
     trailing gap so the groups are distinguishable."""
     cfg = cfg or {}
 
-    def seg(beeps, on_ms, gap_ms, sep_s, freq=None):
-        p = _pattern(beeps, on_ms, gap_ms)
-        if p and sep_s:
-            p[-1] = (p[-1][0], sep_s)          # widen the gap after the group
+    def seg(beeps, on_ms, gap_ms, fade, echo, sep_s, freq=None):
+        p = _signal(beeps, on_ms, gap_ms, fade, echo)
+        if p and sep_s:                        # widen the gap after the group
+            last = p[-1]
+            p[-1] = (last[0], sep_s, last[2] if len(last) > 2 else None)
         return (p, freq)
 
+    g = cfg.get
     segs = [
-        seg(cfg.get("newBeeps", 3),    cfg.get("newOnMs", 100),    cfg.get("newGapMs", 50), 0.7),
-        seg(cfg.get("lostBeeps", 1),   cfg.get("lostOnMs", 1500),  200, 0.7, freq=cfg.get("lostFreqHz")),
-        seg(cfg.get("phase1Beeps", 1), cfg.get("phase1OnMs", 500), 200, 0.5),
-        seg(cfg.get("phase2Beeps", 1), cfg.get("phase2OnMs", 500), 200, 0.5),
-        seg(cfg.get("phase3Beeps", 2), cfg.get("phase3OnMs", 50),  200, 0.5),
-        seg(cfg.get("entryBeeps", 1),  cfg.get("entryOnMs", 5000), 200, 0.0),
+        seg(g("newBeeps", 3),  g("newOnMs", 100),  g("newGapMs", 50), g("newFadePct", 0),  g("newEcho", 0),  0.7),
+        seg(g("lostBeeps", 1), g("lostOnMs", 1500), 200, g("lostFadePct", 0), g("lostEcho", 0), 0.7, freq=g("lostFreqHz")),
+        seg(g("phase1Beeps", 1), g("phase1OnMs", 500), 200, g("phase1FadePct", 0), g("phase1Echo", 0), 0.5),
+        seg(g("phase2Beeps", 1), g("phase2OnMs", 500), 200, g("phase2FadePct", 0), g("phase2Echo", 0), 0.5),
+        seg(g("phase3Beeps", 2), g("phase3OnMs", 50),  200, g("phase3FadePct", 0), g("phase3Echo", 0), 0.5),
+        seg(g("entryBeeps", 1),  g("entryOnMs", 5000), 200, g("entryFadePct", 0), g("entryEcho", 0), 0.0),
     ]
     return [s for s in segs if s[0]]           # drop empty groups
 
@@ -224,13 +264,14 @@ class BeepScheduler:
     @staticmethod
     def _phase_for(eta_s, phases_asc):
         """Pick the tightest countdown window that still contains `eta_s`.
-        `phases_asc` is sorted ascending by window start. Returns
-        (everyS, beeps, onMs) or None when out of all windows / already past."""
+        `phases_asc` is sorted ascending by window start. Returns the phase tuple
+        without its leading window-start (everyS, beeps, onMs, fade, echo), or
+        None when out of all windows / already past."""
         if eta_s < 0:
             return None
-        for before_s, every_s, beeps, on_ms in phases_asc:
-            if eta_s <= before_s:
-                return (every_s, beeps, on_ms)
+        for phase in phases_asc:
+            if eta_s <= phase[0]:
+                return phase[1:]
         return None
 
     def update(self, state, mono):
@@ -254,15 +295,17 @@ class BeepScheduler:
             eta = (at - now_ms) / 1000.0
             if 0 <= eta <= new_eta_max:
                 if self._primed:
-                    self.buz.play(_pattern(cfg.get("newBeeps", 3),
-                                           cfg.get("newOnMs", 100), cfg.get("newGapMs", 50)))
+                    self.buz.play(_signal(cfg.get("newBeeps", 3),
+                                          cfg.get("newOnMs", 100), cfg.get("newGapMs", 50),
+                                          cfg.get("newFadePct", 0), cfg.get("newEcho", 0)))
                 self.announced.add(k)
 
         # "Lost / past" signal: a previously-announced candidate vanished.
         # Played at its own frequency (default 1000 Hz) so it sounds distinct.
         lost = self.prev_keys - cur_keys
         if self._primed and any(k in self.announced for k in lost):
-            self.buz.play(_pattern(cfg.get("lostBeeps", 1), cfg.get("lostOnMs", 1500), 200),
+            self.buz.play(_signal(cfg.get("lostBeeps", 1), cfg.get("lostOnMs", 1500), 200,
+                                  cfg.get("lostFadePct", 0), cfg.get("lostEcho", 0)),
                           freq=cfg.get("lostFreqHz"))
         for k in lost:
             self.last_beep.pop(k, None)
@@ -274,11 +317,14 @@ class BeepScheduler:
         sep_th = cfg.get("sepThresholdDeg", 0.3)
         phases = sorted([
             (cfg.get("phase1BeforeS", 40), cfg.get("phase1EveryS", 10),
-             cfg.get("phase1Beeps", 1), cfg.get("phase1OnMs", 500)),
+             cfg.get("phase1Beeps", 1), cfg.get("phase1OnMs", 500),
+             cfg.get("phase1FadePct", 0), cfg.get("phase1Echo", 0)),
             (cfg.get("phase2BeforeS", 15), cfg.get("phase2EveryS", 5),
-             cfg.get("phase2Beeps", 1), cfg.get("phase2OnMs", 500)),
+             cfg.get("phase2Beeps", 1), cfg.get("phase2OnMs", 500),
+             cfg.get("phase2FadePct", 0), cfg.get("phase2Echo", 0)),
             (cfg.get("phase3BeforeS", 8), cfg.get("phase3EveryS", 2),
-             cfg.get("phase3Beeps", 1), cfg.get("phase3OnMs", 500)),
+             cfg.get("phase3Beeps", 1), cfg.get("phase3OnMs", 500),
+             cfg.get("phase3FadePct", 0), cfg.get("phase3Echo", 0)),
         ])  # ascending by window start
         entry_before = cfg.get("entryBeforeS", 2)
         for k, c in cur.items():
@@ -298,7 +344,8 @@ class BeepScheduler:
             if k in self.entry_fired:
                 continue  # entry already signalled → no more beeps for this contact
             if -entry_before <= eta_entry <= entry_before:
-                self.buz.play(_pattern(cfg.get("entryBeeps", 1), cfg.get("entryOnMs", 5000), 200))
+                self.buz.play(_signal(cfg.get("entryBeeps", 1), cfg.get("entryOnMs", 5000), 200,
+                                      cfg.get("entryFadePct", 0), cfg.get("entryEcho", 0)))
                 self.entry_fired.add(k)
                 continue
 
@@ -307,10 +354,10 @@ class BeepScheduler:
             ph = self._phase_for(eta_s, phases)
             if ph is None:
                 continue
-            every_s, beeps, on_ms = ph
+            every_s, beeps, on_ms, fade, echo = ph
             # The poll loop bounds resolution: we can't beep faster than a tick.
             if mono - self.last_beep.get(k, -1e9) >= every_s - 0.25:
-                self.buz.play(_pattern(beeps, on_ms, 200))
+                self.buz.play(_signal(beeps, on_ms, 200, fade, echo))
                 self.last_beep[k] = mono
 
         self.prev_keys = cur_keys
