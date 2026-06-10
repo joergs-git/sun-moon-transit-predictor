@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 E-paper display client for the Sun-Moon Transit Predictor.
-v0.31.8
+v0.31.9
 
 A standalone, decoupled HTTP poller + renderer for a Waveshare 4.2" B/W SPI
 panel (400×300) on a Raspberry Pi 5. It carries NO business logic: it reads its
@@ -129,6 +129,7 @@ def run(panel, once=False):
     display_cfg = dict(config.DEFAULTS)
     buzzer_cfg = dict(config.BUZZER_DEFAULTS)
     last_cfg_fetch = 0.0
+    last_test_id = None      # last seen buzzer testId, to detect the Settings test
 
     buz = buzzer.Buzzer()
     sched = buzzer.BeepScheduler(buz, buzzer_cfg)
@@ -144,6 +145,14 @@ def run(panel, once=False):
             # Claim the GPIO only while enabled; release it when disabled.
             buz.apply(bool(buzzer_cfg.get("enabled")), buzzer_cfg["gpioPin"], buzzer_cfg["freqHz"])
             sched.cfg = buzzer_cfg
+            # Settings "Test signals": play the whole sequence once when the id
+            # changes (skipped on the first fetch so it doesn't fire at startup).
+            test_id = buzzer_cfg.get("testId")
+            if last_test_id is not None and test_id != last_test_id:
+                for pattern, freq in buzzer.test_sequence(buzzer_cfg):
+                    buz.play(pattern, freq=freq)
+                _log("buzzer test sequence requested (testId %s)" % test_id)
+            last_test_id = test_id
             last_cfg_fetch = now
 
         display_on = bool(display_cfg.get("enabled"))

@@ -96,7 +96,7 @@ export function createHttpServer(opts) {
   const {
     port, host = '0.0.0.0', getState, store, webRoot,
     getConfig, updateConfig, requestUpdate, requestAcInfo, requestRoute,
-    requestSharpcapTest,
+    requestSharpcapTest, requestBuzzerTest,
   } = opts;
 
   const server = createServer(async (req, res) => {
@@ -273,6 +273,20 @@ export function createHttpServer(opts) {
             reason: result?.reason ?? null,
             error: result?.error ? String(result.error?.message ?? result.error) : null,
           });
+        } catch (e) {
+          return jsonResponse(res, 500, { error: String(e?.message ?? e) });
+        }
+      }
+      if (url.pathname === '/api/buzzer-test' && req.method === 'POST') {
+        // Settings "Test signals" → nudge the Pi-side buzzer to play every
+        // configured signal once. Requires a JSON body (same anti-drive-by
+        // guard as /api/sharpcap-test). The actual beeps happen on the display
+        // Pi within a few seconds, when its config poll sees the new test id.
+        if (!requestBuzzerTest) return jsonResponse(res, 404, { error: 'buzzer test api disabled' });
+        try { await readJsonBody(req); }
+        catch (e) { return jsonResponse(res, 400, { error: `bad json: ${e.message}` }); }
+        try {
+          return jsonResponse(res, 200, requestBuzzerTest());
         } catch (e) {
           return jsonResponse(res, 500, { error: String(e?.message ?? e) });
         }

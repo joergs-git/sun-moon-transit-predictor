@@ -1991,6 +1991,35 @@ if (sharpcapTestBtn) {
     sharpcapTestMsg, sharpcapTestBtn,
   ));
 }
+
+// Buzzer "Test signals": nudge the Pi to play every configured signal once.
+// The beeps happen on the display Pi when its config poll sees the new id, so
+// the response only confirms the nudge was accepted.
+const buzzerTestBtn = $('#buzzer-test-btn');
+const buzzerTestMsg = $('#buzzer-test-msg');
+if (buzzerTestBtn) {
+  buzzerTestBtn.addEventListener('click', async () => {
+    buzzerTestBtn.disabled = true;
+    if (buzzerTestMsg) { buzzerTestMsg.textContent = 'sending…'; buzzerTestMsg.className = 'field-hint'; }
+    try {
+      const res = await fetch('/api/buzzer-test', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      const body = await res.json();
+      if (!res.ok || !body.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      if (buzzerTestMsg) {
+        buzzerTestMsg.textContent = body.enabled
+          ? 'Sent — the Pi will play the sequence shortly.'
+          : 'Sent, but audio is disabled — enable it to hear the test.';
+        buzzerTestMsg.className = body.enabled ? 'field-hint ok' : 'field-hint err';
+      }
+    } catch (e) {
+      if (buzzerTestMsg) { buzzerTestMsg.textContent = `failed: ${e.message ?? e}`; buzzerTestMsg.className = 'field-hint err'; }
+    } finally {
+      setTimeout(() => { buzzerTestBtn.disabled = false; }, 1200);
+    }
+  });
+}
 // History pager: "Newer" steps towards today (page 0), "Older" further back.
 $('#hp-newer').addEventListener('click', () => gotoHistoryPage(-1));
 $('#hp-older').addEventListener('click', () => gotoHistoryPage(+1));

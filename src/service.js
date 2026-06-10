@@ -223,15 +223,19 @@ export const DEFAULT_CONFIG = {
     freqHz: 2000,          // PWM drive frequency — works for passive AND active
                            // buzzers; tune for the loudest tone on your element
     sepThresholdDeg: 0.3,  // countdown beeps only for candidates closer than this
-    // "New real candidate appeared" signal (default: 3 × 0.5 s).
-    newBeeps: 3, newOnMs: 500, newGapMs: 250,
-    // "Candidate lost / closest approach passed" signal (default: 1 × 1.5 s).
-    lostBeeps: 1, lostOnMs: 1500,
+    // "New real candidate" signal (default: 3 × 0.5 s) — fires once per candidate
+    // only once it is within `newEtaMaxS` seconds of closest approach, so distant
+    // candidates many minutes out don't beep.
+    newEtaMaxS: 120,
+    newBeeps: 3, newOnMs: 100, newGapMs: 50,
+    // "Candidate lost / closest approach passed" signal (default: 1 × 1.5 s),
+    // sounded at its own lower frequency so it's instantly distinguishable.
+    lostBeeps: 1, lostOnMs: 1500, lostFreqHz: 1000,
     // Accelerating pre-transit countdown — three phases by time-to-closest.
     // Each: window start (s before transit), interval (s), beep count, length (ms).
     phase1BeforeS: 40, phase1EveryS: 10, phase1Beeps: 1, phase1OnMs: 500,
     phase2BeforeS: 15, phase2EveryS: 5,  phase2Beeps: 1, phase2OnMs: 500,
-    phase3BeforeS: 8,  phase3EveryS: 2,  phase3Beeps: 1, phase3OnMs: 500,
+    phase3BeforeS: 8,  phase3EveryS: 2,  phase3Beeps: 2, phase3OnMs: 50,
     // "Entry" final blast — fires once, starting `entryBeforeS` before the plane
     // actually enters the disc, to signal the transit itself (default 1 × 5 s).
     entryBeforeS: 2, entryBeeps: 1, entryOnMs: 5000,
@@ -851,6 +855,12 @@ export async function runService({
     }
   }
 
+  // Transient "play the test sequence" signal for the buzzer. The Settings
+  // "Test signals" button bumps this via /api/buzzer-test; the Python client
+  // sees the changed id on its next /api/config poll and plays every configured
+  // signal once. Not persisted — it's a one-shot nudge, not config.
+  let buzzerTestId = 0;
+
   // Build a sanitised view of the runtime config for the Settings panel.
   // Secrets (Pushover token / user key) are masked so they never leak through
   // /api/config even if the page is loaded over a non-TLS link from a third
@@ -914,7 +924,8 @@ export async function runService({
       // this block from /api/config and configures itself live from the UI.
       display: { ...config.display },
       // Piezo buzzer alert config (no secrets) — read by display/buzzer.py.
-      buzzer: { ...config.buzzer },
+      // `testId` is the transient one-shot test nudge (not saved config).
+      buzzer: { ...config.buzzer, testId: buzzerTestId },
       _servicePath: configPaths.service ?? null,
     };
   }
@@ -1132,8 +1143,9 @@ export async function runService({
       const NUM = {
         gpioPin: [0, 27, true], freqHz: [50, 20000, true],
         sepThresholdDeg: [0.01, 5, false],
+        newEtaMaxS: [1, 3600, true],
         newBeeps: [0, 10, true], newOnMs: [50, 5000, true], newGapMs: [0, 5000, true],
-        lostBeeps: [0, 10, true], lostOnMs: [50, 10000, true],
+        lostBeeps: [0, 10, true], lostOnMs: [50, 10000, true], lostFreqHz: [50, 20000, true],
         phase1BeforeS: [1, 600, true], phase1EveryS: [1, 600, true], phase1Beeps: [0, 10, true], phase1OnMs: [50, 5000, true],
         phase2BeforeS: [1, 600, true], phase2EveryS: [1, 600, true], phase2Beeps: [0, 10, true], phase2OnMs: [50, 5000, true],
         phase3BeforeS: [1, 600, true], phase3EveryS: [1, 600, true], phase3Beeps: [0, 10, true], phase3OnMs: [50, 5000, true],
@@ -1413,6 +1425,12 @@ export async function runService({
       const first = sharpcapTargets.find((t) => t.trigger.config.host);
       if (!first) return { sent: false, reason: 'no-host', error: new Error('no sharpcap host configured') };
       return first.trigger.testTrigger(durationS);
+    },
+    // Settings "Test signals" → bump the test id; the Pi-side buzzer client
+    // picks it up on its next config poll and plays every configured signal.
+    requestBuzzerTest: () => {
+      buzzerTestId += 1;
+      return { ok: true, testId: buzzerTestId, enabled: Boolean(config.buzzer.enabled) };
     },
   });
   if (httpServer) await httpServer.start();

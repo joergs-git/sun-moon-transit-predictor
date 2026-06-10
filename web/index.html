@@ -706,13 +706,17 @@
             <small class="field-hint">Countdown beeps fire only for a candidate whose separation is below this. <b>Default 0.3°.</b></small></label>
 
           <div class="field-group-label">New candidate signal</div>
+          <label>Only within (s before)<input name="buzzer.newEtaMaxS" type="number" step="1" min="1" max="3600" placeholder="120">
+            <small class="field-hint">Beep only once a new candidate is within this many seconds of closest approach — distant ones (minutes out) stay quiet. <b>Default 120 (2 min).</b></small></label>
           <label>Beeps<input name="buzzer.newBeeps" type="number" step="1" min="0" max="10" placeholder="3"></label>
-          <label>Beep length (ms)<input name="buzzer.newOnMs" type="number" step="10" min="50" max="5000" placeholder="500"></label>
-          <label>Gap (ms)<input name="buzzer.newGapMs" type="number" step="10" min="0" max="5000" placeholder="250"></label>
+          <label>Beep length (ms)<input name="buzzer.newOnMs" type="number" step="10" min="50" max="5000" placeholder="100"></label>
+          <label>Gap (ms)<input name="buzzer.newGapMs" type="number" step="10" min="0" max="5000" placeholder="50"></label>
 
           <div class="field-group-label">Lost / past signal</div>
           <label>Beeps<input name="buzzer.lostBeeps" type="number" step="1" min="0" max="10" placeholder="1"></label>
           <label>Beep length (ms)<input name="buzzer.lostOnMs" type="number" step="10" min="50" max="10000" placeholder="1500"></label>
+          <label>Frequency (Hz)<input name="buzzer.lostFreqHz" type="number" step="1" min="50" max="20000" placeholder="1000">
+            <small class="field-hint">The lost signal sounds at its own frequency so it's instantly distinct from the others. <b>Default 1000.</b></small></label>
 
           <div class="field-group-label">Entry blast (the transit itself)</div>
           <label>From (s before entry)<input name="buzzer.entryBeforeS" type="number" step="1" min="0" max="60" placeholder="2"></label>
@@ -735,9 +739,15 @@
           <div class="field-group-label">Countdown phase 3 (near)</div>
           <label>From (s before)<input name="buzzer.phase3BeforeS" type="number" step="1" min="1" max="600" placeholder="8"></label>
           <label>Every (s)<input name="buzzer.phase3EveryS" type="number" step="1" min="1" max="600" placeholder="2"></label>
-          <label>Beeps<input name="buzzer.phase3Beeps" type="number" step="1" min="0" max="10" placeholder="1"></label>
-          <label>Beep length (ms)<input name="buzzer.phase3OnMs" type="number" step="10" min="50" max="5000" placeholder="500"></label>
+          <label>Beeps<input name="buzzer.phase3Beeps" type="number" step="1" min="0" max="10" placeholder="2"></label>
+          <label>Beep length (ms)<input name="buzzer.phase3OnMs" type="number" step="10" min="50" max="5000" placeholder="50"></label>
           <small class="field-hint">Phases must descend: <b>From</b> phase1 &gt; phase2 &gt; phase3. As the transit nears, beeps speed up (default 10 s → 5 s → 2 s).</small>
+
+          <div class="field-group-label">Test</div>
+          <div class="checkbox-row">
+            <button type="button" id="buzzer-test-btn" class="btn">▶ Test signals</button>
+            <small id="buzzer-test-msg" class="field-hint">Plays every configured signal once on the Pi. <b>Save first</b> and make sure audio is <b>Enabled</b>; beeps follow within a few seconds.</small>
+          </div>
         </fieldset>
 
         </div><!-- /.settings-col (right) -->

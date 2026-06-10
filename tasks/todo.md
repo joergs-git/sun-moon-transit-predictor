@@ -551,3 +551,26 @@ revert the real-candidate view to default 1 min after end of transit.
 - [x] #3 (disc-crossing time) and #6 (rise/set countdown) dropped per user.
 - [x] Verified: scheduler harness (incl. entry one-shot + countdown takeover),
       e-paper revert preview, 205 node tests, python syntax.
+
+---
+
+# Buzzer: test button, new-candidate ETA gate, lost frequency, tuned defaults (v0.31.9)
+
+User asks (2026-06-10):
+- [x] Settings "Test signals" button → plays every configured signal once on the
+      Pi. Channel: POST /api/buzzer-test bumps a transient `buzzer.testId` in
+      publicConfig; the client sees the changed id on its config poll and plays
+      buzzer.test_sequence() (segments, so the lost signal keeps its own freq).
+- [x] New-candidate signal only fires once a candidate is within `newEtaMaxS`
+      (default 120 s) of closest approach — `announced` set, decoupled from the
+      raw appearance; lost beep only for previously-announced candidates.
+- [x] Lost signal at its own frequency (`lostFreqHz`, default 1000 Hz) —
+      Buzzer.play() gained a per-pattern freq override.
+- [x] Default tweaks: freq 2000 (done earlier); new 3×100 ms gap 50; phase3
+      2×50 ms; entry 5 s (earlier). All in server defaults + validation,
+      config.py, example.json, web fields.
+- [x] Verified: scheduler harness (ETA gate, lost@1000Hz, entry, countdown),
+      test_sequence segments, client dry-run, 205 node tests, node --check.
+
+Open question from user: an "echo"/fade-out tail proportional to beep length —
+feasible via a PWM duty ramp (volume envelope). Offered; not yet built.

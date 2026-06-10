@@ -1,6 +1,6 @@
 """
 Piezo buzzer driver + transit beep scheduler (Pi-side).
-v0.31.8
+v0.31.9
 
 Wiring: a piezo buzzer between a GPIO pin (default GPIO13) and GND.
 
@@ -101,11 +101,11 @@ class Buzzer:
                 except Exception:
                     pass
 
-    def _tone_on(self):
+    def _tone_on(self, freq):
         with self._lock:
             if self._dev is not None:
                 try:
-                    self._dev.frequency = self.freq
+                    self._dev.frequency = freq
                     self._dev.value = self.duty
                 except Exception:
                     pass
@@ -122,25 +122,28 @@ class Buzzer:
         # Sleeps happen OUTSIDE the lock so reconfigure() never blocks on a tone.
         while not self._stop.is_set():
             try:
-                pattern = self._q.get(timeout=0.2)
+                pattern, freq = self._q.get(timeout=0.2)
             except queue.Empty:
                 continue
+            use_freq = float(freq) if freq else self.freq   # per-pattern override
             for on_s, off_s in pattern:
                 if self._stop.is_set():
                     break
                 if on_s > 0:
-                    self._tone_on()
+                    self._tone_on(use_freq)
                     time.sleep(on_s)
                     self._tone_off()
                 if off_s > 0:
                     time.sleep(off_s)
 
     # ── api ──
-    def play(self, pattern):
-        """Enqueue a pattern = list of (on_s, off_s). Dropped if disabled/full."""
+    def play(self, pattern, freq=None):
+        """Enqueue a pattern = list of (on_s, off_s), optionally at a specific
+        frequency (Hz) instead of the default drive frequency. Dropped if the
+        buzzer is disabled or the queue is full."""
         if self.ok and pattern:
             try:
-                self._q.put_nowait(list(pattern))
+                self._q.put_nowait((list(pattern), freq))
             except queue.Full:
                 pass
 
@@ -167,6 +170,30 @@ def _pattern(beeps, on_ms, gap_ms):
     return [(on_s, gap_s)] * n
 
 
+def test_sequence(cfg):
+    """Every configured signal once, in order, as a list of (pattern, freq)
+    segments — for the Settings 'Test signals' button. Separate segments so the
+    lost signal can sound at its own frequency. Each is enqueued in turn, with a
+    trailing gap so the groups are distinguishable."""
+    cfg = cfg or {}
+
+    def seg(beeps, on_ms, gap_ms, sep_s, freq=None):
+        p = _pattern(beeps, on_ms, gap_ms)
+        if p and sep_s:
+            p[-1] = (p[-1][0], sep_s)          # widen the gap after the group
+        return (p, freq)
+
+    segs = [
+        seg(cfg.get("newBeeps", 3),    cfg.get("newOnMs", 100),    cfg.get("newGapMs", 50), 0.7),
+        seg(cfg.get("lostBeeps", 1),   cfg.get("lostOnMs", 1500),  200, 0.7, freq=cfg.get("lostFreqHz")),
+        seg(cfg.get("phase1Beeps", 1), cfg.get("phase1OnMs", 500), 200, 0.5),
+        seg(cfg.get("phase2Beeps", 1), cfg.get("phase2OnMs", 500), 200, 0.5),
+        seg(cfg.get("phase3Beeps", 2), cfg.get("phase3OnMs", 50),  200, 0.5),
+        seg(cfg.get("entryBeeps", 1),  cfg.get("entryOnMs", 5000), 200, 0.0),
+    ]
+    return [s for s in segs if s[0]]           # drop empty groups
+
+
 class BeepScheduler:
     """Turns successive /api/state snapshots into buzzer events, all driven by
     the live `buzzer` config block (so the user tunes everything in Settings):
@@ -187,6 +214,7 @@ class BeepScheduler:
         self.prev_keys = set()       # real-candidate keys seen last tick
         self.last_beep = {}          # key -> monotonic time of last countdown beep
         self.entry_fired = set()     # keys whose one-shot entry blast already fired
+        self.announced = set()       # keys that got the one-shot "new candidate" beep
         self._primed = False         # suppress new/lost on the very first tick
 
     @staticmethod
@@ -213,17 +241,33 @@ class BeepScheduler:
         cur = {self._key(c): c for c in cands}
         cur_keys = set(cur)
 
-        # New / lost events (suppressed on the first tick to avoid a startup burst).
-        if self._primed:
-            if cur_keys - self.prev_keys:
-                self.buz.play(_pattern(cfg.get("newBeeps", 3),
-                                       cfg.get("newOnMs", 500), cfg.get("newGapMs", 250)))
-            lost = self.prev_keys - cur_keys
-            if lost:
-                self.buz.play(_pattern(cfg.get("lostBeeps", 1), cfg.get("lostOnMs", 1500), 200))
-                for k in lost:
-                    self.last_beep.pop(k, None)
-                    self.entry_fired.discard(k)
+        # "New candidate" signal: fire once per candidate, but only once it is
+        # within `newEtaMaxS` of closest approach — so a candidate many minutes
+        # out doesn't beep. Works whether it appears already inside the window
+        # or counts down into it. On the first tick we populate `announced`
+        # silently (no startup burst).
+        new_eta_max = cfg.get("newEtaMaxS", 120)
+        for k, c in cur.items():
+            at = c.get("closestApproachAtMs")
+            if at is None or k in self.announced:
+                continue
+            eta = (at - now_ms) / 1000.0
+            if 0 <= eta <= new_eta_max:
+                if self._primed:
+                    self.buz.play(_pattern(cfg.get("newBeeps", 3),
+                                           cfg.get("newOnMs", 100), cfg.get("newGapMs", 50)))
+                self.announced.add(k)
+
+        # "Lost / past" signal: a previously-announced candidate vanished.
+        # Played at its own frequency (default 1000 Hz) so it sounds distinct.
+        lost = self.prev_keys - cur_keys
+        if self._primed and any(k in self.announced for k in lost):
+            self.buz.play(_pattern(cfg.get("lostBeeps", 1), cfg.get("lostOnMs", 1500), 200),
+                          freq=cfg.get("lostFreqHz"))
+        for k in lost:
+            self.last_beep.pop(k, None)
+            self.entry_fired.discard(k)
+            self.announced.discard(k)
         self._primed = True
 
         # Accelerating countdown for close, approaching candidates.

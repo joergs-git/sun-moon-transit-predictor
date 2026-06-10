@@ -1,6 +1,6 @@
 """
 Bootstrap + live configuration for the e-paper display client.
-v0.31.8
+v0.31.9
 
 Design: there is exactly ONE local/bootstrap value — STP_CONFIG_URL — which
 tells the client where to read its live `display` config block from. Everything
@@ -52,11 +52,12 @@ BUZZER_DEFAULTS = {
     "gpioPin": 13,
     "freqHz": 2000,
     "sepThresholdDeg": 0.3,
-    "newBeeps": 3, "newOnMs": 500, "newGapMs": 250,
-    "lostBeeps": 1, "lostOnMs": 1500,
+    "newEtaMaxS": 120,
+    "newBeeps": 3, "newOnMs": 100, "newGapMs": 50,
+    "lostBeeps": 1, "lostOnMs": 1500, "lostFreqHz": 1000,
     "phase1BeforeS": 40, "phase1EveryS": 10, "phase1Beeps": 1, "phase1OnMs": 500,
     "phase2BeforeS": 15, "phase2EveryS": 5, "phase2Beeps": 1, "phase2OnMs": 500,
-    "phase3BeforeS": 8, "phase3EveryS": 2, "phase3Beeps": 1, "phase3OnMs": 500,
+    "phase3BeforeS": 8, "phase3EveryS": 2, "phase3Beeps": 2, "phase3OnMs": 50,
     "entryBeforeS": 2, "entryBeeps": 1, "entryOnMs": 5000,
 }
 
@@ -103,6 +104,8 @@ def fetch_buzzer_config(timeout=HTTP_TIMEOUT_S):
         for key in BUZZER_DEFAULTS:
             if key in block and block[key] is not None:
                 cfg[key] = block[key]
+        # Pass through the transient one-shot test id (not a saved default).
+        cfg["testId"] = block.get("testId", 0)
     except Exception:
         pass
     return cfg

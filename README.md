@@ -821,12 +821,14 @@ extra service), configured from ⚙ **Settings → Audio / buzzer**. The client
 always **PWM-drives** the pin, so it works for both **passive** (needs a
 frequency) and **active** (beeps on power) buzzers — no need to know which you
 have. Confirm yours and find the loudest tone with
-`cd display && python3 epaper_client.py --test-buzzer` (2000 Hz is a typical
-loudest tone). Defaults: **3 × 0.5 s** when a new Real candidate appears,
-**1 × 1.5 s** when one is lost/passes, an accelerating countdown for candidates
-within `0.3°` — a beep every **10 s** from 40 s out, **5 s** from 15 s, **2 s**
-from 8 s — then a single **5 s blast** from 2 s before the transit itself. Beep
-length, count, intervals and phase windows are all adjustable in Settings. See
+`cd display && python3 epaper_client.py --test-buzzer` (2000 Hz is the default).
+A **Test signals** button in Settings plays the whole sequence once on the Pi.
+Defaults: **3 × 0.1 s** when a new Real candidate comes within **2 min**,
+**1 × 1.5 s at 1000 Hz** (a distinct tone) when one is lost/passes, an
+accelerating countdown for candidates within `0.3°` — every **10 s** from 40 s,
+**5 s** from 15 s, **2 × 0.05 s** every **2 s** from 8 s — then a single **5 s
+blast** from 2 s before the transit. Beep length, count, frequency, intervals
+and windows are all adjustable in Settings. See
 **[display/README.md](display/README.md#audio-buzzer-optional)**.
 
 > **E-paper isn't a video display.** A full refresh flashes for a couple of
