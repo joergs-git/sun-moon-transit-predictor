@@ -642,6 +642,18 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
 }
 .settings-card label .field-hint code { color: var(--accent); }
 .settings-card label .field-hint b { color: var(--fg); font-weight: 600; }
+/* Sub-heading that groups related fields inside a fieldset (e.g. the buzzer
+   countdown phases). Full-width, small, slightly emphasised. */
+.settings-card .field-group-label {
+  grid-column: 1 / -1;
+  margin: 8px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+  opacity: 0.9;
+  border-top: 1px solid var(--border, rgba(255,255,255,0.08));
+  padding-top: 6px;
+}
 .settings-card input[type="text"],
 .settings-card input[type="number"],
 .settings-card select {

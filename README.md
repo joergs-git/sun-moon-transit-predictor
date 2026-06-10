@@ -813,6 +813,21 @@ Open ⚙ **Settings → E-paper display** and the client picks the changes up li
 The on-panel layout itself is fixed (the three paragraphs above) — there are no
 list-length or compact toggles.
 
+#### Audio buzzer (optional)
+
+A piezo buzzer wired between a **GPIO pin (default GPIO13)** and **GND** gives an
+audible transit countdown — driven by `display/buzzer.py` in the same client (no
+extra service), configured from ⚙ **Settings → Audio / buzzer**. The client
+always **PWM-drives** the pin, so it works for both **passive** (needs a
+frequency) and **active** (beeps on power) buzzers — no need to know which you
+have. Confirm yours and find the loudest tone with
+`cd display && python3 epaper_client.py --test-buzzer`. Defaults: **3 × 0.5 s**
+when a new Real candidate appears, **1 × 1.5 s** when one is lost/passes, then an
+accelerating countdown for candidates within `0.3°` — a beep every **10 s** from
+40 s out, every **5 s** from 15 s, every **2 s** from 8 s. Beep length, count,
+intervals and phase windows are all adjustable in Settings. See
+**[display/README.md](display/README.md#audio-buzzer-optional)**.
+
 > **E-paper isn't a video display.** A full refresh flashes for a couple of
 > seconds; a partial refresh is quick (~0.3–0.5 s) but builds up ghosting. The
 > two-cadence design (quick partial + periodic full clear) gives a lively yet

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 E-paper display client for the Sun-Moon Transit Predictor.
-v0.31.0
+v0.31.7
 
 A standalone, decoupled HTTP poller + renderer for a Waveshare 4.2" B/W SPI
 panel (400×300) on a Raspberry Pi 5. It carries NO business logic: it reads its
@@ -30,6 +30,7 @@ import signal
 import sys
 import time
 
+import buzzer
 import config
 import render
 
@@ -113,68 +114,99 @@ def _log(msg):
 
 
 def run(panel, once=False):
-    """Main poll → render → refresh loop."""
+    """Main poll loop: drives the panel and/or the buzzer from the live config.
+
+    State is fetched once per tick and shared by both: the panel renders it, the
+    buzzer's scheduler reacts to it. Either feature can be enabled independently
+    in the browser Settings — with the panel off but the buzzer on, we keep
+    polling (for the beeps) and leave the screen cleared.
+    """
     panel.init_full()
 
     last_full = 0.0          # monotonic time of the last full refresh
     last_conn_ok = None      # connectivity state, logged only on change
-    disabled_drawn = False   # so the 'disabled' screen is drawn just once
+    idle_drawn = False       # so the cleared/idle screen is drawn just once
     display_cfg = dict(config.DEFAULTS)
+    buzzer_cfg = dict(config.BUZZER_DEFAULTS)
     last_cfg_fetch = 0.0
+
+    buz = buzzer.Buzzer()
+    sched = buzzer.BeepScheduler(buz, buzzer_cfg)
 
     while _running:
         now = time.monotonic()
 
-        # Re-read the live display config on its own cadence.
+        # Re-read the live display + buzzer config on its own cadence, and apply
+        # any pin/frequency change to the buzzer without a restart.
         if now - last_cfg_fetch >= config.CONFIG_REFRESH_S:
             display_cfg = config.fetch_display_config()
+            buzzer_cfg = config.fetch_buzzer_config()
+            # Claim the GPIO only while enabled; release it when disabled.
+            buz.apply(bool(buzzer_cfg.get("enabled")), buzzer_cfg["gpioPin"], buzzer_cfg["freqHz"])
+            sched.cfg = buzzer_cfg
             last_cfg_fetch = now
 
-        # Master on/off — draw the 'disabled' screen once, then idle cheaply.
-        if not display_cfg.get("enabled"):
-            if not disabled_drawn:
+        display_on = bool(display_cfg.get("enabled"))
+        buzzer_on = buz.ok
+
+        # Nothing enabled → clear the screen once, then idle cheaply.
+        if not display_on and not buzzer_on:
+            if not idle_drawn:
                 panel.show_full(render.render_disabled())
-                disabled_drawn = True
+                idle_drawn = True
                 last_full = now
-                _log("display disabled via Settings — idling")
+                _log("display + buzzer disabled via Settings — idling")
             if once:
                 break
             time.sleep(2)
             continue
-        disabled_drawn = False
 
         source_url = config.resolve_source_url(display_cfg)
         quick = max(1.0, float(display_cfg.get("quickRefreshS") or 2))
         long_s = max(quick, float(display_cfg.get("longRefreshS") or 60))
 
-        # Fetch state; on failure render the offline screen.
+        # Fetch the live state once; share it between buzzer + panel.
+        state = None
+        conn_ok = True
+        reason = ""
         try:
             state = config.fetch_state(source_url)
-            img = render.render_state(state, display_cfg)
-            conn_ok = True
-            reason = ""
         except Exception as e:
-            img = render.render_offline(source_url, str(e))
             conn_ok = False
             reason = str(e)
 
-        if conn_ok != last_conn_ok:
-            _log("connected to %s" % source_url if conn_ok else "offline: %s (%s)" % (source_url, reason))
-            last_conn_ok = conn_ok
+        # Buzzer reacts to the live candidates.
+        if buzzer_on and conn_ok and state is not None:
+            try:
+                sched.update(state, now)
+            except Exception as e:
+                _log("buzzer scheduler error: %s" % e)
 
-        # Full refresh on first draw, on the long cadence, or when recovering
-        # from an offline stretch (so the recovered screen is clean).
-        need_full = (last_full == 0.0) or (now - last_full >= long_s) or (conn_ok and last_conn_ok is False)
-        if need_full:
-            panel.show_full(img)
+        # Panel.
+        if display_on:
+            recovered = conn_ok and (last_conn_ok is False)
+            if conn_ok != last_conn_ok:
+                _log("connected to %s" % source_url if conn_ok else "offline: %s (%s)" % (source_url, reason))
+                last_conn_ok = conn_ok
+            img = render.render_state(state, display_cfg) if conn_ok else render.render_offline(source_url, reason)
+            need_full = (last_full == 0.0) or (now - last_full >= long_s) or recovered
+            if need_full:
+                panel.show_full(img)
+                last_full = now
+            else:
+                panel.show_partial(img)
+            idle_drawn = False
+        elif not idle_drawn:
+            # Buzzer-only mode: clear the panel once and leave it.
+            panel.show_full(render.render_disabled())
+            idle_drawn = True
             last_full = now
-        else:
-            panel.show_partial(img)
 
         if once:
             break
         time.sleep(quick)
 
+    buz.close()
     panel.sleep()
 
 
@@ -184,10 +216,17 @@ def main():
                     help="render to a PNG file instead of the panel (no hardware needed)")
     ap.add_argument("--out", default="out.png", help="output PNG path for --dry-run (default out.png)")
     ap.add_argument("--loop", action="store_true", help="with --dry-run, keep re-rendering (default: render once)")
+    ap.add_argument("--test-buzzer", action="store_true",
+                    help="run the buzzer self-test (DC + PWM tone + frequency sweep) and exit")
     args = ap.parse_args()
 
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
+
+    if args.test_buzzer:
+        cfg = config.fetch_buzzer_config()  # use the configured pin/freq if reachable
+        buzzer.selftest(pin=int(cfg.get("gpioPin", 13)), freq=int(cfg.get("freqHz", 2700)))
+        return
 
     if args.dry_run:
         panel = FilePanel(args.out)

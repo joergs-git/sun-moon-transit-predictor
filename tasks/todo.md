@@ -503,3 +503,29 @@ User picked ideas 1, 2, 4, 5 (2026-06-09):
 
 Not taken this round (offered): #3 disc-crossing time, #6 rise/set countdown.
 Piezo buzzer (backlog) pairs naturally with the transit banner.
+
+---
+
+# Piezo buzzer audio alerts — settings-driven (v0.31.7)
+
+Buzzer arrived, wired GPIO13 ↔ GND (user, 2026-06-10). Built end-to-end:
+- [x] Always PWM-drive the pin → works for passive AND active buzzers (no need
+      to know which). `--test-buzzer` does DC + tone + frequency sweep so the
+      user confirms type + loudest freq.
+- [x] display/buzzer.py: Buzzer (PWM on a background thread, lazy — claims GPIO
+      only while enabled, releases on disable) + BeepScheduler (pure logic).
+- [x] Signals (all configurable, these are defaults): new real candidate =
+      3×0.5 s; lost/past = 1×1.5 s; countdown for sep<0.3°: every 10 s from 40 s,
+      5 s from 15 s, 2 s from 8 s. Scheduler verified with a fake-buzzer harness.
+- [x] Settings-driven: new server `buzzer` config block (DEFAULT_CONFIG, merge,
+      publicConfig, transactional validation incl. descending-phase check,
+      persistence) + web "Audio / buzzer" fieldset (generic dotted-name form) +
+      config.py fetch_buzzer_config (polled live like the display block).
+- [x] epaper_client.py: shared poll loop drives panel + buzzer; runs the buzzer
+      even with the panel off; --test-buzzer mode.
+- [x] Docs: display/README "Audio buzzer" section + README note +
+      service.example.json. 205 node tests pass; python syntax + scheduler OK.
+
+Note: countdown can't beep faster than the panel Quick refresh (shared tick) —
+keep it ~2 s for the near phase. Server config-update path has no unit test
+(neither does `display`); pattern mirrors the proven display block.

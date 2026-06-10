@@ -212,6 +212,27 @@ export const DEFAULT_CONFIG = {
     // Full-refresh cadence (s) — the periodic flash that clears e-paper ghosting.
     longRefreshS: 60,
   },
+  // Piezo buzzer audio alerts (display/buzzer.py on the same Pi as the e-paper
+  // client; wired between a GPIO pin and GND). Like `display`, these knobs are
+  // persisted here and surfaced via /api/config so the Python client configures
+  // itself live from the browser — no SSH. The values below are DEFAULTS; the
+  // user tunes beep length/count per phase in Settings. All *Ms are milliseconds.
+  buzzer: {
+    enabled: false,
+    gpioPin: 13,           // BCM pin the buzzer sits on (user wiring: GPIO13)
+    freqHz: 2700,          // PWM drive frequency — works for passive AND active
+                           // buzzers; tune for the loudest tone on your element
+    sepThresholdDeg: 0.3,  // countdown beeps only for candidates closer than this
+    // "New real candidate appeared" signal (default: 3 × 0.5 s).
+    newBeeps: 3, newOnMs: 500, newGapMs: 250,
+    // "Candidate lost / closest approach passed" signal (default: 1 × 1.5 s).
+    lostBeeps: 1, lostOnMs: 1500,
+    // Accelerating pre-transit countdown — three phases by time-to-closest.
+    // Each: window start (s before transit), interval (s), beep count, length (ms).
+    phase1BeforeS: 40, phase1EveryS: 10, phase1Beeps: 1, phase1OnMs: 500,
+    phase2BeforeS: 15, phase2EveryS: 5,  phase2Beeps: 1, phase2OnMs: 500,
+    phase3BeforeS: 8,  phase3EveryS: 2,  phase3Beeps: 1, phase3OnMs: 500,
+  },
   // ISS transits (offline SGP4 from a TLE file). Inactive until a TLE is
   // present at tlePath — fetch it opt-in with scripts/refresh-tle.js. The
   // forward scan is rare-event work, so it runs on recomputeMs cadence and
@@ -315,6 +336,7 @@ function mergeConfig(user) {
     optics:    { ...DEFAULT_CONFIG.optics,    ...(user.optics    ?? {}) },
     sharpcap:  { ...DEFAULT_CONFIG.sharpcap,  ...(user.sharpcap  ?? {}) },
     display:   { ...DEFAULT_CONFIG.display,   ...(user.display   ?? {}) },
+    buzzer:    { ...DEFAULT_CONFIG.buzzer,    ...(user.buzzer    ?? {}) },
     lifecyclePersist: { ...DEFAULT_CONFIG.lifecyclePersist, ...(user.lifecyclePersist ?? {}) },
     driftPersist: { ...DEFAULT_CONFIG.driftPersist, ...(user.driftPersist ?? {}) },
   };
@@ -888,6 +910,8 @@ export async function runService({
       // E-paper display client config (no secrets). The Python client reads
       // this block from /api/config and configures itself live from the UI.
       display: { ...config.display },
+      // Piezo buzzer alert config (no secrets) — read by display/buzzer.py.
+      buzzer: { ...config.buzzer },
       _servicePath: configPaths.service ?? null,
     };
   }
@@ -1096,6 +1120,39 @@ export async function runService({
       applied.display = { ...config.display };
     }
 
+    if (patch.buzzer && typeof patch.buzzer === 'object') {
+      const d = patch.buzzer;
+      const next = { ...config.buzzer };
+      if (typeof d.enabled === 'boolean') next.enabled = d.enabled;
+      // Numeric fields → [min, max, integer?]. Validated transactionally into
+      // `next`, so a single bad value rejects the whole patch (no half-apply).
+      const NUM = {
+        gpioPin: [0, 27, true], freqHz: [50, 20000, true],
+        sepThresholdDeg: [0.01, 5, false],
+        newBeeps: [0, 10, true], newOnMs: [50, 5000, true], newGapMs: [0, 5000, true],
+        lostBeeps: [0, 10, true], lostOnMs: [50, 10000, true],
+        phase1BeforeS: [1, 600, true], phase1EveryS: [1, 600, true], phase1Beeps: [0, 10, true], phase1OnMs: [50, 5000, true],
+        phase2BeforeS: [1, 600, true], phase2EveryS: [1, 600, true], phase2Beeps: [0, 10, true], phase2OnMs: [50, 5000, true],
+        phase3BeforeS: [1, 600, true], phase3EveryS: [1, 600, true], phase3Beeps: [0, 10, true], phase3OnMs: [50, 5000, true],
+      };
+      for (const [k, [lo, hi, isInt]] of Object.entries(NUM)) {
+        if (k in d) {
+          const v = Number(d[k]);
+          if (!Number.isFinite(v) || v < lo || v > hi || (isInt && !Number.isInteger(v))) {
+            throw new Error(`buzzer.${k} must be ${isInt ? 'an integer' : 'a number'} ${lo}–${hi}`);
+          }
+          next[k] = v;
+        }
+      }
+      // Countdown phases must descend (each window starts further out than the
+      // next), else the accelerating cadence overlaps incorrectly.
+      if (!(next.phase1BeforeS > next.phase2BeforeS && next.phase2BeforeS > next.phase3BeforeS)) {
+        throw new Error('buzzer phases must descend: phase1BeforeS > phase2BeforeS > phase3BeforeS');
+      }
+      config.buzzer = next;
+      applied.buzzer = { ...config.buzzer };
+    }
+
     if (patch.airnav && typeof patch.airnav === 'object') {
       const a = patch.airnav;
       // Never accept the masked placeholder back as the real token.
@@ -1253,6 +1310,7 @@ export async function runService({
           airnav:        { ...(existing.airnav   ?? {}), ...config.airnav },
           sharpcap:      { ...(existing.sharpcap ?? {}), ...config.sharpcap },
           display:       { ...(existing.display  ?? {}), ...config.display },
+          buzzer:        { ...(existing.buzzer   ?? {}), ...config.buzzer },
         };
         await fsp.writeFile(configPaths.service, JSON.stringify(merged, null, 2), 'utf8');
       } catch (e) {

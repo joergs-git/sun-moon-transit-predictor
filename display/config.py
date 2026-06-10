@@ -1,6 +1,6 @@
 """
 Bootstrap + live configuration for the e-paper display client.
-v0.31.2
+v0.31.7
 
 Design: there is exactly ONE local/bootstrap value — STP_CONFIG_URL — which
 tells the client where to read its live `display` config block from. Everything
@@ -44,6 +44,21 @@ DEFAULTS = {
     "longRefreshS": 60,
 }
 
+# Buzzer alert defaults — mirrors DEFAULT_CONFIG.buzzer in src/service.js. All
+# *Ms are milliseconds. Fetched from /api/config alongside the display block so
+# the buzzer is configured entirely from the browser, like the panel.
+BUZZER_DEFAULTS = {
+    "enabled": False,
+    "gpioPin": 13,
+    "freqHz": 2700,
+    "sepThresholdDeg": 0.3,
+    "newBeeps": 3, "newOnMs": 500, "newGapMs": 250,
+    "lostBeeps": 1, "lostOnMs": 1500,
+    "phase1BeforeS": 40, "phase1EveryS": 10, "phase1Beeps": 1, "phase1OnMs": 500,
+    "phase2BeforeS": 15, "phase2EveryS": 5, "phase2Beeps": 1, "phase2OnMs": 500,
+    "phase3BeforeS": 8, "phase3EveryS": 2, "phase3Beeps": 1, "phase3OnMs": 500,
+}
+
 
 def _http_json(url, timeout=HTTP_TIMEOUT_S):
     """GET a URL and parse JSON. Raises on any network/parse error."""
@@ -70,6 +85,24 @@ def fetch_display_config(timeout=HTTP_TIMEOUT_S):
     except Exception:
         # Stay silent here; the main loop logs connectivity state once, not per
         # tick, to avoid flooding journalctl when the server is down.
+        pass
+    return cfg
+
+
+def fetch_buzzer_config(timeout=HTTP_TIMEOUT_S):
+    """Return the merged `buzzer` block from ``<CONFIG_URL>/api/config``.
+
+    Same contract as fetch_display_config: always a complete dict (DEFAULTS
+    overlaid with whatever the server provides); returns defaults on any error.
+    """
+    cfg = dict(BUZZER_DEFAULTS)
+    try:
+        data = _http_json("%s/api/config" % CONFIG_URL, timeout=timeout)
+        block = (data or {}).get("buzzer") or {}
+        for key in BUZZER_DEFAULTS:
+            if key in block and block[key] is not None:
+                cfg[key] = block[key]
+    except Exception:
         pass
     return cfg
 

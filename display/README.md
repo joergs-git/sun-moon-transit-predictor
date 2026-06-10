@@ -181,3 +181,49 @@ nothing or garbage on first run, switch to the older driver via the unit's
 | Permission denied on `/dev/spidev0.0` | Service user not in `spi`/`gpio` groups (step 3); re-login or reboot. |
 | Heavy ghosting | Lower **Long refresh** (more frequent full clears). |
 | Text feels laggy | Raise **Quick refresh** toward 2–3 s; the panel can't partial-refresh faster than ~1 s. |
+
+---
+
+## Audio buzzer (optional)
+
+A piezo buzzer wired between a **GPIO pin (default GPIO13)** and **GND** gives an
+audible transit countdown, so you don't have to watch the screen. It is driven
+by `display/buzzer.py` inside the same client (no extra service) and configured
+entirely from the browser (⚙ **Settings → Audio / buzzer**).
+
+### Active vs passive — and why it doesn't matter here
+
+Most piezo "Summer" are **passive**: they need an **AC/PWM** signal to make
+sound (steady DC just clicks). A few are **active** (built-in oscillator) and
+beep on any HIGH. The client always **PWM-drives** the pin at a chosen
+frequency, which works for **both** — a passive element sings at that frequency,
+an active one beeps whenever it is powered. So you don't need to know which you
+have. To confirm it works and find the loudest tone:
+
+```bash
+cd display && python3 epaper_client.py --test-buzzer
+```
+
+This plays a steady-DC test (only an *active* buzzer beeps), then a PWM tone,
+then a frequency sweep — note the loudest and set it as **Drive frequency**.
+
+### Signals (all configurable; defaults shown)
+
+| Event | Default |
+|---|---|
+| **New Real candidate** appeared | 3 × 0.5 s beeps |
+| **Candidate lost** / closest approach passed | 1 × 1.5 s beep |
+| Countdown, candidate `sep < 0.3°`, from **40 s** out | 0.5 s beep every **10 s** |
+| …from **15 s** out | every **5 s** |
+| …from **8 s** out | every **2 s** |
+
+Tune the beep length, count, intervals and phase windows per phase in Settings.
+Note: the countdown can't beep faster than the panel's **Quick refresh** (it
+shares the same poll tick) — keep Quick refresh at ~2 s for the near phase.
+
+### Notes
+
+- Uses the same `gpiozero`/`lgpio` stack the panel needs — already installed by
+  `install-pi5.sh --with-display`. No extra packages.
+- The buzzer works **independently of the panel**: enable it with the display
+  off and the client keeps polling just for the beeps.

@@ -100,5 +100,16 @@
     "sourceUrl": "",
     "quickRefreshS": 2,
     "longRefreshS": 60
+  },
+  "buzzer": {
+    "enabled": false,
+    "gpioPin": 13,
+    "freqHz": 2700,
+    "sepThresholdDeg": 0.3,
+    "newBeeps": 3, "newOnMs": 500, "newGapMs": 250,
+    "lostBeeps": 1, "lostOnMs": 1500,
+    "phase1BeforeS": 40, "phase1EveryS": 10, "phase1Beeps": 1, "phase1OnMs": 500,
+    "phase2BeforeS": 15, "phase2EveryS": 5, "phase2Beeps": 1, "phase2OnMs": 500,
+    "phase3BeforeS": 8, "phase3EveryS": 2, "phase3Beeps": 1, "phase3OnMs": 500
   }
 }
