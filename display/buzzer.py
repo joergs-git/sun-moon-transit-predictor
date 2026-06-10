@@ -1,6 +1,6 @@
 """
 Piezo buzzer driver + transit beep scheduler (Pi-side).
-v0.31.7
+v0.31.8
 
 Wiring: a piezo buzzer between a GPIO pin (default GPIO13) and GND.
 
@@ -175,6 +175,7 @@ class BeepScheduler:
       * a candidate lost / its closest approach passing → the "lost" pattern
       * an approaching candidate closer than sepThresholdDeg → an accelerating
         countdown, one of three time-windowed phases (far / mid / near)
+      * the transit entry itself → a single long "entry" blast (fires once)
 
     Pure logic: it only calls ``buz.play(...)``, so it is testable with a fake
     buzzer that records patterns.
@@ -185,6 +186,7 @@ class BeepScheduler:
         self.cfg = dict(cfg) if cfg else {}
         self.prev_keys = set()       # real-candidate keys seen last tick
         self.last_beep = {}          # key -> monotonic time of last countdown beep
+        self.entry_fired = set()     # keys whose one-shot entry blast already fired
         self._primed = False         # suppress new/lost on the very first tick
 
     @staticmethod
@@ -221,6 +223,7 @@ class BeepScheduler:
                 self.buz.play(_pattern(cfg.get("lostBeeps", 1), cfg.get("lostOnMs", 1500), 200))
                 for k in lost:
                     self.last_beep.pop(k, None)
+                    self.entry_fired.discard(k)
         self._primed = True
 
         # Accelerating countdown for close, approaching candidates.
@@ -233,11 +236,29 @@ class BeepScheduler:
             (cfg.get("phase3BeforeS", 8), cfg.get("phase3EveryS", 2),
              cfg.get("phase3Beeps", 1), cfg.get("phase3OnMs", 500)),
         ])  # ascending by window start
+        entry_before = cfg.get("entryBeforeS", 2)
         for k, c in cur.items():
             sep = c.get("closestApproachSepDeg")
             at = c.get("closestApproachAtMs")
             if sep is None or at is None or sep >= sep_th:
                 continue
+
+            # Entry blast: one long beep at the transit itself. `entersAtMs` is
+            # when the path enters the disc (≈ closest for fast aircraft); fall
+            # back to closest if the feed doesn't carry it. Fires once per key,
+            # and takes over from the countdown for that contact.
+            enters = c.get("entersAtMs")
+            if enters is None:
+                enters = at
+            eta_entry = (enters - now_ms) / 1000.0
+            if k in self.entry_fired:
+                continue  # entry already signalled → no more beeps for this contact
+            if -entry_before <= eta_entry <= entry_before:
+                self.buz.play(_pattern(cfg.get("entryBeeps", 1), cfg.get("entryOnMs", 5000), 200))
+                self.entry_fired.add(k)
+                continue
+
+            # Otherwise: the accelerating pre-transit countdown (by time-to-closest).
             eta_s = (at - now_ms) / 1000.0
             ph = self._phase_for(eta_s, phases)
             if ph is None:

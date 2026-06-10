@@ -220,7 +220,7 @@ export const DEFAULT_CONFIG = {
   buzzer: {
     enabled: false,
     gpioPin: 13,           // BCM pin the buzzer sits on (user wiring: GPIO13)
-    freqHz: 2700,          // PWM drive frequency — works for passive AND active
+    freqHz: 2000,          // PWM drive frequency — works for passive AND active
                            // buzzers; tune for the loudest tone on your element
     sepThresholdDeg: 0.3,  // countdown beeps only for candidates closer than this
     // "New real candidate appeared" signal (default: 3 × 0.5 s).
@@ -232,6 +232,9 @@ export const DEFAULT_CONFIG = {
     phase1BeforeS: 40, phase1EveryS: 10, phase1Beeps: 1, phase1OnMs: 500,
     phase2BeforeS: 15, phase2EveryS: 5,  phase2Beeps: 1, phase2OnMs: 500,
     phase3BeforeS: 8,  phase3EveryS: 2,  phase3Beeps: 1, phase3OnMs: 500,
+    // "Entry" final blast — fires once, starting `entryBeforeS` before the plane
+    // actually enters the disc, to signal the transit itself (default 1 × 5 s).
+    entryBeforeS: 2, entryBeeps: 1, entryOnMs: 5000,
   },
   // ISS transits (offline SGP4 from a TLE file). Inactive until a TLE is
   // present at tlePath — fetch it opt-in with scripts/refresh-tle.js. The
@@ -1134,6 +1137,7 @@ export async function runService({
         phase1BeforeS: [1, 600, true], phase1EveryS: [1, 600, true], phase1Beeps: [0, 10, true], phase1OnMs: [50, 5000, true],
         phase2BeforeS: [1, 600, true], phase2EveryS: [1, 600, true], phase2Beeps: [0, 10, true], phase2OnMs: [50, 5000, true],
         phase3BeforeS: [1, 600, true], phase3EveryS: [1, 600, true], phase3Beeps: [0, 10, true], phase3OnMs: [50, 5000, true],
+        entryBeforeS: [0, 60, true], entryBeeps: [0, 10, true], entryOnMs: [100, 15000, true],
       };
       for (const [k, [lo, hi, isInt]] of Object.entries(NUM)) {
         if (k in d) {

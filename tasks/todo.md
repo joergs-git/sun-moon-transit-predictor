@@ -529,3 +529,25 @@ Buzzer arrived, wired GPIO13 ↔ GND (user, 2026-06-10). Built end-to-end:
 Note: countdown can't beep faster than the panel Quick refresh (shared tick) —
 keep it ~2 s for the near phase. Server config-update path has no unit test
 (neither does `display`); pattern mirrors the proven display block.
+
+---
+
+# Buzzer entry-blast + revert-to-default (v0.31.8)
+
+User feedback (2026-06-10): 2000 Hz loudest; add an entry blast; #3/#6 dropped;
+revert the real-candidate view to default 1 min after end of transit.
+
+- [x] Default drive frequency 2700 → 2000 Hz (loudest on the user's element).
+- [x] Entry blast: one long beep (default 1 × 5 s) starting `entryBeforeS` (2 s)
+      before the plane enters the disc — uses `entersAtMs` (≈ closest for fast
+      aircraft, falls back to closest). Fires once per contact and supersedes
+      the countdown for it. New config: entryBeforeS/entryBeeps/entryOnMs
+      (server defaults + validation, web fields, config.py, example.json).
+- [x] E-paper revert: _pool drops contacts whose closest approach is > 60 s
+      past, so a long-gone candidate stops dominating the detail block / list.
+- [x] Web revert: LIVE_GRACE_AFTER_ETA_MS 5 min → 1 min, so the "Real
+      candidates" panel reverts ~1 min after the pass (History hand-off shares
+      the same cutoff → no gap).
+- [x] #3 (disc-crossing time) and #6 (rise/set countdown) dropped per user.
+- [x] Verified: scheduler harness (incl. entry one-shot + countdown takeover),
+      e-paper revert preview, 205 node tests, python syntax.

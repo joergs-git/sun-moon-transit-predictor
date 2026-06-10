@@ -1,6 +1,6 @@
 """
 Pillow renderer for the 4.2" e-paper panel (400×300, 1-bit black/white).
-v0.31.6
+v0.31.8
 
 render_state() turns an /api/state snapshot into a PIL Image. The layout is
 deliberately monospace so columns self-align, and fixed into three paragraphs.
@@ -211,6 +211,7 @@ def _make_view(meta, cand, now_ms):
         "el_raw": el,
         "has_eta": at is not None,
         "approaching": approaching,
+        "_eta_s": (at - now_ms) / 1000.0 if at is not None else None,
         # candidate/imminent → a true "Real candidate"; radio/planned/stale → not
         "is_real": status in ("candidate", "imminent"),
         "stale": status == "stale",
@@ -236,6 +237,11 @@ def _pool(state):
         views = [_make_view(e, e.get("candidate"), now_ms) for e in lifecycle]
     else:
         views = [_make_view(c, c, now_ms) for c in (state.get("candidates") or [])]
+
+    # Revert to default once a transit is well past: drop contacts whose closest
+    # approach is more than 60 s in the past, so a long-gone candidate doesn't
+    # keep dominating the detail block / list. Approaching + just-passed stay.
+    views = [v for v in views if v["_eta_s"] is None or v["_eta_s"] >= -60.0]
 
     INF = float("inf")
     views.sort(key=lambda v: (0 if v["is_real"] else 1,

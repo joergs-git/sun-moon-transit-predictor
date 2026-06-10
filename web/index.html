@@ -700,8 +700,8 @@
             <small class="field-hint">Master on/off for the audio alerts. Off → the buzzer stays silent (and the client doesn't touch the GPIO).</small></label>
           <label>GPIO pin (BCM)<input name="buzzer.gpioPin" type="number" step="1" min="0" max="27" placeholder="13">
             <small class="field-hint">BCM pin the buzzer's + leg sits on; the other leg to GND. <b>Default 13.</b></small></label>
-          <label>Drive frequency (Hz)<input name="buzzer.freqHz" type="number" step="1" min="50" max="20000" placeholder="2700">
-            <small class="field-hint">PWM tone frequency. Works for both passive and active buzzers; tune for the loudest tone on your element (piezos peak ~2–4 kHz). <b>Default 2700.</b></small></label>
+          <label>Drive frequency (Hz)<input name="buzzer.freqHz" type="number" step="1" min="50" max="20000" placeholder="2000">
+            <small class="field-hint">PWM tone frequency. Works for both passive and active buzzers; tune for the loudest tone on your element (piezos peak ~2–4 kHz). <b>Default 2000.</b></small></label>
           <label>Countdown SEP threshold (°)<input name="buzzer.sepThresholdDeg" type="number" step="0.01" min="0.01" max="5" placeholder="0.3">
             <small class="field-hint">Countdown beeps fire only for a candidate whose separation is below this. <b>Default 0.3°.</b></small></label>
 
@@ -713,6 +713,12 @@
           <div class="field-group-label">Lost / past signal</div>
           <label>Beeps<input name="buzzer.lostBeeps" type="number" step="1" min="0" max="10" placeholder="1"></label>
           <label>Beep length (ms)<input name="buzzer.lostOnMs" type="number" step="10" min="50" max="10000" placeholder="1500"></label>
+
+          <div class="field-group-label">Entry blast (the transit itself)</div>
+          <label>From (s before entry)<input name="buzzer.entryBeforeS" type="number" step="1" min="0" max="60" placeholder="2"></label>
+          <label>Beeps<input name="buzzer.entryBeeps" type="number" step="1" min="0" max="10" placeholder="1"></label>
+          <label>Beep length (ms)<input name="buzzer.entryOnMs" type="number" step="10" min="100" max="15000" placeholder="5000"></label>
+          <small class="field-hint">One long blast the moment the plane enters the disc — fires once. <b>Default 1 × 5 s, starting 2 s before entry.</b></small>
 
           <div class="field-group-label">Countdown phase 1 (far)</div>
           <label>From (s before)<input name="buzzer.phase1BeforeS" type="number" step="1" min="1" max="600" placeholder="40"></label>

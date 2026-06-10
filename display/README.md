@@ -216,6 +216,7 @@ then a frequency sweep — note the loudest and set it as **Drive frequency**.
 | Countdown, candidate `sep < 0.3°`, from **40 s** out | 0.5 s beep every **10 s** |
 | …from **15 s** out | every **5 s** |
 | …from **8 s** out | every **2 s** |
+| **Entry blast** — the transit itself, from **2 s** before entry | 1 × **5 s** (fires once) |
 
 Tune the beep length, count, intervals and phase windows per phase in Settings.
 Note: the countdown can't beep faster than the panel's **Quick refresh** (it

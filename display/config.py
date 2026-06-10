@@ -1,6 +1,6 @@
 """
 Bootstrap + live configuration for the e-paper display client.
-v0.31.7
+v0.31.8
 
 Design: there is exactly ONE local/bootstrap value — STP_CONFIG_URL — which
 tells the client where to read its live `display` config block from. Everything
@@ -50,13 +50,14 @@ DEFAULTS = {
 BUZZER_DEFAULTS = {
     "enabled": False,
     "gpioPin": 13,
-    "freqHz": 2700,
+    "freqHz": 2000,
     "sepThresholdDeg": 0.3,
     "newBeeps": 3, "newOnMs": 500, "newGapMs": 250,
     "lostBeeps": 1, "lostOnMs": 1500,
     "phase1BeforeS": 40, "phase1EveryS": 10, "phase1Beeps": 1, "phase1OnMs": 500,
     "phase2BeforeS": 15, "phase2EveryS": 5, "phase2Beeps": 1, "phase2OnMs": 500,
     "phase3BeforeS": 8, "phase3EveryS": 2, "phase3Beeps": 1, "phase3OnMs": 500,
+    "entryBeforeS": 2, "entryBeeps": 1, "entryOnMs": 5000,
 }
 
 

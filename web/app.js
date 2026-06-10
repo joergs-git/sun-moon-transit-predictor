@@ -304,11 +304,14 @@ const STALE_REASON_LABELS = {
   'no-fix':      { short: 'no fix',      tip: 'Still in dump1090 and the last projection was tight (< 0.5°), but the tracker needs groundSpeed + track in the fix to recompute and one of those dropped out for a few ticks. Re-emerges automatically when the fix is complete again — no action needed.' },
   'faded':       { short: 'faded',       tip: 'Still in dump1090 but the projected min-sep moved outside the panel band — won\'t transit.' },
 };
-// Hand-off Live → History. A row leaves the live-tracking panel once its
-// predicted closest is more than this long in the past, and shows up in
-// History only past the same threshold. Net effect: no double display, the
-// row visibly migrates downward to History on its own.
-const LIVE_GRACE_AFTER_ETA_MS = 5 * 60_000;
+// Hand-off Live → History. A row leaves the live-tracking ("Real candidates")
+// panel once its predicted closest is more than this long in the past, and
+// shows up in History only past the same threshold. Net effect: no double
+// display, the row visibly migrates downward to History on its own. Kept short
+// (1 min) so a long-gone candidate doesn't linger in the live view — it reverts
+// to default ~1 min after the transit. The History hand-off uses the same
+// cutoff, so there's no gap where a pass is in neither view.
+const LIVE_GRACE_AFTER_ETA_MS = 60_000;
 
 function renderTracking(state) {
   const tbody = $('#tracking tbody');
