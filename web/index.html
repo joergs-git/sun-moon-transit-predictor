@@ -588,7 +588,7 @@
 
         <fieldset>
           <legend>Audio / buzzer</legend>
-          <small class="field-hint">Piezo buzzer on the Pi (a GPIO pin ↔ GND), driven by <code>display/buzzer.py</code>. Beeps a transit countdown so you don't have to watch the screen. Durations are milliseconds; values below are the defaults. Each signal can <b>fade out</b> (the % of the beep whose volume ramps down — softer, less penetrant) and add <b>echo</b> taps.</small>
+          <small class="field-hint">Piezo buzzer on the Pi (a GPIO pin ↔ GND), driven by <code>display/buzzer.py</code>. Beeps a transit countdown so you don't have to watch the screen. Durations are milliseconds; values below are the defaults. Each signal can <b>fade out</b> (the % of the beep whose volume ramps down — softer, less penetrant) .</small>
           <label class="checkbox-row">
             <input name="buzzer.enabled" type="checkbox"> Enabled
             <small class="field-hint">Master on/off. Off → silent, and the client doesn't touch the GPIO.</small></label>
@@ -603,50 +603,44 @@
           <label>Only within (s before)<input name="buzzer.newEtaMaxS" type="number" step="1" min="1" max="3600" placeholder="120">
             <small class="field-hint">Beep only once a new candidate is within this many seconds of closest approach. <b>Default 120 (2 min).</b></small></label>
           <label>Beeps<input name="buzzer.newBeeps" type="number" step="1" min="0" max="10" placeholder="3"></label>
-          <label>Beep length (ms)<input name="buzzer.newOnMs" type="number" step="10" min="50" max="5000" placeholder="100"></label>
+          <label>Beep length (ms)<input name="buzzer.newOnMs" type="number" step="10" min="20" max="5000" placeholder="100"></label>
           <label>Gap (ms)<input name="buzzer.newGapMs" type="number" step="10" min="0" max="5000" placeholder="50"></label>
           <label>Fade-out (%)<input name="buzzer.newFadePct" type="number" step="5" min="0" max="100" placeholder="0"></label>
-          <label>Echo taps<input name="buzzer.newEcho" type="number" step="1" min="0" max="8" placeholder="0"></label>
 
           <div class="field-group-label">Lost / past signal</div>
-          <label>Beeps<input name="buzzer.lostBeeps" type="number" step="1" min="0" max="10" placeholder="1"></label>
-          <label>Beep length (ms)<input name="buzzer.lostOnMs" type="number" step="10" min="50" max="10000" placeholder="1500"></label>
-          <label>Frequency (Hz)<input name="buzzer.lostFreqHz" type="number" step="1" min="50" max="20000" placeholder="1000">
+          <label>Beeps<input name="buzzer.lostBeeps" type="number" step="1" min="0" max="10" placeholder="4"></label>
+          <label>Beep length (ms)<input name="buzzer.lostOnMs" type="number" step="10" min="20" max="10000" placeholder="100"></label>
+          <label>Frequency (Hz)<input name="buzzer.lostFreqHz" type="number" step="1" min="50" max="20000" placeholder="500">
             <small class="field-hint">Its own frequency so it's instantly distinct. <b>Default 1000.</b></small></label>
           <label>Fade-out (%)<input name="buzzer.lostFadePct" type="number" step="5" min="0" max="100" placeholder="30"></label>
-          <label>Echo taps<input name="buzzer.lostEcho" type="number" step="1" min="0" max="8" placeholder="0"></label>
 
           <div class="field-group-label">Entry blast (the transit itself)</div>
-          <label>From (s before entry)<input name="buzzer.entryBeforeS" type="number" step="1" min="0" max="60" placeholder="2"></label>
-          <label>Beeps<input name="buzzer.entryBeeps" type="number" step="1" min="0" max="10" placeholder="1"></label>
-          <label>Beep length (ms)<input name="buzzer.entryOnMs" type="number" step="10" min="100" max="15000" placeholder="5000"></label>
-          <label>Fade-out (%)<input name="buzzer.entryFadePct" type="number" step="5" min="0" max="100" placeholder="40"></label>
-          <label>Echo taps<input name="buzzer.entryEcho" type="number" step="1" min="0" max="8" placeholder="0"></label>
-          <small class="field-hint">One long blast the moment the plane enters the disc — fires once. <b>Default 1 × 5 s from 2 s before, 40% fade.</b></small>
+          <label>From (s before entry)<input name="buzzer.entryBeforeS" type="number" step="1" min="0" max="60" placeholder="3"></label>
+          <label>Beeps<input name="buzzer.entryBeeps" type="number" step="1" min="0" max="10" placeholder="10"></label>
+          <label>Beep length (ms)<input name="buzzer.entryOnMs" type="number" step="10" min="20" max="15000" placeholder="100"></label>
+          <label>Fade-out (%)<input name="buzzer.entryFadePct" type="number" step="5" min="0" max="100" placeholder="0"></label>
+          <small class="field-hint">A burst the moment the plane enters the disc — fires once. <b>Default 10 × 100 ms from 3 s before.</b></small>
 
           <div class="field-group-label">Countdown phase 1 (far)</div>
-          <label>From (s before)<input name="buzzer.phase1BeforeS" type="number" step="1" min="1" max="600" placeholder="40"></label>
+          <label>From (s before)<input name="buzzer.phase1BeforeS" type="number" step="1" min="1" max="600" placeholder="60"></label>
           <label>Every (s)<input name="buzzer.phase1EveryS" type="number" step="1" min="1" max="600" placeholder="10"></label>
-          <label>Beeps<input name="buzzer.phase1Beeps" type="number" step="1" min="0" max="10" placeholder="1"></label>
-          <label>Beep length (ms)<input name="buzzer.phase1OnMs" type="number" step="10" min="50" max="5000" placeholder="500"></label>
+          <label>Beeps<input name="buzzer.phase1Beeps" type="number" step="1" min="0" max="10" placeholder="2"></label>
+          <label>Beep length (ms)<input name="buzzer.phase1OnMs" type="number" step="10" min="20" max="5000" placeholder="50"></label>
           <label>Fade-out (%)<input name="buzzer.phase1FadePct" type="number" step="5" min="0" max="100" placeholder="0"></label>
-          <label>Echo taps<input name="buzzer.phase1Echo" type="number" step="1" min="0" max="8" placeholder="0"></label>
 
           <div class="field-group-label">Countdown phase 2 (mid)</div>
           <label>From (s before)<input name="buzzer.phase2BeforeS" type="number" step="1" min="1" max="600" placeholder="15"></label>
           <label>Every (s)<input name="buzzer.phase2EveryS" type="number" step="1" min="1" max="600" placeholder="5"></label>
-          <label>Beeps<input name="buzzer.phase2Beeps" type="number" step="1" min="0" max="10" placeholder="1"></label>
-          <label>Beep length (ms)<input name="buzzer.phase2OnMs" type="number" step="10" min="50" max="5000" placeholder="500"></label>
+          <label>Beeps<input name="buzzer.phase2Beeps" type="number" step="1" min="0" max="10" placeholder="2"></label>
+          <label>Beep length (ms)<input name="buzzer.phase2OnMs" type="number" step="10" min="20" max="5000" placeholder="50"></label>
           <label>Fade-out (%)<input name="buzzer.phase2FadePct" type="number" step="5" min="0" max="100" placeholder="0"></label>
-          <label>Echo taps<input name="buzzer.phase2Echo" type="number" step="1" min="0" max="8" placeholder="0"></label>
 
           <div class="field-group-label">Countdown phase 3 (near)</div>
           <label>From (s before)<input name="buzzer.phase3BeforeS" type="number" step="1" min="1" max="600" placeholder="8"></label>
           <label>Every (s)<input name="buzzer.phase3EveryS" type="number" step="1" min="1" max="600" placeholder="2"></label>
           <label>Beeps<input name="buzzer.phase3Beeps" type="number" step="1" min="0" max="10" placeholder="2"></label>
-          <label>Beep length (ms)<input name="buzzer.phase3OnMs" type="number" step="10" min="50" max="5000" placeholder="50"></label>
+          <label>Beep length (ms)<input name="buzzer.phase3OnMs" type="number" step="10" min="20" max="5000" placeholder="50"></label>
           <label>Fade-out (%)<input name="buzzer.phase3FadePct" type="number" step="5" min="0" max="100" placeholder="0"></label>
-          <label>Echo taps<input name="buzzer.phase3Echo" type="number" step="1" min="0" max="8" placeholder="0"></label>
           <small class="field-hint">Phases must descend: <b>From</b> phase1 &gt; phase2 &gt; phase3. Beeps speed up as the transit nears (default 10 s → 5 s → 2 s).</small>
 
           <div class="field-group-label">Test</div>

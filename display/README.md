@@ -212,17 +212,17 @@ then a frequency sweep — note the loudest and set it as **Drive frequency**.
 | Event | Default |
 |---|---|
 | **New Real candidate**, once it is within **2 min** of closest approach | 3 × 0.1 s beeps |
-| **Candidate lost** / closest approach passed | 1 × 1.5 s beep at **1000 Hz** (distinct tone) |
-| Countdown, candidate `sep < 0.3°`, from **40 s** out | 0.5 s beep every **10 s** |
+| **Candidate lost** / closest approach passed | 4 × 0.1 s beeps at **500 Hz** (distinct tone), 30% fade |
+| Countdown, candidate `sep < 0.3°`, from **60 s** out | 2 × 0.05 s every **10 s** |
 | …from **15 s** out | every **5 s** |
-| …from **8 s** out | 2 × 0.05 s every **2 s** |
-| **Entry blast** — the transit itself, from **2 s** before entry | 1 × **5 s** (fires once) |
+| …from **8 s** out | every **2 s** |
+| **Entry burst** — the transit itself, from **3 s** before entry | 10 × 0.1 s (fires once) |
 
 A **Test signals** button in Settings plays the whole sequence once on the Pi
 (enable audio + Save first). The lost signal has its own frequency so it's
 instantly recognisable. Each signal can **fade out** (a % of the beep whose
-volume ramps down — softer, less penetrant) and add **echo** taps; both are
-per-signal in Settings (defaults: a gentle fade on the lost + entry tones).
+volume ramps down — softer, less penetrant), per-signal in Settings (default:
+a gentle fade on the lost signal).
 Tune beep length, count, frequency, intervals, the new-candidate window and the
 per-phase windows too. Note: the countdown can't beep faster than the panel's
 **Quick refresh** (shared poll tick) — keep it ~2 s.

@@ -597,3 +597,19 @@ over an imminent ETA -22s:
       tests (lifecycle ordering tests updated to imminence).
 
 Open: user asked about echo — implemented. (#3/#6 still dropped.)
+
+---
+
+# Buzzer: remove echo, adopt user's tuned defaults, allow short beeps (v0.31.11)
+
+User (2026-06-10):
+- [x] Remove the echo-taps feature entirely (kept fade-out): _signal() drops the
+      echo param + tail; removed the 6 *Echo config keys (server defaults +
+      validation, config.py, example.json) and the 6 web "Echo taps" fields.
+- [x] Adopt the user's screenshot values as defaults: lost 4×100 ms @500 Hz/30%
+      fade; entry 10×100 ms from 3 s; phase1 from 60 s, all phases 2×50 ms.
+- [x] Allow beep length < 100 ms (UI/validation rejected it): lowered every
+      *OnMs minimum to 20 ms (was 50, entry was 100) — both the server validation
+      and the web inputs.
+- [x] Verified: scheduler harness (pinned cfg), test_sequence reflects defaults,
+      205 node tests, JSON valid, fieldsets balanced.
