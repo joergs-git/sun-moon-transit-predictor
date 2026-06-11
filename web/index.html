@@ -606,20 +606,23 @@
           <label>Beep length (ms)<input name="buzzer.newOnMs" type="number" step="10" min="20" max="5000" placeholder="100"></label>
           <label>Gap (ms)<input name="buzzer.newGapMs" type="number" step="10" min="0" max="5000" placeholder="50"></label>
           <label>Fade-out (%)<input name="buzzer.newFadePct" type="number" step="5" min="0" max="100" placeholder="0"></label>
+          <label>Freq step (Hz)<input name="buzzer.newFreqStepHz" type="number" step="10" min="-5000" max="5000" placeholder="200"></label>
 
           <div class="field-group-label">Lost / past signal</div>
-          <label>Beeps<input name="buzzer.lostBeeps" type="number" step="1" min="0" max="10" placeholder="4"></label>
+          <label>Beeps<input name="buzzer.lostBeeps" type="number" step="1" min="0" max="10" placeholder="3"></label>
           <label>Beep length (ms)<input name="buzzer.lostOnMs" type="number" step="10" min="20" max="10000" placeholder="100"></label>
           <label>Frequency (Hz)<input name="buzzer.lostFreqHz" type="number" step="1" min="50" max="20000" placeholder="500">
-            <small class="field-hint">Its own frequency so it's instantly distinct. <b>Default 1000.</b></small></label>
+            <small class="field-hint">Its own (lower) base frequency; the chord falls. <b>Default 1000, step -200.</b></small></label>
           <label>Fade-out (%)<input name="buzzer.lostFadePct" type="number" step="5" min="0" max="100" placeholder="30"></label>
+          <label>Freq step (Hz)<input name="buzzer.lostFreqStepHz" type="number" step="10" min="-5000" max="5000" placeholder="-200"></label>
 
           <div class="field-group-label">Entry blast (the transit itself)</div>
           <label>From (s before entry)<input name="buzzer.entryBeforeS" type="number" step="1" min="0" max="60" placeholder="3"></label>
-          <label>Beeps<input name="buzzer.entryBeeps" type="number" step="1" min="0" max="10" placeholder="10"></label>
+          <label>Beeps<input name="buzzer.entryBeeps" type="number" step="1" min="0" max="10" placeholder="3"></label>
           <label>Beep length (ms)<input name="buzzer.entryOnMs" type="number" step="10" min="20" max="15000" placeholder="100"></label>
           <label>Fade-out (%)<input name="buzzer.entryFadePct" type="number" step="5" min="0" max="100" placeholder="0"></label>
-          <small class="field-hint">A burst the moment the plane enters the disc — fires once. <b>Default 10 × 100 ms from 3 s before.</b></small>
+          <label>Freq step (Hz)<input name="buzzer.entryFreqStepHz" type="number" step="10" min="-5000" max="5000" placeholder="200"></label>
+          <small class="field-hint">A rising 3-tone chord the moment the plane enters the disc — fires once. <b>Default 3 × 100 ms, +200 Hz/step, from 3 s before.</b></small>
 
           <div class="field-group-label">Countdown phase 1 (far)</div>
           <label>From (s before)<input name="buzzer.phase1BeforeS" type="number" step="1" min="1" max="600" placeholder="60"></label>

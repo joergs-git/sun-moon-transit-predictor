@@ -628,3 +628,20 @@ User (2026-06-10):
       (ISS excluded) from store.consolidatedHistory(), computed on a 20 s cache.
 - [x] render.py: _fmt_ago() helper; header + bottom rewritten. Verified both
       states via the fixture harness; 205 node tests pass.
+
+---
+
+# Buzzer: rising/falling frequency chords for new/lost/entry (v0.31.13)
+
+User (2026-06-11): replace single tones with 3-tone sweeps — rising for new
+candidate (+200 Hz/step), falling for lost (−200), and a rising entry chord.
+- [x] _signal() gained base_freq + freq_step → each beep steps in frequency
+      (clamped 80–20000); embedded as a 4th per-step element so the player sweeps
+      within one pattern. Fade/duty untouched.
+- [x] New `<sig>FreqStepHz` config for new/lost/entry (server defaults +
+      validation [-5000..5000], config.py, example, web fields).
+- [x] Defaults: new 3×100 ms +200 (2000→2400); lost 3×100 ms −200 from 500
+      (500→100), 30% fade; entry now a 3-tone rising chord (+200) instead of the
+      10-beep burst. Countdown phases unchanged (no sweep).
+- [x] Verified: scheduler harness (asc 2000/2200/2400, desc 500/300/100),
+      test_sequence, 205 node tests, JSON valid, fieldsets balanced.

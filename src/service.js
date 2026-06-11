@@ -229,18 +229,21 @@ export const DEFAULT_CONFIG = {
     newEtaMaxS: 120,
     // Per signal: `FadePct` (0–100) ramps the beep's volume down over its tail
     // so it ends soft instead of clicking — less penetrant. 0 = a plain beep.
-    newBeeps: 3, newOnMs: 100, newGapMs: 50, newFadePct: 0,
+    // `FreqStepHz` shifts each successive beep's frequency — a rising chord for
+    // an arrival cue (new candidate +200), a falling one for a departure (lost
+    // −200). 0 = all beeps at the same frequency.
+    newBeeps: 3, newOnMs: 100, newGapMs: 50, newFadePct: 0, newFreqStepHz: 200,
     // "Candidate lost / closest approach passed" signal, sounded at its own lower
-    // frequency so it's instantly distinguishable, with a gentle fade tail.
-    lostBeeps: 4, lostOnMs: 100, lostFreqHz: 500, lostFadePct: 30,
+    // base frequency and falling, so it's instantly read as "gone".
+    lostBeeps: 3, lostOnMs: 100, lostFreqHz: 500, lostFadePct: 30, lostFreqStepHz: -200,
     // Accelerating pre-transit countdown — three phases by time-to-closest.
     // Each: window start (s before transit), interval (s), beep count, length (ms), fade %.
     phase1BeforeS: 60, phase1EveryS: 10, phase1Beeps: 2, phase1OnMs: 50, phase1FadePct: 0,
     phase2BeforeS: 15, phase2EveryS: 5,  phase2Beeps: 2, phase2OnMs: 50, phase2FadePct: 0,
     phase3BeforeS: 8,  phase3EveryS: 2,  phase3Beeps: 2, phase3OnMs: 50, phase3FadePct: 0,
-    // "Entry" final burst — fires once, starting `entryBeforeS` before the plane
-    // actually enters the disc, to signal the transit itself.
-    entryBeforeS: 3, entryBeeps: 10, entryOnMs: 100, entryFadePct: 0,
+    // "Entry" cue — fires once, starting `entryBeforeS` before the plane enters
+    // the disc: a rising 3-tone chord for the transit itself.
+    entryBeforeS: 3, entryBeeps: 3, entryOnMs: 100, entryFadePct: 0, entryFreqStepHz: 200,
   },
   // ISS transits (offline SGP4 from a TLE file). Inactive until a TLE is
   // present at tlePath — fetch it opt-in with scripts/refresh-tle.js. The
@@ -1151,9 +1154,9 @@ export async function runService({
         sepThresholdDeg: [0.01, 5, false],
         newEtaMaxS: [1, 3600, true],
         newBeeps: [0, 10, true], newOnMs: [20, 5000, true], newGapMs: [0, 5000, true],
-        newFadePct: [0, 100, true],
+        newFadePct: [0, 100, true], newFreqStepHz: [-5000, 5000, true],
         lostBeeps: [0, 10, true], lostOnMs: [20, 10000, true], lostFreqHz: [50, 20000, true],
-        lostFadePct: [0, 100, true],
+        lostFadePct: [0, 100, true], lostFreqStepHz: [-5000, 5000, true],
         phase1BeforeS: [1, 600, true], phase1EveryS: [1, 600, true], phase1Beeps: [0, 10, true], phase1OnMs: [20, 5000, true],
         phase1FadePct: [0, 100, true],
         phase2BeforeS: [1, 600, true], phase2EveryS: [1, 600, true], phase2Beeps: [0, 10, true], phase2OnMs: [20, 5000, true],
@@ -1161,7 +1164,7 @@ export async function runService({
         phase3BeforeS: [1, 600, true], phase3EveryS: [1, 600, true], phase3Beeps: [0, 10, true], phase3OnMs: [20, 5000, true],
         phase3FadePct: [0, 100, true],
         entryBeforeS: [0, 60, true], entryBeeps: [0, 10, true], entryOnMs: [20, 15000, true],
-        entryFadePct: [0, 100, true],
+        entryFadePct: [0, 100, true], entryFreqStepHz: [-5000, 5000, true],
       };
       for (const [k, [lo, hi, isInt]] of Object.entries(NUM)) {
         if (k in d) {

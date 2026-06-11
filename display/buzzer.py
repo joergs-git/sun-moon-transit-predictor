@@ -1,6 +1,6 @@
 """
 Piezo buzzer driver + transit beep scheduler (Pi-side).
-v0.31.11
+v0.31.13
 
 Wiring: a piezo buzzer between a GPIO pin (default GPIO13) and GND.
 
@@ -133,8 +133,9 @@ class Buzzer:
                     break
                 on_s, off_s = step[0], step[1]
                 duty = step[2] if (len(step) > 2 and step[2] is not None) else self.duty
+                sfreq = step[3] if (len(step) > 3 and step[3]) else use_freq  # per-step sweep
                 if on_s > 0 and duty > 0:
-                    self._tone_on(use_freq, duty)
+                    self._tone_on(sfreq, duty)
                     time.sleep(on_s)
                     self._tone_off()
                 elif on_s > 0:
@@ -168,33 +169,41 @@ class Buzzer:
                     pass
 
 
-def _signal(beeps, on_ms, gap_ms, fade_pct=0, full_duty=0.5):
-    """Build a pattern (list of (on_s, off_s, duty) steps) for one signal.
+def _signal(beeps, on_ms, gap_ms, fade_pct=0, full_duty=0.5, base_freq=None, freq_step=0):
+    """Build a pattern (list of (on_s, off_s, duty, freq) steps) for one signal.
 
-    `fade_pct` (0–100): the last fraction of each beep ramps the volume (PWM
-    duty) down to ~0, so the beep ends soft instead of clicking off — a gentle
-    decay that sounds far less penetrant. With fade_pct=0 this is just `beeps`
-    flat tones — identical to a plain beep pattern.
+    * `fade_pct` (0–100): the last fraction of each beep ramps the volume (PWM
+      duty) down to ~0, so the beep ends soft instead of clicking off.
+    * `base_freq` + `freq_step`: when both are set, successive beeps step in
+      frequency — an ascending (+) or descending (−) chord, e.g. a rising
+      "appearing" cue and a falling "gone" cue. Beep i sounds at
+      base_freq + i·freq_step (clamped to a sane audible range). `freq` is None
+      for steps with no sweep, so the player falls back to the pattern frequency.
+    With fade_pct=0 and freq_step=0 this is just `beeps` flat tones.
     """
     on_s = max(0.0, float(on_ms) / 1000.0)
     gap_s = max(0.0, float(gap_ms) / 1000.0)
     fade = min(1.0, max(0.0, float(fade_pct) / 100.0))
     n_beeps = max(0, int(beeps))
+    sweep = base_freq is not None and freq_step
 
     out = []
-    for _ in range(n_beeps):
+    for i in range(n_beeps):
+        bf = None
+        if sweep:
+            bf = max(80.0, min(20000.0, float(base_freq) + i * float(freq_step)))
         if fade <= 0.0 or on_s <= 0.0:
-            out.append((on_s, gap_s, full_duty))
+            out.append((on_s, gap_s, full_duty, bf))
             continue
         body = on_s * (1.0 - fade)
         tail = on_s * fade
         if body > 0:
-            out.append((body, 0.0, full_duty))
+            out.append((body, 0.0, full_duty, bf))
         steps = max(1, min(20, int(tail / 0.02)))    # ~20 ms fade steps, capped
-        for i in range(steps):
-            d = full_duty * (1.0 - (i + 1) / steps)  # ramp full_duty → 0
-            last = (i == steps - 1)
-            out.append((tail / steps, gap_s if last else 0.0, max(0.0, d)))
+        for j in range(steps):
+            d = full_duty * (1.0 - (j + 1) / steps)  # ramp full_duty → 0
+            last = (j == steps - 1)
+            out.append((tail / steps, gap_s if last else 0.0, max(0.0, d), bf))
     return out
 
 
@@ -205,21 +214,26 @@ def test_sequence(cfg):
     trailing gap so the groups are distinguishable."""
     cfg = cfg or {}
 
-    def seg(beeps, on_ms, gap_ms, fade, sep_s, freq=None):
-        p = _signal(beeps, on_ms, gap_ms, fade)
+    def seg(beeps, on_ms, gap_ms, fade, sep_s, freq=None, base_freq=None, freq_step=0):
+        p = _signal(beeps, on_ms, gap_ms, fade, base_freq=base_freq, freq_step=freq_step)
         if p and sep_s:                        # widen the gap after the group
             last = p[-1]
-            p[-1] = (last[0], sep_s, last[2] if len(last) > 2 else None)
+            p[-1] = (last[0], sep_s, last[2] if len(last) > 2 else None,
+                     last[3] if len(last) > 3 else None)
         return (p, freq)
 
     g = cfg.get
+    base = g("freqHz", 2000)
     segs = [
-        seg(g("newBeeps", 3),  g("newOnMs", 100),  g("newGapMs", 50), g("newFadePct", 0),  0.7),
-        seg(g("lostBeeps", 1), g("lostOnMs", 1500), 200, g("lostFadePct", 0), 0.7, freq=g("lostFreqHz")),
+        seg(g("newBeeps", 3),  g("newOnMs", 100),  g("newGapMs", 50), g("newFadePct", 0), 0.7,
+            base_freq=base, freq_step=g("newFreqStepHz", 0)),
+        seg(g("lostBeeps", 3), g("lostOnMs", 100), 200, g("lostFadePct", 0), 0.7,
+            freq=g("lostFreqHz"), base_freq=g("lostFreqHz", 500), freq_step=g("lostFreqStepHz", 0)),
         seg(g("phase1Beeps", 1), g("phase1OnMs", 500), 200, g("phase1FadePct", 0), 0.5),
         seg(g("phase2Beeps", 1), g("phase2OnMs", 500), 200, g("phase2FadePct", 0), 0.5),
         seg(g("phase3Beeps", 2), g("phase3OnMs", 50),  200, g("phase3FadePct", 0), 0.5),
-        seg(g("entryBeeps", 1),  g("entryOnMs", 5000), 200, g("entryFadePct", 0), 0.0),
+        seg(g("entryBeeps", 3),  g("entryOnMs", 100), 200, g("entryFadePct", 0), 0.0,
+            base_freq=base, freq_step=g("entryFreqStepHz", 0)),
     ]
     return [s for s in segs if s[0]]           # drop empty groups
 
@@ -287,15 +301,19 @@ class BeepScheduler:
                 if self._primed:
                     self.buz.play(_signal(cfg.get("newBeeps", 3),
                                           cfg.get("newOnMs", 100), cfg.get("newGapMs", 50),
-                                          cfg.get("newFadePct", 0)))
+                                          cfg.get("newFadePct", 0),
+                                          base_freq=cfg.get("freqHz", 2000),
+                                          freq_step=cfg.get("newFreqStepHz", 0)))
                 self.announced.add(k)
 
         # "Lost / past" signal: a previously-announced candidate vanished.
         # Played at its own frequency (default 1000 Hz) so it sounds distinct.
         lost = self.prev_keys - cur_keys
         if self._primed and any(k in self.announced for k in lost):
-            self.buz.play(_signal(cfg.get("lostBeeps", 1), cfg.get("lostOnMs", 1500), 200,
-                                  cfg.get("lostFadePct", 0)),
+            self.buz.play(_signal(cfg.get("lostBeeps", 3), cfg.get("lostOnMs", 100), 200,
+                                  cfg.get("lostFadePct", 0),
+                                  base_freq=cfg.get("lostFreqHz", 500),
+                                  freq_step=cfg.get("lostFreqStepHz", 0)),
                           freq=cfg.get("lostFreqHz"))
         for k in lost:
             self.last_beep.pop(k, None)
@@ -331,8 +349,10 @@ class BeepScheduler:
             if k in self.entry_fired:
                 continue  # entry already signalled → no more beeps for this contact
             if -entry_before <= eta_entry <= entry_before:
-                self.buz.play(_signal(cfg.get("entryBeeps", 1), cfg.get("entryOnMs", 5000), 200,
-                                      cfg.get("entryFadePct", 0)))
+                self.buz.play(_signal(cfg.get("entryBeeps", 3), cfg.get("entryOnMs", 100), 200,
+                                      cfg.get("entryFadePct", 0),
+                                      base_freq=cfg.get("freqHz", 2000),
+                                      freq_step=cfg.get("entryFreqStepHz", 0)))
                 self.entry_fired.add(k)
                 continue
 
