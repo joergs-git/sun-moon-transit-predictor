@@ -28,8 +28,8 @@ to print flat). Black looks best with the e-paper bezel; any colour works.
 |---|---|
 | **Waveshare 4.2" e-paper module** (B/W, **400 × 300**, SPI) | The display that drops into the stand. SPI, **not** I2C. Plugs onto the Pi 5's 40-pin header (or wire the bare module — see the pin map in [display/README.md](../display/README.md)). |
 | **Raspberry Pi 5** | Runs everything (tracker + `dump1090-fa` + the panel client). |
-| **RTL-SDR USB dongle** (RTL2832U + R820T2) + **1090 MHz antenna** | The ADS-B receiver feeding `dump1090-fa`. |
-| **Piezo buzzer** (small passive piezo) | Optional audio alerts. Wires across **GPIO13 ↔ GND** — see below. |
+| **RTL-SDR USB dongle** (RTL2832U + R820T2) + **1090 MHz antenna** | The ADS-B receiver feeding `dump1090-fa`. A compact antenna: [shorter 1090 MHz antenna](https://amzn.eu/d/06Qrm39Q) ([female–female SMA adapters](https://amzn.eu/d/06Qrm39Q) may be needed for the coax). |
+| **Piezo buzzer** (small passive piezo) | Optional audio alerts. Wires across **GPIO13 ↔ GND** — see below. [Example buzzer](https://amzn.eu/d/0bKdLEn7). |
 | 2 × female–female jumper wires | To connect the buzzer to the header. |
 
 ---
