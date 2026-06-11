@@ -1,6 +1,6 @@
 """
 Piezo buzzer driver + transit beep scheduler (Pi-side).
-v0.31.15
+v0.31.16
 
 Wiring: a piezo buzzer between a GPIO pin (default GPIO13) and GND.
 
@@ -277,27 +277,36 @@ class BeepScheduler:
 
     @staticmethod
     def _candidate_set(state, sep_th):
-        """The planes worth alerting on: the live tracked ones (lifecycle,
-        non-stale) whose predicted closest separation is under `sep_th`. This is
-        what the panel actually shows — far wider and more stable than the raw
-        per-tick `state.candidates` (tight + frequently empty), which is why the
-        buzzer stayed silent while real candidates were on screen. Falls back to
-        `state.candidates` if no lifecycle is present."""
+        """The planes worth alerting on: the tracked ones the panel features —
+        lifecycle entries whose predicted closest separation is under `sep_th`
+        and whose closest approach is still upcoming or only just past. This is
+        far wider and more stable than the raw per-tick `state.candidates` (tight
+        + frequently empty), which is why the buzzer stayed silent while a real
+        candidate was on screen.
+
+        Crucially we keep COASTING / stale-lost entries (signal briefly gone but
+        still predicted to transit) — those are exactly what the panel shows as
+        the nearest plane, and the user expects them to beep. Only well-past
+        contacts (closest > 60 s ago) and far-out / off-band ones (sep ≥ sep_th)
+        are dropped. Falls back to `state.candidates` if no lifecycle is present.
+        """
+        now_ms = state.get("nowMs") or 0
         lc = state.get("lifecycle") or []
         if lc:
             out = []
             for e in lc:
-                if e.get("status") == "stale":
-                    continue
                 sep = e.get("closestApproachSepDeg")
                 if sep is None or sep >= sep_th:
                     continue
+                at = e.get("closestApproachAtMs")
+                if at is not None and (at - now_ms) < -60_000:
+                    continue  # transit well past — done
                 cand = e.get("candidate") or {}
                 out.append({
                     "icao": e.get("icao"),
                     "callsign": e.get("callsign"),
                     "body": e.get("body"),
-                    "closestApproachAtMs": e.get("closestApproachAtMs"),
+                    "closestApproachAtMs": at,
                     "closestApproachSepDeg": sep,
                     "entersAtMs": cand.get("entersAtMs"),
                 })
@@ -332,7 +341,7 @@ class BeepScheduler:
         # Diagnostic: log the tracked-candidate count whenever it changes, so
         # `journalctl -u stp-display` shows whether live events exist at all.
         if len(cur) != self._last_count:
-            self.log("buzzer: %d candidate(s) within %.2f° (non-stale)" % (len(cur), sep_th))
+            self.log("buzzer: %d candidate(s) within %.2f° (incl. coasting)" % (len(cur), sep_th))
             self._last_count = len(cur)
 
         # "New candidate" signal: fire once per candidate, but only once it is

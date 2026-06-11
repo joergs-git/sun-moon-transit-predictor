@@ -688,3 +688,21 @@ beep; FOV cross at the frame edge; huge ISS ETAs; wants current+closest+path.
 
 Note: existing saved configs keep sepThresholdDeg=0.3 — tell the user to set the
 Alert SEP threshold to ~1.0 in Settings so their 0.2–0.9° candidates beep.
+
+---
+
+# Buzzer: alert for coasting/stale-lost candidates too (v0.31.16)
+
+User (photo IMG_0864): no live beep. Featured nearest plane RYR917L was
+"! STALE 170s" (ADS-B signal lost, predicted closest still 2 min ahead); the
+only non-stale entries were ISS passes 1d19h out. v0.31.15's _candidate_set
+excluded ALL stale → the panel's featured candidate never beeped.
+- [x] _candidate_set now keeps coasting / stale-lost entries whose closest is
+      still upcoming or only just past (drop only well-past >60 s and off-band
+      sep≥sep_th). Verified: RYR-style stale-lost kept, well-past + far dropped;
+      scheduler harness + 205 node tests still pass.
+- NOT an audio bug — the test sequence is the same play() path that works; the
+  scheduler simply had nothing (non-stale) to fire on.
+Reminder for the user: on a two-Pi setup, the display Pi reads BUZZER config from
+its OWN localhost (STP_CONFIG_URL), STATE from sourceUrl — so configure/test the
+buzzer on the display Pi's web UI, not the remote predictor's.
