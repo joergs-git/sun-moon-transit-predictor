@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 E-paper display client for the Sun-Moon Transit Predictor.
-v0.31.9
+v0.31.14
 
 A standalone, decoupled HTTP poller + renderer for a Waveshare 4.2" B/W SPI
 panel (400×300) on a Raspberry Pi 5. It carries NO business logic: it reads its
@@ -132,7 +132,7 @@ def run(panel, once=False):
     last_test_id = None      # last seen buzzer testId, to detect the Settings test
 
     buz = buzzer.Buzzer()
-    sched = buzzer.BeepScheduler(buz, buzzer_cfg)
+    sched = buzzer.BeepScheduler(buz, buzzer_cfg, log=_log)
 
     while _running:
         now = time.monotonic()

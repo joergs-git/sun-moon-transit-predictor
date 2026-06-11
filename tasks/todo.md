@@ -645,3 +645,23 @@ candidate (+200 Hz/step), falling for lost (−200), and a rising entry chord.
       10-beep burst. Countdown phases unchanged (no sweep).
 - [x] Verified: scheduler harness (asc 2000/2200/2400, desc 500/300/100),
       test_sequence, 205 node tests, JSON valid, fieldsets balanced.
+
+---
+
+# Buzzer: harden worker thread + diagnostic logging (v0.31.14)
+
+User: test beeps play, but no LIVE beeps came afterwards.
+- [x] Wrap the buzzer worker thread's per-pattern playback in try/except so a
+      single bad step can never kill the thread (which would silently stop ALL
+      future beeps — the likely "test works, live doesn't" failure mode). Logs
+      "buzzer playback error: …" if it ever catches one.
+- [x] BeepScheduler gained a `log` callback (wired to the client's _log):
+      logs the in-band candidate count on change, plus every fired NEW / LOST /
+      COUNTDOWN / ENTRY event — so `journalctl -u stp-display` shows whether
+      live events exist at all (likely cause: state.candidates is empty because
+      real sub-threshold candidates are rare).
+- [x] Verified: scheduler harness + a logging smoke test; 205 node tests pass.
+
+Next: have the user read journalctl to see if state.candidates is ever non-empty;
+if the panel shows REAL CANDIDATEs while the log says 0, the trigger source needs
+to move from state.candidates to the lifecycle real-candidates.

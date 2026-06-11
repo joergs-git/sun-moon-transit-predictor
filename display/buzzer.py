@@ -1,6 +1,6 @@
 """
 Piezo buzzer driver + transit beep scheduler (Pi-side).
-v0.31.13
+v0.31.14
 
 Wiring: a piezo buzzer between a GPIO pin (default GPIO13) and GND.
 
@@ -120,28 +120,36 @@ class Buzzer:
 
     def _run(self):
         # Sleeps happen OUTSIDE the lock so reconfigure() never blocks on a tone.
-        # A pattern step is (on_s, off_s[, duty]); duty defaults to self.duty so
-        # fade-out (the duty ramped down over a beep's tail) just works.
+        # A pattern step is (on_s, off_s[, duty[, freq]]). The whole playback of a
+        # pattern is wrapped so a single bad step can NEVER kill the worker thread
+        # (which would silently stop ALL future beeps, live and test alike).
         while not self._stop.is_set():
             try:
                 pattern, freq = self._q.get(timeout=0.2)
             except queue.Empty:
                 continue
-            use_freq = float(freq) if freq else self.freq   # per-pattern override
-            for step in pattern:
-                if self._stop.is_set():
-                    break
-                on_s, off_s = step[0], step[1]
-                duty = step[2] if (len(step) > 2 and step[2] is not None) else self.duty
-                sfreq = step[3] if (len(step) > 3 and step[3]) else use_freq  # per-step sweep
-                if on_s > 0 and duty > 0:
-                    self._tone_on(sfreq, duty)
-                    time.sleep(on_s)
+            try:
+                use_freq = float(freq) if freq else self.freq   # per-pattern override
+                for step in pattern:
+                    if self._stop.is_set():
+                        break
+                    on_s, off_s = step[0], step[1]
+                    duty = step[2] if (len(step) > 2 and step[2] is not None) else self.duty
+                    sfreq = step[3] if (len(step) > 3 and step[3]) else use_freq  # per-step sweep
+                    if on_s > 0 and duty > 0:
+                        self._tone_on(sfreq, duty)
+                        time.sleep(on_s)
+                        self._tone_off()
+                    elif on_s > 0:
+                        time.sleep(on_s)         # silent step (duty 0) — just wait
+                    if off_s > 0:
+                        time.sleep(off_s)
+            except Exception as e:
+                print("[stp-display] buzzer playback error: %s" % e, flush=True)
+                try:
                     self._tone_off()
-                elif on_s > 0:
-                    time.sleep(on_s)             # silent step (duty 0) — just wait
-                if off_s > 0:
-                    time.sleep(off_s)
+                except Exception:
+                    pass
 
     # ── api ──
     def play(self, pattern, freq=None):
@@ -252,14 +260,16 @@ class BeepScheduler:
     buzzer that records patterns.
     """
 
-    def __init__(self, buz, cfg=None):
+    def __init__(self, buz, cfg=None, log=None):
         self.buz = buz
         self.cfg = dict(cfg) if cfg else {}
+        self.log = log or (lambda *_a: None)   # diagnostic logger (no-op by default)
         self.prev_keys = set()       # real-candidate keys seen last tick
         self.last_beep = {}          # key -> monotonic time of last countdown beep
         self.entry_fired = set()     # keys whose one-shot entry blast already fired
         self.announced = set()       # keys that got the one-shot "new candidate" beep
         self._primed = False         # suppress new/lost on the very first tick
+        self._last_count = -1        # last logged real-candidate count (log on change)
 
     @staticmethod
     def _key(c):
@@ -286,6 +296,12 @@ class BeepScheduler:
         cur = {self._key(c): c for c in cands}
         cur_keys = set(cur)
 
+        # Diagnostic: log the in-band candidate count whenever it changes, so
+        # `journalctl -u stp-display` shows whether live events exist at all.
+        if len(cur) != self._last_count:
+            self.log("buzzer: %d real candidate(s) in state.candidates" % len(cur))
+            self._last_count = len(cur)
+
         # "New candidate" signal: fire once per candidate, but only once it is
         # within `newEtaMaxS` of closest approach — so a candidate many minutes
         # out doesn't beep. Works whether it appears already inside the window
@@ -304,6 +320,7 @@ class BeepScheduler:
                                           cfg.get("newFadePct", 0),
                                           base_freq=cfg.get("freqHz", 2000),
                                           freq_step=cfg.get("newFreqStepHz", 0)))
+                    self.log("buzzer: NEW candidate %s (eta %ds)" % (k, round(eta)))
                 self.announced.add(k)
 
         # "Lost / past" signal: a previously-announced candidate vanished.
@@ -315,6 +332,7 @@ class BeepScheduler:
                                   base_freq=cfg.get("lostFreqHz", 500),
                                   freq_step=cfg.get("lostFreqStepHz", 0)),
                           freq=cfg.get("lostFreqHz"))
+            self.log("buzzer: LOST candidate(s) %s" % ", ".join(k for k in lost if k in self.announced))
         for k in lost:
             self.last_beep.pop(k, None)
             self.entry_fired.discard(k)
@@ -354,6 +372,7 @@ class BeepScheduler:
                                       base_freq=cfg.get("freqHz", 2000),
                                       freq_step=cfg.get("entryFreqStepHz", 0)))
                 self.entry_fired.add(k)
+                self.log("buzzer: ENTRY %s" % k)
                 continue
 
             # Otherwise: the accelerating pre-transit countdown (by time-to-closest).
@@ -366,6 +385,7 @@ class BeepScheduler:
             if mono - self.last_beep.get(k, -1e9) >= every_s - 0.25:
                 self.buz.play(_signal(beeps, on_ms, 200, fade))
                 self.last_beep[k] = mono
+                self.log("buzzer: COUNTDOWN %s (sep %.2f°, eta %ds)" % (k, sep, round(eta_s)))
 
         self.prev_keys = cur_keys
 
