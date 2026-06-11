@@ -10,6 +10,13 @@ T-minus alert once live ADS-B has nailed down the transit time.
 ![Plane in front of sun](/sun-n-plane.png) 
 ![Fov projection](/sunplane.png)
 
+![Pi 5 + e-paper stand with ADS-B dongle and antenna — behind it a real H-alpha Sun transit](3D-Prints/sunmoon-adsb-casestand.jpg)
+
+*The whole thing on a desk: a 3D-printed stand holding the Pi 5, the 4.2"
+e-paper readout and the RTL-SDR dongle, antenna behind — and on the monitor, an
+actual aircraft crossing the solar disc. Printable parts + the buzzer wiring are
+in **[3D-Prints/](3D-Prints/README.md)**.*
+
 ## ⚡ Quick start (Raspberry Pi)
 
 **Catch an aircraft — or the ISS — crossing the Sun or Moon, automatically.**
@@ -156,6 +163,8 @@ for the cases where you want to push the setup further.
 
 | Item | When you want it |
 |---|---|
+| **3D-printed stand / case** | A printable desk stand that holds the Pi 5, the 4.2" e-paper panel and the RTL-SDR dongle in one unit (plus separate Pi-5 and e-paper cases). STL files, a photo, and the buzzer wiring are in **[3D-Prints/](3D-Prints/README.md)**. |
+| **Piezo buzzer** (any small passive piezo) | Audible transit alerts — a rising chord when a candidate appears, a falling one when it's gone, an accelerating countdown, and an entry chord at the actual disc transit. Two jumpers, no extra parts: **GPIO13 (pin 33) ↔ buzzer ↔ GND (pin 34)**. Wiring + tuning: **[3D-Prints/README.md](3D-Prints/README.md#piezo-buzzer--wiring-the-optimal-default)** and **[display/README.md](display/README.md#audio-buzzer-optional)**. |
 | **Waveshare PoE HAT** (or equivalent IEEE 802.3af/at HAT) | If you want **PoE-only operation** — single Ethernet cable provides power *and* network, no USB-C PSU needed. Mounts on the Pi 5's 40-pin GPIO header. Verify the HAT's spec matches the Pi 5 power budget (≥ 5 V/5 A continuous including ADS-B-stick draw). |
 | **Active LNA** (Uputronics / RTL-SDR Blog) at the antenna feedpoint | Pulls weaker / further aircraft out of the noise; powered via the RTL-SDR's bias-T. Only worth it if you're seeing < 200 km range. |
 | **1090 MHz bandpass / SAW filter** | Cuts strong out-of-band signals (FM broadcast, cellular) that can desensitise the RTL. Often built into the LNAs above. |
