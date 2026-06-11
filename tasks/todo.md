@@ -723,3 +723,18 @@ User (photos): the e-paper candidate display deviated from the web. Two causes:
 Note (two-Pi setup): the web table fix lives in lifecycleArray on the PREDICTOR
 host (192.168.1.15) — update + restart stp.service THERE too, not just the
 display Pi, for the web list to match. (Predictor was on v0.31.12.)
+
+---
+
+# Docs: move the long README into a structured GitHub Wiki (v0.31.17 docs)
+
+User: the 2000-line README is impractical → structured WIKI + small README entry
+linking in; the table of contents matters most; not a dozen subpages.
+- [x] GitHub Wiki (.wiki.git) restructured: Home = master table of contents
+      (deep links per topic) + 4 consolidated pages — Setup, Usage, Advanced,
+      Reference — each with its own in-page TOC. + _Sidebar nav.
+- [x] Content moved verbatim from the README, split by ## sections; image/repo
+      links rewritten to absolute raw/blob GitHub URLs; GitHub-style anchors.
+- [x] README slimmed 2015 → ~75 lines: title, hero, ASCII pipeline, quick-start
+      one-liner, and a Documentation TOC linking into the wiki + in-repo docs.
+Wiki lives in the separate sun-moon-transit-predictor.wiki repo (pushed).
