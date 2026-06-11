@@ -369,8 +369,13 @@ function bestStatus(a, b) {
  * @param {number} nowMs
  */
 export function lifecycleArray(map, nowMs) {
-  // Sort value: upcoming entries by ETA ascending (soonest first); past entries
-  // sorted after all upcoming ones, most-recent first; missing ETA last.
+  // REAL candidates (status candidate/imminent — they will actually pass close)
+  // come first, so a stale near-miss with a sooner ETA never sits above a live
+  // transit candidate. Within that, sort by imminence: upcoming entries by ETA
+  // ascending (soonest first); past entries after, most-recent first; missing
+  // ETA last. Separation breaks ties. This is the same order the e-paper panel
+  // uses, so the two views agree on which candidate is the most important.
+  const realRank = (e) => (e.status === 'candidate' || e.status === 'imminent') ? 0 : 1;
   const sortVal = (e) => {
     const eta = (e.closestApproachAtMs ?? NaN) - nowMs;
     if (!Number.isFinite(eta)) return Number.MAX_SAFE_INTEGER;
@@ -379,6 +384,8 @@ export function lifecycleArray(map, nowMs) {
   return Array.from(map.values())
     .map(e => ({ ...e, etaMs: e.closestApproachAtMs - nowMs }))
     .sort((a, b) => {
+      const r = realRank(a) - realRank(b);
+      if (r !== 0) return r;
       const d = sortVal(a) - sortVal(b);
       if (d !== 0) return d;
       const sa = a.closestApproachSepDeg ?? Infinity;

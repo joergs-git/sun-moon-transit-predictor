@@ -193,7 +193,9 @@ def _make_view(meta, cand, now_ms):
     azel = cand.get("aircraftAtClosest") or {}  # topocentric az / el / range
     bzel = cand.get("bodyAtClosest") or {}      # the body's az / el AT closest
 
-    cs = (meta.get("callsign") or meta.get("flight") or meta.get("icao") or "?").strip()
+    # Prefer the route flight number (IATA, e.g. SK65D) so the panel shows the
+    # SAME identifier as the web FLIGHT column, not the raw ICAO callsign (SAS65D).
+    cs = (meta.get("flight") or meta.get("callsign") or meta.get("icao") or "?").strip()
     body = meta.get("body") or cand.get("body") or ""
 
     at = _num(meta.get("closestApproachAtMs"))
@@ -275,10 +277,10 @@ def _pool(state):
     # keep dominating the detail block / list. Approaching + just-passed stay.
     views = [v for v in views if v["_eta_s"] is None or v["_eta_s"] >= -60.0]
 
-    # Sort by IMMINENCE, not by separation: the soonest upcoming closest-approach
-    # is featured first, then the just-passed (most recent), then no-ETA. A plane
-    # 22 s from its closest is more useful than one 11 min out that merely has a
-    # smaller predicted separation. Separation only breaks near-equal ETAs.
+    # Sort: REAL candidates (status candidate/imminent — they will actually pass
+    # close) first, then by IMMINENCE (soonest upcoming, then just-passed). This
+    # features the real transit candidate over a stale near-miss that merely has
+    # a sooner ETA, and matches the web's FOV pick. Separation only breaks ties.
     INF = float("inf")
 
     def _imminence(v):
@@ -287,7 +289,7 @@ def _pool(state):
             return (2, 0.0)
         return (0, eta) if eta >= 0 else (1, -eta)
 
-    views.sort(key=lambda v: (_imminence(v),
+    views.sort(key=lambda v: (0 if v["is_real"] else 1, _imminence(v),
                               v["sep_num"] if v["sep_num"] is not None else INF))
     return views, now_ms
 

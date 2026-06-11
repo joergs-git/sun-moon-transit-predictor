@@ -2088,7 +2088,7 @@ export async function runService({
           .sort((a, b) => (b.closest_at_ms ?? 0) - (a.closest_at_ms ?? 0))
           .slice(0, 4)
           .map((e) => ({
-            callsign: e.callsign ?? e.flight ?? null,
+            callsign: e.flight ?? e.callsign ?? null,   // flight (IATA) first, like the panel
             icao: e.icao ?? null,
             body: e.body ?? null,
             sepDeg: e.closest_sep_deg ?? null,

@@ -706,3 +706,20 @@ excluded ALL stale → the panel's featured candidate never beeped.
 Reminder for the user: on a two-Pi setup, the display Pi reads BUZZER config from
 its OWN localhost (STP_CONFIG_URL), STATE from sourceUrl — so configure/test the
 buzzer on the display Pi's web UI, not the remote predictor's.
+
+---
+
+# E-paper/web candidate sync: real-first sort + IATA flight ids (v0.31.17)
+
+User (photos): the e-paper candidate display deviated from the web. Two causes:
+- [x] Identifier mismatch: panel showed the raw ICAO callsign (SAS65D, TRA93Y),
+      web shows the IATA flight (SK65D, HV93Y). _make_view + recentTransits now
+      prefer `flight` (IATA) — same identifier as the web FLIGHT column.
+- [x] Priority mismatch: panel featured a STALE near-miss (sooner ETA) while the
+      web FOV showed the live transit candidate. Sort is now REAL candidates
+      (candidate/imminent) first, then imminence — both render._pool AND server
+      lifecycleArray (so web table + panel agree). Verified.
+
+Note (two-Pi setup): the web table fix lives in lifecycleArray on the PREDICTOR
+host (192.168.1.15) — update + restart stp.service THERE too, not just the
+display Pi, for the web list to match. (Predictor was on v0.31.12.)
