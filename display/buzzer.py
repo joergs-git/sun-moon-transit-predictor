@@ -1,6 +1,6 @@
 """
 Piezo buzzer driver + transit beep scheduler (Pi-side).
-v0.31.14
+v0.31.15
 
 Wiring: a piezo buzzer between a GPIO pin (default GPIO13) and GND.
 
@@ -276,6 +276,38 @@ class BeepScheduler:
         return "%s|%s" % (c.get("icao") or c.get("callsign") or "?", c.get("body") or "?")
 
     @staticmethod
+    def _candidate_set(state, sep_th):
+        """The planes worth alerting on: the live tracked ones (lifecycle,
+        non-stale) whose predicted closest separation is under `sep_th`. This is
+        what the panel actually shows — far wider and more stable than the raw
+        per-tick `state.candidates` (tight + frequently empty), which is why the
+        buzzer stayed silent while real candidates were on screen. Falls back to
+        `state.candidates` if no lifecycle is present."""
+        lc = state.get("lifecycle") or []
+        if lc:
+            out = []
+            for e in lc:
+                if e.get("status") == "stale":
+                    continue
+                sep = e.get("closestApproachSepDeg")
+                if sep is None or sep >= sep_th:
+                    continue
+                cand = e.get("candidate") or {}
+                out.append({
+                    "icao": e.get("icao"),
+                    "callsign": e.get("callsign"),
+                    "body": e.get("body"),
+                    "closestApproachAtMs": e.get("closestApproachAtMs"),
+                    "closestApproachSepDeg": sep,
+                    "entersAtMs": cand.get("entersAtMs"),
+                })
+            return out
+        # No lifecycle → raw candidates, still sep-gated for consistency.
+        return [c for c in (state.get("candidates") or [])
+                if c.get("closestApproachSepDeg") is not None
+                and c.get("closestApproachSepDeg") < sep_th]
+
+    @staticmethod
     def _phase_for(eta_s, phases_asc):
         """Pick the tightest countdown window that still contains `eta_s`.
         `phases_asc` is sorted ascending by window start. Returns the phase tuple
@@ -292,14 +324,15 @@ class BeepScheduler:
         """Process one snapshot at monotonic time `mono`."""
         cfg = self.cfg or {}
         now_ms = state.get("nowMs") or 0
-        cands = state.get("candidates") or []
+        sep_th = cfg.get("sepThresholdDeg", 1.0)
+        cands = self._candidate_set(state, sep_th)
         cur = {self._key(c): c for c in cands}
         cur_keys = set(cur)
 
-        # Diagnostic: log the in-band candidate count whenever it changes, so
+        # Diagnostic: log the tracked-candidate count whenever it changes, so
         # `journalctl -u stp-display` shows whether live events exist at all.
         if len(cur) != self._last_count:
-            self.log("buzzer: %d real candidate(s) in state.candidates" % len(cur))
+            self.log("buzzer: %d candidate(s) within %.2f° (non-stale)" % (len(cur), sep_th))
             self._last_count = len(cur)
 
         # "New candidate" signal: fire once per candidate, but only once it is
@@ -339,8 +372,10 @@ class BeepScheduler:
             self.announced.discard(k)
         self._primed = True
 
-        # Accelerating countdown for close, approaching candidates.
-        sep_th = cfg.get("sepThresholdDeg", 0.3)
+        # Accelerating countdown for the (already sep-gated) approaching
+        # candidates. The entry blast is reserved for an ACTUAL disc transit, so
+        # it has its own tight gate independent of the (wider) alert threshold.
+        TRANSIT_SEP = 0.35
         phases = sorted([
             (cfg.get("phase1BeforeS", 40), cfg.get("phase1EveryS", 10),
              cfg.get("phase1Beeps", 1), cfg.get("phase1OnMs", 500), cfg.get("phase1FadePct", 0)),
@@ -353,8 +388,8 @@ class BeepScheduler:
         for k, c in cur.items():
             sep = c.get("closestApproachSepDeg")
             at = c.get("closestApproachAtMs")
-            if sep is None or at is None or sep >= sep_th:
-                continue
+            if sep is None or at is None:
+                continue  # cur is already sep-gated by `sep_th`
 
             # Entry blast: one long beep at the transit itself. `entersAtMs` is
             # when the path enters the disc (≈ closest for fast aircraft); fall
@@ -366,7 +401,7 @@ class BeepScheduler:
             eta_entry = (enters - now_ms) / 1000.0
             if k in self.entry_fired:
                 continue  # entry already signalled → no more beeps for this contact
-            if -entry_before <= eta_entry <= entry_before:
+            if sep < TRANSIT_SEP and -entry_before <= eta_entry <= entry_before:
                 self.buz.play(_signal(cfg.get("entryBeeps", 3), cfg.get("entryOnMs", 100), 200,
                                       cfg.get("entryFadePct", 0),
                                       base_freq=cfg.get("freqHz", 2000),

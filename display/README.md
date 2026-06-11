@@ -12,13 +12,15 @@ It shows, updating in near-real time, a fixed three-paragraph layout:
 2. **Nearest plane** — the nearest tracked plane in detail: callsign + body,
    with **ETA** and **SEP** as the big, bold headline figures and **route,
    bearing, distance, altitude, speed** small underneath, plus a large **FOV
-   preview** against the body disc on the right. (Labelled *REAL CANDIDATE*
+   preview** on the right showing the body disc, the **crossing path**, a small
+   cross at the **closest** point and a big cross at the plane's **current**
+   position. (Labelled *REAL CANDIDATE*
    when it has reached candidate/imminent, else *NEAREST PLANE*.)
 3. **Recent + aircraft** — on the left, **RECENT** learned transits: the last
    few real (candidate/imminent) passes that were recorded, each with flight,
    **how long ago**, and the achieved **SEP**. On the right, the live tracked
-   **aircraft** with big **SEP** / **ETA** payloads and a **(candidates / total
-   live)** counter.
+   **aircraft** with big **SEP** / **ETA** payloads and a **(near-body tracked /
+   total live)** counter.
 
 The planes come from the unified live-tracking list, so the panel keeps showing
 nearby traffic even when nothing currently qualifies as a Real candidate.

@@ -124,17 +124,23 @@ def _fmt_lon_compact(v):
 
 
 def _fmt_eta(ms_to_closest):
-    """Countdown to closest approach: '-3:21' (in the future) or '+5s' (past).
-
-    No 'T' prefix — every place that shows this now carries an explicit ETA
-    label, so the bare sign + time reads as a plain countdown.
+    """Countdown to closest approach. Short forms near the moment, coarse forms
+    far out so a distant ISS pass reads sensibly:
+      '-45s' · '-3:21' (m:ss) · '-4h3m' · '-7d4h' (sign: − ahead, + past).
     """
     if ms_to_closest is None:
         return "--"
     s = int(round(ms_to_closest / 1000.0))
     sign = "-" if s >= 0 else "+"
     s = abs(s)
-    core = "%ds" % s if s < 60 else "%d:%02d" % (s // 60, s % 60)
+    if s < 60:
+        core = "%ds" % s
+    elif s < 3600:
+        core = "%d:%02d" % (s // 60, s % 60)
+    elif s < 86400:
+        core = "%dh%dm" % (s // 3600, (s % 3600) // 60)
+    else:
+        core = "%dd%dh" % (s // 86400, (s % 86400) // 3600)
     return sign + core
 
 
@@ -185,6 +191,7 @@ def _make_view(meta, cand, now_ms):
     cand = cand or {}
     ac = cand.get("aircraft") or {}            # raw ADS-B → alt / speed / track
     azel = cand.get("aircraftAtClosest") or {}  # topocentric az / el / range
+    bzel = cand.get("bodyAtClosest") or {}      # the body's az / el AT closest
 
     cs = (meta.get("callsign") or meta.get("flight") or meta.get("icao") or "?").strip()
     body = meta.get("body") or cand.get("body") or ""
@@ -226,6 +233,14 @@ def _make_view(meta, cand, now_ms):
         # raw numbers kept for the FOV preview + transit/trend logic
         "az": az,
         "el_raw": el,
+        # the body's own az/el at the moment of closest approach — the correct
+        # reference for the FOV offset (NOT the body's current position, which
+        # has moved since the prediction was made).
+        "body_az_c": _num(bzel.get("azimuthDeg")),
+        "body_el_c": _num(bzel.get("elevationDeg")),
+        # sparse samples of the crossing (each carries its own aircraft+body
+        # az/el at tOffsetMs relative to closest), for the FOV path + markers.
+        "path": cand.get("transitPath") or [],
         "has_eta": at is not None,
         "approaching": approaching,
         "_eta_s": (at - now_ms) / 1000.0 if at is not None else None,
@@ -384,8 +399,12 @@ def _draw_fov(draw, state, view, box):
 
     body = view["body"]
     b = (state.get("bodies") or {}).get(body) or {}
-    body_az = _num(b.get("azimuthDeg"))
-    body_el = _num(b.get("elevationDeg"))
+    # Reference the body's position AT CLOSEST APPROACH (when the prediction says
+    # the plane is nearest), not its current position — otherwise the marker is
+    # offset by however far the body has moved since, and a 0.2° pass shows at the
+    # frame edge. Fall back to the current position if the closest sample is absent.
+    body_az = view["body_az_c"] if view["body_az_c"] is not None else _num(b.get("azimuthDeg"))
+    body_el = view["body_el_c"] if view["body_el_c"] is not None else _num(b.get("elevationDeg"))
     range_m = _num(b.get("rangeM"))
     optics = state.get("optics") or {}
     fov_w = fov.fov_deg(_num(optics.get("telescopeFocalMm")), _num(optics.get("sensorWmm")))
@@ -398,15 +417,47 @@ def _draw_fov(draw, state, view, box):
     r = max(3.0, (disc_deg / 2.0) * px_per_deg)
     draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=BLACK)
 
-    # Candidate marker, offset from the disc centre, clamped into the frame.
-    if body_az is not None and body_el is not None and view["az"] is not None and view["el_raw"] is not None:
-        dx, dy = fov.offset_deg(body_az, body_el, view["az"], view["el_raw"])
+    def _pt(b_az, b_el, a_az, a_el):
+        """Pixel for an aircraft az/el relative to a body az/el (clamped)."""
+        dx, dy = fov.offset_deg(b_az, b_el, a_az, a_el)
         px, py = fov.deg_to_px(dx, dy, cx, cy, px_per_deg)
-        px = min(max(px, bx0 + 3), bx1 - 3)
-        py = min(max(py, by0 + 3), by1 - 3)
-        # A small filled plane marker — a bold plus, thicker than before.
-        draw.line((px - 6, py, px + 6, py), fill=BLACK, width=2)
-        draw.line((px, py - 6, px, py + 6), fill=BLACK, width=2)
+        return (min(max(px, bx0 + 2), bx1 - 2), min(max(py, by0 + 2), by1 - 2))
+
+    def _cross(px, py, arm, w):
+        draw.line((px - arm, py, px + arm, py), fill=BLACK, width=w)
+        draw.line((px, py - arm, px, py + arm), fill=BLACK, width=w)
+
+    # Crossing path: each sample carries its own aircraft + body az/el at a time
+    # offset from closest. Plot the aircraft relative to the body (disc centred)
+    # → the line shows where it crosses. Mark the CLOSEST point (small cross) and
+    # the CURRENT position (big cross), like the web FOV.
+    path = view.get("path") or []
+    pts = []
+    for s in path:
+        b_az = _num(s.get("bodyAz")); b_el = _num(s.get("bodyEl"))
+        a_az = _num(s.get("aircraftAz")); a_el = _num(s.get("aircraftEl"))
+        if None in (b_az, b_el, a_az, a_el):
+            continue
+        pts.append((_num(s.get("tOffsetMs")) or 0.0, _pt(b_az, b_el, a_az, a_el)))
+    if len(pts) >= 2:
+        draw.line([p for _t, p in pts], fill=BLACK, width=1)            # trajectory
+
+    # Closest point (tOffsetMs ≈ 0) — small cross. Prefer the path; fall back to
+    # the aircraftAtClosest vs bodyAtClosest offset.
+    if pts:
+        _t, cpt = min(pts, key=lambda tp: abs(tp[0]))
+        _cross(cpt[0], cpt[1], 5, 1)
+    elif body_az is not None and body_el is not None and view["az"] is not None and view["el_raw"] is not None:
+        cpt = _pt(body_az, body_el, view["az"], view["el_raw"])
+        _cross(cpt[0], cpt[1], 6, 2)
+
+    # Current position (the sample nearest now = tOffset ≈ now − closest) — big
+    # bold cross, so you can see where the plane is right now vs the crossing.
+    eta_s = view.get("_eta_s")
+    if pts and eta_s is not None:
+        cur_off = -eta_s * 1000.0
+        _t, npt = min(pts, key=lambda tp: abs(tp[0] - cur_off))
+        _cross(npt[0], npt[1], 8, 2)
 
 
 def _primary(draw, state, view):
@@ -497,17 +548,20 @@ def _sky_and_list(draw, state, pool):
             draw.text((16, ry), row, font=f, fill=BLACK)
             ry += 18
 
-    # ── Right: AIRCRAFT (cand / total live), wide + large ──
+    # ── Right: AIRCRAFT (near-body tracked / total live), wide + large ──
     live = state.get("aircraftCount")
     if live is None:
         live = len(state.get("lifecycle") or [])
-    cand = len(state.get("candidates") or [])
+    # Count the planes actually being tracked near a body (the pool we display),
+    # not the raw per-tick `state.candidates` (tight + often empty) — so the
+    # number matches what's on screen.
+    near = len(pool)
 
     rx = 138
     fhd = _font(11)
     draw.text((rx, top), "AIRCRAFT", font=fhd, fill=BLACK)
     hx = rx + draw.textlength("AIRCRAFT ", font=fhd)
-    draw.text((hx, top - 1), "(%d/%d)" % (cand, live), font=_font(13, bold=True), fill=BLACK)
+    draw.text((hx, top - 1), "(%d/%d)" % (near, live), font=_font(13, bold=True), fill=BLACK)
 
     rest = pool[1:4]
     ry = top + 16

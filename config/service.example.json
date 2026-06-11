@@ -105,7 +105,7 @@
     "enabled": false,
     "gpioPin": 13,
     "freqHz": 2000,
-    "sepThresholdDeg": 0.3,
+    "sepThresholdDeg": 1.0,
     "newEtaMaxS": 120,
     "newBeeps": 3, "newOnMs": 100, "newGapMs": 50, "newFadePct": 0, "newFreqStepHz": 200,
     "lostBeeps": 3, "lostOnMs": 100, "lostFreqHz": 500, "lostFadePct": 30, "lostFreqStepHz": -200,

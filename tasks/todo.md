@@ -665,3 +665,26 @@ User: test beeps play, but no LIVE beeps came afterwards.
 Next: have the user read journalctl to see if state.candidates is ever non-empty;
 if the panel shows REAL CANDIDATEs while the log says 0, the trigger source needs
 to move from state.candidates to the lifecycle real-candidates.
+
+---
+
+# E-paper/buzzer: real-candidate alignment, FOV path, ETA/counter fixes (v0.31.15)
+
+User feedback (photo IMG_0862): counter (0/61) despite a real candidate; no
+beep; FOV cross at the frame edge; huge ISS ETAs; wants current+closest+path.
+- [x] Buzzer keyed off the LIFECYCLE tracked planes (non-stale, predicted closest
+      sep < sepThresholdDeg) instead of the tight, often-empty state.candidates —
+      so it fires for what the panel shows. Entry blast keeps a tight disc gate
+      (sep < 0.35°). sepThresholdDeg default 0.3 → 1.0.
+- [x] AIRCRAFT counter now = the displayed pool count (near-body tracked), not
+      len(state.candidates) → matches what's on screen.
+- [x] FOV fix + upgrade: marker referenced to bodyAtClosest (was current body →
+      edge); plus the full crossing PATH line + small "closest" cross + big
+      "current-position" cross from `transitPath` samples (mirrors the web FOV).
+- [x] _fmt_eta: coarse forms far out — '-4h3m', '-1d21h', '-7d4h' — so ISS reads
+      sensibly instead of '-2721:03'.
+- [x] Verified: scheduler harness (sep-gated), fixture render (path + 2 crosses,
+      counter 4/14, near-miss below disc), 205 node tests.
+
+Note: existing saved configs keep sepThresholdDeg=0.3 — tell the user to set the
+Alert SEP threshold to ~1.0 in Settings so their 0.2–0.9° candidates beep.

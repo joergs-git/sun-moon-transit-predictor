@@ -222,7 +222,9 @@ export const DEFAULT_CONFIG = {
     gpioPin: 13,           // BCM pin the buzzer sits on (user wiring: GPIO13)
     freqHz: 2000,          // PWM drive frequency — works for passive AND active
                            // buzzers; tune for the loudest tone on your element
-    sepThresholdDeg: 0.3,  // countdown beeps only for candidates closer than this
+    sepThresholdDeg: 1.0,  // alert (new/lost/countdown) only for tracked planes
+                           // whose predicted closest approach is under this; the
+                           // entry blast keeps its own tight disc-transit gate
     // "New real candidate" signal (default: 3 × 0.5 s) — fires once per candidate
     // only once it is within `newEtaMaxS` seconds of closest approach, so distant
     // candidates many minutes out don't beep.
