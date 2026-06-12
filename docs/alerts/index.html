@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Satellite transit alerts — ISS · Hubble · Tiangong</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; background:#10141a; color:#dde3ec;
+         max-width: 38em; margin: 0 auto; padding: 1.5em 1em 4em; }
+  h1 { font-size: 1.4em; } h1 small { display:block; font-size:.6em; color:#8b94a3; font-weight:400; }
+  label { display:block; margin:.9em 0 .25em; font-weight:600; }
+  input[type=text], input[type=number] { width:100%; box-sizing:border-box; padding:.55em;
+         border-radius:6px; border:1px solid #2c3442; background:#181e27; color:#dde3ec; }
+  .hint { font-size:.82em; color:#8b94a3; margin:.25em 0 0; }
+  .hint a { color:#7fb4ff; }
+  .row { display:flex; gap:.75em; } .row > div { flex:1; }
+  #map { height: 260px; border-radius:8px; margin-top:.5em; border:1px solid #2c3442; }
+  button { cursor:pointer; border-radius:6px; border:1px solid #2c3442;
+           background:#1d2735; color:#dde3ec; padding:.55em .9em; font-size:1em; }
+  button.primary { background:#1f5cbf; border-color:#1f5cbf; font-weight:600;
+                   width:100%; margin-top:1.2em; padding:.8em; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .bodies { display:flex; gap:1.2em; margin-top:.3em; }
+  .bodies label { display:flex; align-items:center; gap:.4em; margin:0; font-weight:400; }
+  #msg { margin-top:1em; padding:.8em; border-radius:6px; display:none; }
+  #msg.ok   { display:block; background:#143a1e; color:#9fe3b0; }
+  #msg.err  { display:block; background:#42141a; color:#f3a6ad; }
+  footer { margin-top:3em; font-size:.85em; color:#8b94a3; text-align:center; }
+  footer a { color:#7fb4ff; }
+</style>
+</head>
+<body>
+<h1>🛰 Satellite transit alerts
+  <small>Get a Pushover message 1–2 days before the ISS, Hubble or Tiangong
+  crosses the <b>Sun</b> or <b>Moon</b> as seen from <em>your</em> spot — with the
+  exact second it happens.</small></h1>
+
+<label for="pkey">Pushover user key</label>
+<input id="pkey" type="text" autocomplete="off" spellcheck="false"
+       placeholder="e.g. uQiRzpo4DXghDmr9QzzfQu27cmVRsG">
+<p class="hint">Install the <a href="https://pushover.net/clients" target="_blank" rel="noopener">Pushover
+   app</a>, log in at <a href="https://pushover.net" target="_blank" rel="noopener">pushover.net</a> —
+   your 30-character user key is at the top of the dashboard. It only lets this
+   service <em>send</em> you messages; it is not a password.</p>
+
+<label>Your observing location</label>
+<button id="geoBtn" type="button">📍 Use my location</button>
+<div id="map"></div>
+<div class="row">
+  <div><label for="lat">Latitude</label><input id="lat" type="number" step="any" placeholder="52.2870"></div>
+  <div><label for="lon">Longitude</label><input id="lon" type="number" step="any" placeholder="7.4223"></div>
+</div>
+<p class="hint">Tap the button (easiest on the phone), drag the pin, or type the
+   coordinates. Transit corridors are only a few km wide — pick where you would
+   actually stand, not your city centre.</p>
+
+<label>Alert me for</label>
+<div class="bodies">
+  <label><input id="bSun" type="checkbox" checked> ☀ Sun transits</label>
+  <label><input id="bMoon" type="checkbox" checked> 🌙 Moon transits</label>
+</div>
+
+<button id="go" class="primary" type="button">Subscribe — send my confirmation push</button>
+<div id="msg"></div>
+<p class="hint">You'll get one Pushover message to confirm (nothing happens
+   until you tap it), and every alert carries a one-click unsubscribe link.</p>
+
+<footer>Powered by
+  <a href="https://github.com/joergs-git/sun-moon-transit-predictor">sun-moon-transit-predictor</a>
+  — an offline ISS/aircraft transit predictor for the Raspberry Pi.</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+// ── Deployment config: set this to YOUR Supabase functions base. ───────────
+const FUNCTIONS_BASE = 'https://YOUR-PROJECT-REF.supabase.co/functions/v1';
+
+const $ = (id) => document.getElementById(id);
+const map = L.map('map').setView([51, 9], 4);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  { attribution: '© OpenStreetMap contributors', maxZoom: 18 }).addTo(map);
+let pin = null;
+
+function setPoint(lat, lon, zoom) {
+  $('lat').value = lat.toFixed(5);
+  $('lon').value = lon.toFixed(5);
+  if (!pin) pin = L.marker([lat, lon], { draggable: true }).addTo(map);
+  else pin.setLatLng([lat, lon]);
+  pin.off('dragend').on('dragend', () => {
+    const p = pin.getLatLng();
+    $('lat').value = p.lat.toFixed(5);
+    $('lon').value = p.lng.toFixed(5);
+  });
+  if (zoom) map.setView([lat, lon], zoom);
+}
+map.on('click', (e) => setPoint(e.latlng.lat, e.latlng.lng));
+for (const id of ['lat', 'lon']) {
+  $(id).addEventListener('change', () => {
+    const lat = parseFloat($('lat').value);
+    const lon = parseFloat($('lon').value);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) setPoint(lat, lon, 10);
+  });
+}
+$('geoBtn').addEventListener('click', () => {
+  if (!navigator.geolocation) return show('err', 'Geolocation not available in this browser.');
+  navigator.geolocation.getCurrentPosition(
+    (p) => setPoint(p.coords.latitude, p.coords.longitude, 12),
+    () => show('err', 'Could not read your location — drag the pin instead.'),
+    { enableHighAccuracy: true, timeout: 10000 },
+  );
+});
+
+function show(cls, text) {
+  const m = $('msg');
+  m.className = cls;
+  m.textContent = text;
+}
+
+$('go').addEventListener('click', async () => {
+  const key = $('pkey').value.trim();
+  const lat = parseFloat($('lat').value);
+  const lon = parseFloat($('lon').value);
+  const bodies = [$('bSun').checked && 'Sun', $('bMoon').checked && 'Moon'].filter(Boolean);
+  if (!key) return show('err', 'Please paste your Pushover user key.');
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return show('err', 'Please set your location.');
+  if (!bodies.length) return show('err', 'Pick at least one of Sun / Moon.');
+
+  $('go').disabled = true;
+  show('ok', 'Validating your key…');
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE}/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pushover_key: key, lat, lon, bodies,
+        tz: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    show('ok', data.confirmed
+      ? '✅ Subscription updated — you were already confirmed.'
+      : '✅ Almost done! Check Pushover and tap the confirmation link.');
+  } catch (e) {
+    show('err', `Could not subscribe: ${e.message}`);
+  } finally {
+    $('go').disabled = false;
+  }
+});
+</script>
+</body>
+</html>
