@@ -1000,6 +1000,19 @@ export async function runService({
       // Piezo buzzer alert config (no secrets) — read by display/buzzer.py.
       // `testId` is the transient one-shot test nudge (not saved config).
       buzzer: { ...config.buzzer, testId: buzzerTestId },
+      // Sky-target scan knobs (M83). The object catalogue itself stays in
+      // service.json (iss.skyTargets.objects); the UI exposes only the gates +
+      // the master switch. objectCount is read-only feedback.
+      skyTargets: {
+        enabled: Boolean(config.iss?.skyTargets?.enabled),
+        planHorizonDays: config.iss?.skyTargets?.planHorizonDays ?? 7,
+        minElevationDeg: config.iss?.skyTargets?.minElevationDeg ?? 20,
+        requireSunlit: config.iss?.skyTargets?.requireSunlit !== false,
+        requireDarkSky: config.iss?.skyTargets?.requireDarkSky !== false,
+        sunBelowDeg: config.iss?.skyTargets?.sunBelowDeg ?? -6,
+        reslewMinGapMin: config.iss?.skyTargets?.reslewMinGapMin ?? 5,
+        objectCount: (config.iss?.skyTargets?.objects ?? []).filter((o) => o?.enabled !== false).length,
+      },
       _servicePath: configPaths.service ?? null,
     };
   }
@@ -1249,6 +1262,35 @@ export async function runService({
       applied.buzzer = { ...config.buzzer };
     }
 
+    if (patch.skyTargets && typeof patch.skyTargets === 'object') {
+      // Sky-target scan gates (M83). The object catalogue is NOT touched here
+      // (it lives in service.json) — only the master switch + numeric gates.
+      // Transactional into `next` so a bad value rejects the whole patch.
+      const d = patch.skyTargets;
+      const next = { ...(config.iss?.skyTargets ?? {}) };
+      if (typeof d.enabled === 'boolean') next.enabled = d.enabled;
+      if (typeof d.requireSunlit === 'boolean') next.requireSunlit = d.requireSunlit;
+      if (typeof d.requireDarkSky === 'boolean') next.requireDarkSky = d.requireDarkSky;
+      const NUM = {
+        planHorizonDays: [1, 14, false],
+        minElevationDeg: [0, 90, false],
+        sunBelowDeg: [-18, 10, false],
+        reslewMinGapMin: [0, 120, false],
+      };
+      for (const [k, [lo, hi]] of Object.entries(NUM)) {
+        if (k in d) {
+          const v = Number(d[k]);
+          if (!Number.isFinite(v) || v < lo || v > hi) {
+            throw new Error(`skyTargets.${k} must be a number ${lo}–${hi}`);
+          }
+          next[k] = v;
+        }
+      }
+      if (!config.iss) config.iss = {};
+      config.iss.skyTargets = next;          // objects array preserved (not in patch)
+      applied.skyTargets = { ...next, objects: undefined };
+    }
+
     if (patch.airnav && typeof patch.airnav === 'object') {
       const a = patch.airnav;
       // Never accept the masked placeholder back as the real token.
@@ -1407,6 +1449,10 @@ export async function runService({
           sharpcap:      { ...(existing.sharpcap ?? {}), ...config.sharpcap },
           display:       { ...(existing.display  ?? {}), ...config.display },
           buzzer:        { ...(existing.buzzer   ?? {}), ...config.buzzer },
+          // Persist only the sky-target sub-block (incl. its object catalogue);
+          // other iss fields keep their defaults / any existing service.json
+          // overrides. Written only when the UI actually edited it.
+          iss:           { ...(existing.iss ?? {}), skyTargets: config.iss?.skyTargets },
         };
         await fsp.writeFile(configPaths.service, JSON.stringify(merged, null, 2), 'utf8');
       } catch (e) {
