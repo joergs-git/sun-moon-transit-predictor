@@ -237,6 +237,14 @@ function icaoCellInner(icao, iss) {
     + `${up}</a>`;
 }
 
+// Known orbiting-satellite tags (config.iss.satellites). Their "icao" is this
+// short tag, not a 6-hex airframe code. The predictor sets isISS=true on the
+// live candidates, but History rows are reconstructed from stored fields that
+// may lack the flag — so detection falls back to the tag. Keep in sync with
+// src/service.js DEFAULT_CONFIG.iss.satellites (+ the implicit ISS).
+const SAT_TAGS = new Set(['ISS', 'HST', 'CSS']);
+const isSatRow = (e) => e?.isISS === true || SAT_TAGS.has(e?.icao);
+
 // Stats bar label (v0.20.1). Returns an <a> that
 //   - links to adsbexchange globe (ICAO hex or callsign — same lookup the
 //     History/Live tables use, so users get history/playback for the very
@@ -353,7 +361,7 @@ function renderTracking(state) {
     // applies the inverse filter). Future + within-grace rows stay here.
     if (Number.isFinite(e.etaMs) && -e.etaMs > LIVE_GRACE_AFTER_ETA_MS) continue;
     const tr = document.createElement('tr');
-    const iss = e.isISS === true || e.icao === 'ISS';
+    const iss = isSatRow(e);
     tr.className = `row-${e.status} sketchable${liveRowQuality(e)}${iss ? ' row-iss' : ''}`;
     tr.dataset.source = 'live';
     tr.dataset.index = String(i);
@@ -390,7 +398,7 @@ function renderTracking(state) {
       <td>${fmtDistance(rangeM)}</td>
       <td>${iss ? '—' : fmtSpeed(ac?.groundSpeedMs)}</td>
       <td>${iss ? 'LEO' : fmtAlt(ac?.altMmsl)}</td>
-      <td class="flight-cell" data-hex="${e.icao ?? ''}" data-cs="${e.callsign ?? e.flight ?? ''}">${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '—')}</td>
+      <td class="flight-cell" data-hex="${e.icao ?? ''}" data-cs="${e.callsign ?? e.flight ?? ''}">${iss ? ('🛰 ' + (e.icao ?? 'SAT')) : (e.flight ?? e.callsign ?? '—')}</td>
       <td>${icaoCellInner(e.icao, iss)}</td>
       <td>${iss ? '—' : fmtRoute(route?.origin?.iata ?? route?.origin?.icao, route?.destination?.iata ?? route?.destination?.icao)}</td>
     `;
@@ -444,7 +452,7 @@ function recentCutoffMs() {
 // paginated slice) so the click→pin handler keeps resolving correctly.
 function historyTr(e, absIdx) {
   const tr = document.createElement('tr');
-  const iss = e.icao === 'ISS';
+  const iss = isSatRow(e);
   tr.className = `sketchable${historyRowQuality(e)}${iss ? ' row-iss' : ''}`;
   tr.dataset.source = 'history';
   tr.dataset.index = String(absIdx);
@@ -473,7 +481,7 @@ function historyTr(e, absIdx) {
     <td title="${dtTooltip(dt)}">${fmtDiscTransit(dt)}</td>
     <td>${iss ? '—' : fmtSpeed(e.ground_speed_ms)}</td>
     <td>${iss ? 'LEO' : fmtAlt(e.altitude_m)}</td>
-    <td class="flight-cell" data-hex="${e.icao ?? ''}" data-cs="${e.callsign ?? e.flight ?? ''}">${iss ? '🛰 ISS' : (e.flight ?? e.callsign ?? '')}</td>
+    <td class="flight-cell" data-hex="${e.icao ?? ''}" data-cs="${e.callsign ?? e.flight ?? ''}">${iss ? ('🛰 ' + (e.icao ?? 'SAT')) : (e.flight ?? e.callsign ?? '')}</td>
     <td>${icaoCellInner(e.icao, iss)}</td>
     <td>${iss ? '—' : fmtRoute(e.origin, e.destination)}</td>
   `;

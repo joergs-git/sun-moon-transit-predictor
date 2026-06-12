@@ -1,8 +1,8 @@
 # sun-moon-transit-predictor
 
-Predicts and detects aircraft — and the ISS — transiting across the **Sun and
-Moon disc** from a fixed observer location, so the camera at the telescope can be
-armed in time. End-to-end on a single **Raspberry Pi 5** with `dump1090-fa`, a
+Predicts and detects aircraft — and satellites (**ISS, Hubble, Tiangong**) —
+transiting across the **Sun and Moon disc** from a fixed observer location, so the
+camera at the telescope can be armed in time. End-to-end on a single **Raspberry Pi 5** with `dump1090-fa`, a
 browser UI, an optional **e-paper panel + piezo buzzer**, and two-stage Pushover
 alerts (early candidate → precise T-minus).
 
@@ -52,7 +52,7 @@ The full documentation now lives in the **[Wiki](https://github.com/joergs-git/s
 Quick start · hardware & ADS-B receiver (bill of materials) · install on the Pi 5 · systemd service control · updating.
 
 ### 🛰 [Usage — alerts, web UI, display](https://github.com/joergs-git/sun-moon-transit-predictor/wiki/Usage)
-Web UI & FOV preview · e-paper display + buzzer · Pushover setup & alert learning · ISS transits.
+Web UI & FOV preview · e-paper display + buzzer · Pushover setup & alert learning · satellite transits (ISS, Hubble, Tiangong).
 
 ### ⚙️ [Advanced — watchlist, triggers, internals](https://github.com/joergs-git/sun-moon-transit-predictor/wiki/Advanced)
 Predictive 24 h watchlist · OpenSky schedule augmentation · SharpCap capture trigger · candidate lifecycle · how the prediction works · end-to-end pipeline.
@@ -70,7 +70,7 @@ Predictive 24 h watchlist · OpenSky schedule augmentation · SharpCap capture t
 ## At a glance
 
 - Single **Raspberry Pi 5**, ~5 W, browser-administered, runs unattended for months.
-- **Offline** geometry (SGP4 for the ISS, `astronomy-engine` for Sun/Moon) — no cloud needed for prediction.
+- **Offline** geometry (SGP4 for satellites — ISS, Hubble, Tiangong — `astronomy-engine` for Sun/Moon) — no cloud needed for prediction.
 - Optional **e-paper panel** (browserless readout) + **piezo buzzer** (audible countdown), both configured from the web UI.
 - Auto-updates nightly from `main`; personal config (`observer.json`, `service.json`, `data/`) is never overwritten.
 

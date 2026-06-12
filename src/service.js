@@ -273,6 +273,21 @@ export const DEFAULT_CONFIG = {
     recomputeMs: 600_000,       // re-scan every 10 min
     thresholdDeg: 0.3,          // tight → candidate
     looseThresholdDeg: 1.0,     // surface approaches up to here
+    // Additional catalogued satellites to predict Sun/Moon transits for,
+    // beyond the ISS above. Same offline SGP4 + TLE pipeline, same lifecycle
+    // (they appear as Real candidates / FOV / Disc-xing exactly like the ISS),
+    // but no naked-eye visible-pass line (that stays ISS-only). Each needs its
+    // own TLE on disk — scripts/refresh-tle.js fetches all of them. Disable an
+    // entry with `enabled: false`. `tag` is the short label + lifecycle key and
+    // MUST be unique. Thresholds/horizon are inherited from the ISS block.
+    //   HST  = NORAD 20580 (Hubble) — a tough ~5″ target, see README.
+    //   CSS  = NORAD 48274 (Tiangong / Tianhe core) — ~20″, the easiest after ISS.
+    satellites: [
+      { name: 'HST', tag: 'HST', catnr: 20580, tlePath: './data/hst.tle',
+        typeDesc: 'Hubble Space Telescope', enabled: true },
+      { name: 'Tiangong', tag: 'CSS', catnr: 48274, tlePath: './data/tiangong.tle',
+        typeDesc: 'Tiangong (CSS) space station', enabled: true },
+    ],
   },
   // Persistent "how often did it come by" tally over ALL detected ADS-B
   // traffic (airframe hex + ADS-B callsign), kept in SQLite so it survives
@@ -749,6 +764,11 @@ export async function runService({
   let issEvents = [];
   let issVisiblePass = null;
   let lastIssComputeMs = 0;
+  // Extra-satellite (HST, Tiangong, …) prediction cache, keyed by tag. Same
+  // slow cadence as the ISS; each entry holds its loaded TLE + last events so
+  // the 2 s tick never re-propagates SGP4. Built lazily in the tick below.
+  const satCache = new Map();   // tag → { tle, events }
+  let lastSatComputeMs = 0;
 
   const state = {
     observer,
@@ -1923,6 +1943,38 @@ export async function runService({
       }
       lastIssComputeMs = nowMs;
     }
+
+    // Extra satellites (HST, Tiangong, …) — same SGP4 + TLE pipeline as the
+    // ISS, same slow cadence, feeding the same lifecycle. Transit prediction
+    // only: no visible-pass / Sky-now widget (those stay ISS-specific). Each
+    // satellite keeps its own cache entry so an absent TLE just skips it.
+    const extraSats = config.iss?.enabled ? (config.iss.satellites ?? []) : [];
+    if (extraSats.length
+        && (satCache.size === 0 || nowMs - lastSatComputeMs >= config.iss.recomputeMs)) {
+      for (const sat of extraSats) {
+        if (sat?.enabled === false) { satCache.delete(sat.tag); continue; }
+        const tle = loadIssTle(sat.tlePath);
+        if (!tle) { satCache.delete(sat.tag); continue; }   // no TLE yet → inactive
+        let events = [];
+        try {
+          events = predictIssTransits(observer, tle.satrec, {
+            fromMs: nowMs,
+            horizonMs: config.iss.horizonMs,
+            bodies: config.tracker.bodies,
+            thresholdDeg: config.iss.thresholdDeg,
+            looseThresholdDeg: config.iss.looseThresholdDeg,
+            name: sat.name,
+            tag: sat.tag,
+            typeDesc: sat.typeDesc,
+          });
+        } catch (e) {
+          logger.warn?.(`${sat.tag} prediction failed:`, e?.message ?? e);
+        }
+        satCache.set(sat.tag, { tle, events });
+      }
+      lastSatComputeMs = nowMs;
+    }
+
     // Drop a visible pass once it is over so the Sky-now line never shows a
     // stale "next pass" that already happened.
     if (issVisiblePass && issVisiblePass.endMs < nowMs) issVisiblePass = null;
@@ -1956,15 +2008,44 @@ export async function runService({
       visiblePass: issVisiblePass,
     };
 
+    // Per-satellite summary for the extra targets (HST, Tiangong, …), parallel
+    // to state.iss but without the visible-pass widget. Lets the UI/e-paper
+    // preview "next HST transit" even when it is days out, and shows which
+    // satellites are armed (TLE present) vs. waiting for a TLE.
+    state.satellites = (config.iss?.satellites ?? []).map((sat) => {
+      const entry = satCache.get(sat.tag);
+      const evs = entry?.events ?? [];
+      const next = evs.find(e => e.closestApproachAtMs >= nowMs) ?? null;
+      return {
+        tag: sat.tag,
+        name: sat.name,
+        enabled: sat.enabled !== false,
+        active: Boolean(entry?.tle),
+        upcoming: evs.length,
+        nextTransit: next
+          ? {
+            atMs: next.closestApproachAtMs,
+            body: next.body,
+            sepDeg: next.closestApproachSepDeg,
+            level: next.level,
+            tentative: (next.closestApproachAtMs - nowMs) > notifyWithinMs,
+          }
+          : null,
+      };
+    });
+
     // Feed the lifecycle + notifier only the ISS transits that are close
     // enough to be trustworthy (≤ notifyWithinMs). Beyond that a far-future
     // SGP4 prediction would push a Pushover + write a History row that the
     // next daily TLE makes vanish ("phantom transit" / surprise-stat noise)
     // — the Sky-now line still previews it, flagged tentative.
-    const issForLifecycle = issEvents.filter(
-      ev => ev.closestApproachAtMs >= nowMs - config.lifecycle.imminentWindowMs
-        && (ev.closestApproachAtMs - nowMs) <= notifyWithinMs,
-    );
+    const withinTrust = (ev) =>
+      ev.closestApproachAtMs >= nowMs - config.lifecycle.imminentWindowMs
+      && (ev.closestApproachAtMs - nowMs) <= notifyWithinMs;
+    // ISS + every extra satellite, gated by the same trust window.
+    const satEvents = [];
+    for (const { events } of satCache.values()) satEvents.push(...events);
+    const issForLifecycle = issEvents.concat(satEvents).filter(withinTrust);
 
     // Unified lifecycle state — merges live tracker + watchlist + previous
     // tick's contacts. The notifier still drives Pushover; the lifecycle

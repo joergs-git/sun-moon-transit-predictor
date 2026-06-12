@@ -152,6 +152,12 @@ export function predictIssTransits(observer, satrec, opts = {}) {
     thresholdDeg = 0.3,
     looseThresholdDeg = 1.0,
     name = 'ISS',
+    // Short label / lifecycle key (e.g. 'ISS', 'HST', 'CSS') and the human
+    // description. Generalising the predictor to any catalogued satellite —
+    // the ISS is just the default. A distinct `tag` keeps HST/Tiangong from
+    // colliding with the ISS in the (icao,body)-keyed lifecycle map.
+    tag = 'ISS',
+    typeDesc = 'International Space Station',
   } = opts;
 
   const obsEcef = observerEcef(observer);
@@ -185,6 +191,7 @@ export function predictIssTransits(observer, satrec, opts = {}) {
           out.push(buildIssCandidate(
             observer, satrec, obsEcef, obsLat, obsLon, body,
             refined.tMs, refined.sep, thresholdDeg, looseThresholdDeg, name,
+            tag, typeDesc,
           ));
         }
       }
@@ -221,6 +228,7 @@ function refineMinimum(sepAt, aMs, bMs) {
 function buildIssCandidate(
   observer, satrec, obsEcef, obsLat, obsLon, body,
   closestMs, sepDeg, thresholdDeg, looseThresholdDeg, name,
+  tag = 'ISS', typeDesc = 'International Space Station',
 ) {
   const issAt = issAzEl(satrec, obsEcef, obsLat, obsLon, closestMs);
   const bodyAt = bodyAzEl(observer, body, new Date(closestMs));
@@ -255,10 +263,14 @@ function buildIssCandidate(
 
   const level = sepDeg <= thresholdDeg ? 'candidate' : 'radio';
   return {
-    icao: 'ISS',
+    icao: tag,
     callsign: name,
     body,
     level,
+    // isISS is the "this is an orbiting satellite, not an ADS-B contact" flag
+    // the rest of the pipeline keys off (elevation-gate exemption, 🛰 glyph).
+    // It stays true for HST/Tiangong too — they get the identical treatment,
+    // only the label (`tag`/`callsign`) and `typeDesc` differ.
     isISS: true,
     source: 'iss',
     closestApproachAtMs: closestMs,
@@ -274,14 +286,14 @@ function buildIssCandidate(
       rangeM: bodyAt.rangeM ?? null,
     },
     aircraft: {
-      icao: 'ISS',
+      icao: tag,
       callsign: name,
       altMmsl: rangeM != null && issAt ? null : null,   // not meaningful for orbit
       groundSpeedMs: rangeM != null ? omegaRad * rangeM : null,
       trackDeg: null,
-      typeCode: 'ISS',
+      typeCode: tag,
       registration: null,
-      typeDesc: 'International Space Station',
+      typeDesc,
       verticalRateMs: 0,
     },
     transitPath,

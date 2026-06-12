@@ -93,6 +93,34 @@ describe('predictIssTransits', () => {
       expect(['radio', 'candidate']).toContain(c.level);
     }
   });
+
+  it('honours tag/typeDesc so any satellite (HST, Tiangong) is labelled and keyed distinctly', () => {
+    // The predictor is generic: the same TLE re-tagged as "HST" must produce
+    // candidates keyed off the custom tag (so they never collide with the ISS
+    // in the (icao,body) lifecycle map) while keeping isISS=true (the
+    // "orbiting satellite, not ADS-B" flag the rest of the pipeline reads).
+    // Observer chosen so this fixture reliably yields a transit (the scan
+    // gate only refines minima a few degrees from the disc, so a hit must
+    // actually occur for the tagging assertions to be non-vacuous).
+    const under = { name: 'under-track', latitudeDeg: 30, longitudeDeg: -10, elevationM: 50 };
+    const ev = predictIssTransits(under, tle.satrec, {
+      fromMs: Date.UTC(2024, 4, 3, 0, 0, 0),
+      horizonMs: 14 * 24 * 3600_000,
+      bodies: ['Sun', 'Moon'],
+      looseThresholdDeg: 1.0,
+      name: 'HST',
+      tag: 'HST',
+      typeDesc: 'Hubble Space Telescope',
+    });
+    expect(ev.length).toBeGreaterThan(0);   // same elements, re-tagged as HST
+    for (const c of ev) {
+      expect(c.icao).toBe('HST');
+      expect(c.callsign).toBe('HST');
+      expect(c.isISS).toBe(true);
+      expect(c.aircraft.typeCode).toBe('HST');
+      expect(c.aircraft.typeDesc).toBe('Hubble Space Telescope');
+    }
+  });
 });
 
 describe('nextIssVisiblePass', () => {
