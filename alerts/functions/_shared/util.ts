@@ -55,16 +55,17 @@ export async function sb(method: string, path: string, body?: unknown): Promise<
   });
 }
 
-/** Tiny self-contained HTML page for the click-link endpoints. */
-export function htmlPage(title: string, text: string, extra = ''): Response {
-  const body = `<!doctype html><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title}</title>
-<body style="font-family:system-ui;max-width:34em;margin:4em auto;padding:0 1em;
-             background:#10141a;color:#dde3ec;text-align:center">
-<h2>${title}</h2><p>${text}</p>${extra}
-<p style="margin-top:3em"><a style="color:#7fb4ff"
-   href="https://github.com/joergs-git/sun-moon-transit-predictor">
-   🔭 sun-moon-transit-predictor on GitHub</a></p></body>`;
-  return new Response(body, { headers: { 'Content-Type': 'text/html; charset=utf-8', ...CORS } });
+// The click-link endpoints redirect to static GitHub Pages instead of
+// serving HTML themselves — the gateway delivered function-rendered HTML
+// as unrendered plain text (lost Content-Type), and a 303 + Location is
+// immune to that. The pages live in docs/alerts/.
+const PAGES_BASE = (Deno.env.get('PUBLIC_PAGES_URL')
+  ?? 'https://joergs-git.github.io/sun-moon-transit-predictor/alerts').replace(/\/$/, '');
+
+/** 303-redirect to one of the static feedback pages in docs/alerts/. */
+export function redirectToPage(page: 'confirmed' | 'unsubscribed' | 'invalid-link'): Response {
+  return new Response(null, {
+    status: 303,
+    headers: { Location: `${PAGES_BASE}/${page}.html`, ...CORS },
+  });
 }

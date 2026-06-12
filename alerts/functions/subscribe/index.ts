@@ -9,7 +9,7 @@
 // stranger's key entered here results in exactly one "confirm?" message and
 // then silence — never transit spam.
 
-import { CORS, envOrThrow, hmacHex, sb, htmlPage } from '../_shared/util.ts';
+import { CORS, envOrThrow, hmacHex, sb } from '../_shared/util.ts';
 
 const json = (status: number, data: unknown) => new Response(JSON.stringify(data), {
   status, headers: { 'Content-Type': 'application/json', ...CORS },
@@ -80,5 +80,3 @@ Deno.serve(async (req) => {
   return json(200, { ok: true, confirmed: !!row.confirmed });
 });
 
-// (htmlPage imported for parity with the GET endpoints; not used here.)
-void htmlPage;
