@@ -18,15 +18,18 @@ The worker re-uses the Pi service's prediction engine (`src/iss.js`,
 
 ## Live deployment status (2026-06-12)
 
-Provisioned on the existing Supabase project **astroblink**
-(`bpngramreznwvtssrcbe`, eu-west-1):
+Provisioned on the dedicated Supabase project **sunmoon-pushover-services**
+(`dmoapforrwsvafxucjqj`, eu-west-1) — moved out of the astroblink app project;
+the tables there were verified empty and dropped (its leftover edge functions
+can be deleted in the astroblink dashboard, they are inert without secrets).
 
 - ✅ schema applied (migration `transit_alert_service`)
-- ✅ functions deployed (no-JWT): `…/functions/v1/{subscribe,confirm,unsubscribe}`
-- ✅ signup page points at `https://bpngramreznwvtssrcbe.supabase.co/functions/v1`
+- ✅ functions deployed (no-JWT): `https://dmoapforrwsvafxucjqj.supabase.co/functions/v1/{subscribe,confirm,unsubscribe}`
+- ✅ signup page points at the URL above
 - ⬜ **function secrets** `PUSHOVER_APP_TOKEN`, `ALERTS_HMAC_SECRET`
   (Dashboard → Edge Functions → Secrets) — functions 500 until set
-- ⬜ **GitHub Actions secrets** (table below)
+- ⬜ **GitHub Actions secrets** (table below; `SUPABASE_URL` =
+  `https://dmoapforrwsvafxucjqj.supabase.co`)
 - ⬜ **GitHub Pages** from `/docs` (needs this branch merged to the default branch)
 - ⬜ Pushover **application** (pushover.net/apps) → the app token
 
