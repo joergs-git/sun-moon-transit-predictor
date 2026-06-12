@@ -1237,3 +1237,32 @@ a.acstats-label.hex-link:hover { text-decoration: underline; }
   letter-spacing: 0.05em;
   color: var(--muted);
 }
+
+/* ===== Sky-target plan ("Drehbuch", M83) ================================= */
+.skyplan-section { margin: 14px 0; }
+.skyplan-section h2 { display: flex; align-items: baseline; gap: 10px; }
+.skyplan-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.skyplan-table { font-size: 12.5px; }
+.skyplan-table td { padding: 5px 10px; }
+.skyplan-obj { font-weight: 600; color: var(--fg); }
+.skyplan-sat { color: #7fb0ff; white-space: nowrap; }
+/* Type chip: 'transit' (through the disc/object) reads stronger than 'field'. */
+.skyplan-type { text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.04em; }
+.skyplan-type.type-transit { color: var(--accent); font-weight: 600; }
+.skyplan-type.type-field { color: var(--muted); }
+.skyplan-conf { white-space: nowrap; }
+.skyplan-conflict { color: var(--warn); cursor: help; }
+.skyplan-shadow { opacity: 0.7; cursor: help; }
+/* A thin confidence rail on the left edge of each row — green→red. */
+.skyplan-row td:first-child { border-left: 3px solid transparent; }
+.skyplan-row.conf-green  td:first-child { border-left-color: var(--ok); }
+.skyplan-row.conf-amber  td:first-child { border-left-color: #d6b54a; }
+.skyplan-row.conf-orange td:first-child { border-left-color: #d98a3a; }
+.skyplan-row.conf-red    td:first-child { border-left-color: var(--warn); }
+.skyplan-row.has-conflict { background: color-mix(in srgb, var(--warn) 7%, transparent); }

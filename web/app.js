@@ -294,6 +294,58 @@ function renderSky(state) {
   }
 }
 
+// Sky-target plan confidence badge (mirrors src/skyplan.js confidenceFor).
+const CONFIDENCE_BADGE = {
+  green:  { dot: '🟢', label: 'sicher',   tip: 'TLE fresh at the event (< 1 d) — reliable.' },
+  amber:  { dot: '🟡', label: 'mittel',   tip: 'TLE 1–3 d old at the event — refines as it nears.' },
+  orange: { dot: '🟠', label: 'grob',     tip: 'TLE 3–6 d old at the event — placeholder, will sharpen.' },
+  red:    { dot: '🔴', label: 'unsicher', tip: 'TLE > 6 d old at the event — very tentative.' },
+};
+
+// Render the sky-target observation plan ("Drehbuch"). Hidden unless the
+// feature is on AND there is at least one upcoming pass.
+function renderSkyPlan(state) {
+  const section = $('#skyplan-section');
+  if (!section) return;
+  const plan = Array.isArray(state.skyTargetPlan) ? state.skyTargetPlan : [];
+  const meta = state.skyTargets;
+  if (!meta?.enabled || plan.length === 0) { section.hidden = true; return; }
+  section.hidden = false;
+  const sub = $('#skyplan-sub');
+  if (sub) {
+    sub.textContent = `${plan.length} pass${plan.length === 1 ? '' : 'es'} · next ${meta.planHorizonDays ?? 7} d · ${meta.objectCount ?? 0} targets`;
+  }
+  const tbody = $('#skyplan tbody');
+  tbody.innerHTML = '';
+  for (const r of plan) {
+    const c = CONFIDENCE_BADGE[r.confidence] ?? { dot: '⚪', label: '—', tip: 'Confidence unknown (no TLE epoch).' };
+    const typeLabel = r.kind === 'transit' ? 'transit' : 'field';
+    const miss = r.missArcmin == null ? '—'
+      : (r.missArcmin >= 60 ? `${(r.missArcmin / 60).toFixed(2)}°` : `${Math.round(r.missArcmin)}′`);
+    const inField = r.timeInFieldMs ? `${(r.timeInFieldMs / 1000).toFixed(1)}s` : '—';
+    const el = r.elevationDeg == null ? '—' : `${Math.round(r.elevationDeg)}°`;
+    const conflict = r.conflictWithPrev
+      ? ` <span class="skyplan-conflict" title="Only ${Math.round((r.conflictGapMs ?? 0) / 60000)} min after the previous event — one scope can't catch both.">⚠</span>`
+      : '';
+    const shadow = r.sunlit === false
+      ? ' <span class="skyplan-shadow" title="Satellite in Earth\'s shadow at closest approach — not sunlit, so invisible.">🌑</span>'
+      : '';
+    const tr = document.createElement('tr');
+    tr.className = `skyplan-row conf-${r.confidence ?? 'none'}${r.conflictWithPrev ? ' has-conflict' : ''}`;
+    tr.innerHTML = `
+      <td class="skyplan-when">${fmtDateTime(r.atMs)}${conflict}</td>
+      <td class="skyplan-obj">${r.targetName ?? '—'}</td>
+      <td class="skyplan-sat">🛰 ${r.satTag ?? '?'}${shadow}</td>
+      <td class="skyplan-type type-${typeLabel}">${typeLabel}</td>
+      <td>${el}</td>
+      <td>${miss}</td>
+      <td>${inField}</td>
+      <td class="skyplan-conf" title="${c.tip}">${c.dot} ${c.label}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
 const STATUS_LABELS = {
   planned:   { icon: '📅', label: 'planned' },
   radio:     { icon: '📡', label: 'radio' },
@@ -879,6 +931,7 @@ async function pollState() {
     sharpcapArmedLog = Array.isArray(state.sharpcap?.armed) ? state.sharpcap.armed : [];
     renderSky(state);
     renderIssPass(state.iss);
+    renderSkyPlan(state);
     renderTracking(state);
     renderTotalLive(state);
     renderDetectFunnel(state.detectStats);

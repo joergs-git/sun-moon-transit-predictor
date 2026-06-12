@@ -79,6 +79,34 @@
     </table>
   </section>
 
+  <!-- Sky-target observation plan (M83) — the "Drehbuch": every satellite ×
+       sky-target pass over the next planHorizonDays, time-sorted, with a
+       confidence rating. Hidden until iss.skyTargets is enabled AND has rows. -->
+  <section id="skyplan-section" class="skyplan-section" hidden>
+    <h2>🛰 Sky-target plan <span class="skyplan-sub" id="skyplan-sub"></span></h2>
+    <p class="hint">
+      Predicted satellite (ISS / HST / Tiangong) passes through your framed
+      deep-sky / star / planet fields — for the "shoot the satellite, composite
+      with a separate background stack" workflow. Each row's confidence sharpens
+      as the event nears and the TLE refreshes; far-out rows are placeholders.
+    </p>
+    <table id="skyplan" class="skyplan-table">
+      <thead>
+        <tr>
+          <th title="Predicted closest-approach time. Shows the weekday + date when it's not today.">When</th>
+          <th title="The framed sky target the satellite crosses.">Object</th>
+          <th title="Which satellite — ISS, Hubble (HST) or Tiangong (CSS).">Sat</th>
+          <th title="transit = the satellite passes through the object/disc itself; field = it crosses the framed FOV near the object.">Type</th>
+          <th title="Satellite elevation above the horizon at closest approach.">El</th>
+          <th title="Closest approach to the field centre (arcminutes, or degrees if wide).">Miss</th>
+          <th title="How long the satellite stays inside the framed field.">In&nbsp;field</th>
+          <th title="Prediction confidence from the TLE age at the event: 🟢 sicher (&lt;1 d) · 🟡 mittel (1–3 d) · 🟠 grob (3–6 d) · 🔴 unsicher (&gt;6 d). The ISS is capped at 🟡 beyond ~2 d (reboost risk).">Conf.</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
   <div class="top-row">
     <div class="top-left">
       <!-- LEFT column (v0.30.41): Sky now reads first, then the FOV
