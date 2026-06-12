@@ -847,6 +847,11 @@
             <small class="field-hint">…and at least this high — so the aircraft is still lit/visible. Below ~−14° the plane is a dark shape with only nav lights. Default −14°.</small></label>
           <label>Min planet elevation °<input name="appulse.minPlanetElevationDeg" type="number" step="1" min="0" max="90" placeholder="10">
             <small class="field-hint">Ignore planets lower than this. Default 10°.</small></label>
+          <label class="checkbox-row">
+            <input name="appulse.notify" type="checkbox"> Pushover alert
+            <small class="field-hint">Push a heads-up when an appulse is imminent (needs Pushover configured). Edge-triggered — one push per event.</small></label>
+          <label>Alert lead (s)<input name="appulse.notifyLeadMaxS" type="number" step="1" min="10" max="1800" placeholder="180">
+            <small class="field-hint">Only push once the aircraft is within this many seconds of the planet. Default 180.</small></label>
         </fieldset>
 
         <fieldset data-tab="sky">

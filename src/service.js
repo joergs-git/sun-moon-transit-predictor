@@ -349,6 +349,8 @@ export const DEFAULT_CONFIG = {
     sunElevMaxDeg: -2,         // twilight: Sun at most this high (dark enough for the planet)
     sunElevMinDeg: -14,        // …and at least this high (aircraft still lit / visible)
     minPlanetElevationDeg: 10,
+    notify: false,             // opt-in Pushover when an appulse is imminent
+    notifyLeadMaxS: 180,       // only push once it is within this many seconds of closest approach
   },
   // AirNav On-Demand API v2 (optional; off until a token is set). The
   // token lives ONLY here / in service.json (masked in /api/config) — the
@@ -1001,6 +1003,10 @@ export async function runService({
   // and the result is reused for a few minutes so re-opening the view doesn't
   // re-scan — so it costs nothing unless explicitly requested.
   let nextOpportunityCache = null;
+  // Edge-trigger dedup for appulse Pushovers: key `${icao}|${planet}` → the
+  // closest-approach time already pushed, so each event pushes once. In-memory
+  // only (appulses are transient — no restart-survival needed).
+  const appulseNotified = new Map();
   // Active target (M83): which sky object the scope is pointed at. 'auto' = the
   // legacy behaviour (arm capture on any Sun/Moon transit); 'Sun'/'Moon' narrow
   // to one body; a sky-object id (e.g. 'jupiter', 'm42') makes the rig(s) arm on
@@ -1207,6 +1213,8 @@ export async function runService({
         sunElevMaxDeg: config.appulse?.sunElevMaxDeg ?? -2,
         sunElevMinDeg: config.appulse?.sunElevMinDeg ?? -14,
         minPlanetElevationDeg: config.appulse?.minPlanetElevationDeg ?? 10,
+        notify: Boolean(config.appulse?.notify),
+        notifyLeadMaxS: config.appulse?.notifyLeadMaxS ?? 180,
       },
       // E-paper display client config (no secrets). The Python client reads
       // this block from /api/config and configures itself live from the UI.
@@ -1577,11 +1585,13 @@ export async function runService({
       const a = patch.appulse;
       const next = { ...config.appulse };
       if (typeof a.enabled === 'boolean') next.enabled = a.enabled;
+      if (typeof a.notify === 'boolean') next.notify = a.notify;
       const NUM = {
         fovLoosenFactor: [1, 10],
         sunElevMaxDeg: [-18, 5],
         sunElevMinDeg: [-24, 0],
         minPlanetElevationDeg: [0, 90],
+        notifyLeadMaxS: [10, 1800],
       };
       for (const [k, [lo, hi]] of Object.entries(NUM)) {
         if (k in a) {
@@ -2061,6 +2071,29 @@ export async function runService({
             aircraftElevationDeg: c.aircraftAtClosest?.elevationDeg ?? null,
             altMmsl: c.aircraft?.altMmsl ?? null,
           }));
+
+        // Opt-in Pushover for an imminent appulse — edge-triggered per
+        // (icao|planet) so each event pushes exactly once.
+        if (apCfg.notify && pushover.enabled) {
+          const leadMaxMs = (apCfg.notifyLeadMaxS ?? 180) * 1000;
+          for (const a of state.appulses) {
+            const lead = a.atMs - nowMs;
+            if (lead > leadMaxMs || lead < -30_000) continue;
+            const key = `${a.icao}|${a.planet}`;
+            const prev = appulseNotified.get(key);
+            if (prev != null && Math.abs(prev - a.atMs) < 60_000) continue;   // already pushed this event
+            appulseNotified.set(key, a.atMs);
+            const sep = a.sepDeg != null ? `${a.sepDeg.toFixed(2)}°` : '?';
+            const leadTxt = lead > 0 ? `in ${Math.round(lead / 1000)} s` : 'now';
+            pushover.send({
+              title: `📸 ${a.flight ?? a.icao} near ${a.planet}`,
+              message: `Aircraft ${a.flight ?? a.icao} passes ${a.planet} · sep ${sep} · ${leadTxt}`
+                + (a.aircraftElevationDeg != null ? ` · el ${Math.round(a.aircraftElevationDeg)}°` : ''),
+              url: config.pushover?.url || undefined,
+            }).catch((e) => logger.warn?.('appulse push failed:', e?.message ?? e));
+          }
+          for (const [k, t] of appulseNotified) if (t < nowMs - 300_000) appulseNotified.delete(k);
+        }
       }
     }
     state.appulseInfo = {
