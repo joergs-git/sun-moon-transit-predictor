@@ -2224,7 +2224,19 @@ export async function runService({
         } catch (e) {
           logger.warn?.(`${sat.tag} prediction failed:`, e?.message ?? e);
         }
-        satCache.set(sat.tag, { tle, events });
+        // Next naked-eye visible pass for this satellite too (same calc as the
+        // ISS), so the Sky-now table can show a "next visible pass" row for all
+        // three satellites — not just the ISS.
+        let visiblePass = null;
+        try {
+          visiblePass = nextIssVisiblePass(observer, tle.satrec, {
+            fromMs: nowMs,
+            horizonMs: config.iss.visibleHorizonMs ?? config.iss.horizonMs,
+          });
+        } catch (e) {
+          logger.warn?.(`${sat.tag} visible-pass calc failed:`, e?.message ?? e);
+        }
+        satCache.set(sat.tag, { tle, events, visiblePass });
       }
       lastSatComputeMs = nowMs;
     }
@@ -2339,12 +2351,15 @@ export async function runService({
       const entry = satCache.get(sat.tag);
       const evs = entry?.events ?? [];
       const next = evs.find(e => e.closestApproachAtMs >= nowMs) ?? null;
+      // Drop a visible pass once it is over.
+      const vp = (entry?.visiblePass && entry.visiblePass.endMs >= nowMs) ? entry.visiblePass : null;
       return {
         tag: sat.tag,
         name: sat.name,
         enabled: sat.enabled !== false,
         active: Boolean(entry?.tle),
         upcoming: evs.length,
+        visiblePass: vp,
         nextTransit: next
           ? {
             atMs: next.closestApproachAtMs,

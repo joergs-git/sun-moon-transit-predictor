@@ -29,6 +29,14 @@
         <a href="https://www.airnavradar.com/stations/country/germany" target="_blank" rel="noopener noreferrer" title="AirNav Radar — ADS-B receiving stations in Germany (opens in a new tab).">AirNav ↗</a>
       </div>
       <div class="header-controls">
+        <!-- Active-target (M83): what the scope is pointed at — drives the
+             SharpCap capture. Compact, in the header to save a full-width bar;
+             shown only when the trigger is enabled. -->
+        <div id="active-target-bar" class="active-target-bar" hidden>
+          <label for="active-target-select">🔭</label>
+          <select id="active-target-select" title="What your telescope is pointed at. Auto / Sun / Moon = the usual aircraft & ISS disc-transit capture. Pick a sky object (only those with an upcoming pass appear) to arm the capture on that object's satellite crossing instead."></select>
+          <span id="active-target-next" class="active-target-next"></span>
+        </div>
         <time id="clock" class="clock" title="Local wall-clock time, ticking once per second.">--:--:--</time>
         <div id="sharpcap-status" class="sc-status" hidden title="SharpCap capture trigger: armed body and how many captures it has armed this session (resets on service restart)."></div>
         <div id="status" class="status" title="Service liveness. Shows seconds since the last successful tick and the number of aircraft currently tracked by dump1090.">connecting…</div>
@@ -36,16 +44,6 @@
       </div>
     </div>
   </header>
-
-  <!-- Active-target bar (M83): which object the scope is pointed at. Drives the
-       SharpCap capture — Sun/Moon/Auto = the usual aircraft-vs-disc capture; a
-       sky object = arm on that object's satellite passes. Shown only when the
-       SharpCap trigger is enabled. -->
-  <div id="active-target-bar" class="active-target-bar" hidden>
-    <label for="active-target-select">🔭 Scope target</label>
-    <select id="active-target-select" title="What your telescope is pointed at. Auto / Sun / Moon = the usual aircraft & ISS disc-transit capture. Pick a sky object (only those with an upcoming pass appear) to arm the capture on that object's satellite crossing instead."></select>
-    <span id="active-target-next" class="active-target-next"></span>
-  </div>
 
   <section>
     <h2>Real candidates</h2>
@@ -135,9 +133,10 @@
           </thead>
           <tbody></tbody>
         </table>
-        <!-- Next naked-eye ISS pass (el > 20°, after dusk, station sunlit).
-             Computed offline from the TLE; hidden until one is predicted. -->
-        <p class="iss-pass" id="iss-pass" hidden></p>
+        <!-- Per-satellite next-pass table (ISS / Tiangong / HST): next naked-eye
+             visible pass + next Sun/Moon disc transit. Offline SGP4 from the
+             TLEs; hidden until at least one satellite is active. -->
+        <div id="sat-passes" class="sat-passes" hidden></div>
       </section>
       <section id="fov-section">
         <h2>

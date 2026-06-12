@@ -895,35 +895,47 @@ function fmtWhenAbs(ms) {
 // Two ISS lines under the Sky-now table: the next naked-eye visible pass
 // and the next Sun/Moon disc transit — both shown even if weeks away.
 // The whole block hides only when the ISS feature is inactive (no TLE).
-function renderIssPass(iss) {
-  const el = $('#iss-pass');
+// Per-satellite next-pass table (ISS · Tiangong · HST): next naked-eye visible
+// pass + next Sun/Moon disc transit, one column per satellite. Replaces the old
+// ISS-only two-liner. Hidden until at least one satellite has a loaded TLE.
+function renderSatellitePasses(state) {
+  const el = $('#sat-passes');
   if (!el) return;
-  if (!iss?.active) { el.hidden = true; el.innerHTML = ''; return; }
+  const byTag = {};
+  if (state.iss?.active) {
+    byTag.ISS = { visiblePass: state.iss.visiblePass, nextTransit: state.iss.nextTransit };
+  }
+  for (const s of (state.satellites ?? [])) {
+    if (s.active) byTag[s.tag] = { visiblePass: s.visiblePass, nextTransit: s.nextTransit };
+  }
+  // Column order requested by the user: ISS, Tiangong (CSS), HST.
+  const order = [['ISS', 'ISS'], ['CSS', 'Tiangong'], ['HST', 'HST']].filter(([tag]) => byTag[tag]);
+  if (!order.length) { el.hidden = true; el.innerHTML = ''; return; }
   el.hidden = false;
 
-  const p = iss.visiblePass;
-  const visLine = p
-    ? `🛰 <b>Next visible ISS pass</b> ${fmtWhenAbs(p.startMs)}: `
-      + `${fmtTime(p.startMs)} (${azToCompass(p.startAzDeg)}) → `
-      + `${fmtTime(p.endMs)} (${azToCompass(p.endAzDeg)}) · `
-      + `max ${p.maxElevationDeg}° · ${p.durationS}s`
-    : '🛰 <b>Next visible ISS pass</b>: none predicted in the scan window.';
+  const visCell = (s) => {
+    const p = s?.visiblePass;
+    if (!p) return '<span class="sat-none">—</span>';
+    return `${fmtWhenAbs(p.startMs)}<br><span class="sat-sub">${azToCompass(p.startAzDeg)}→${azToCompass(p.endAzDeg)} · max ${p.maxElevationDeg}° · ${p.durationS}s</span>`;
+  };
+  const transitCell = (s) => {
+    const t = s?.nextTransit;
+    if (!t) return '<span class="sat-none">—</span>';
+    const icon = t.body === 'Sun' ? '☀' : '🌙';
+    return `${icon} ${fmtWhenAbs(t.atMs)}<br><span class="sat-sub">sep ${fmtSep(t.sepDeg)}${t.tentative ? ' · tentative' : ''}</span>`;
+  };
 
-  const t = iss.nextTransit;
-  const tLine = t
-    ? `☀🌙 <b>Next ISS ${t.body} transit</b> ${fmtWhenAbs(t.atMs)} · `
-      + `sep ${fmtSep(t.sepDeg)}`
-      + (t.tentative
-        ? ` <span class="iss-tentative">— tentative (&gt; ${iss.notifyWithinDays ?? 3} d out:`
-          + ` refines with each daily TLE; no alert until closer)</span>`
-        : '')
-    : `☀🌙 <b>Next ISS Sun/Moon transit</b>: none in the next `
-      + `${iss.horizonDays ?? '—'} days (raise <code>iss.horizonMs</code> to look further).`;
-
-  el.innerHTML = `<div>${visLine}</div><div class="iss-pass-2">${tLine}</div>`;
-  el.title = 'Visible pass = ISS above 20°, sky dark (Sun below −6°), '
-    + 'station sunlit. Transit = ISS crossing the Sun/Moon disc for this '
-    + 'site. Both are offline SGP4 predictions; refresh with the TLE.';
+  const head = order.map(([, label]) => `<th>🛰 ${label}</th>`).join('');
+  const visRow = order.map(([tag]) => `<td>${visCell(byTag[tag])}</td>`).join('');
+  const transitRow = order.map(([tag]) => `<td>${transitCell(byTag[tag])}</td>`).join('');
+  el.innerHTML = `
+    <table class="sat-pass-table">
+      <thead><tr><th></th>${head}</tr></thead>
+      <tbody>
+        <tr><th class="sat-row-label" title="Next naked-eye visible pass: satellite above 20°, sky dark (Sun below −6°), satellite sunlit. (Geometry only — HST is faint near the naked-eye limit.)">Next visible pass</th>${visRow}</tr>
+        <tr><th class="sat-row-label" title="Next crossing of the Sun or Moon disc for this site. Offline SGP4 prediction; 'tentative' = beyond the trustworthy window, refines with each daily TLE.">Next ☀/🌙 transit</th>${transitRow}</tr>
+      </tbody>
+    </table>`;
 }
 
 // "Total live trackings" — single sorted-by-SEP table of EVERY aircraft in
@@ -977,7 +989,7 @@ async function pollState() {
     // markers reflect the latest tick.
     sharpcapArmedLog = Array.isArray(state.sharpcap?.armed) ? state.sharpcap.armed : [];
     renderSky(state);
-    renderIssPass(state.iss);
+    renderSatellitePasses(state);
     renderActiveTarget(state);
     renderSkyPlan(state);
     renderTracking(state);
