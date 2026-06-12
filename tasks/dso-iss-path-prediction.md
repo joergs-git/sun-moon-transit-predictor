@@ -187,25 +187,42 @@ der die mm/s @ FL schon kennt.
 ## 10. Active-Target — welches Objekt liegt gerade am Teleskop an
 
 Bis dato war das Beobachtungsobjekt **hartkodiert** (Sonne tags / Mond nachts,
-pro Rig per `sharpcap.body` als `Sun|Moon`). Mit mehreren Nacht-Zielen muss in
-der **Haupt-UI** (nicht in den Settings) auswählbar sein, **worauf das
-Teleskop gerade gerichtet ist**.
+pro Rig per `sharpcap.body` als `Sun|Moon`). Mit mehreren Nacht-Zielen muss
+auswählbar sein, **worauf das Teleskop gerade gerichtet ist**.
 
-- **Auswahl-Widget** (Pull-down / Chip-Leiste) in der Haupt-UI, gefüllt
-  **nicht** mit einem statischen All-Sky-Katalog, sondern mit den **Zielen,
-  die heute Nacht real einen Treffer haben** (= die sortierten Kandidaten aus
-  dem Predictor). Das ist der springende Punkt: man wählt nur aus, wofür es
-  überhaupt etwas zu sehen gibt.
-- Das gewählte Ziel wird das **„scharfe"** Objekt: Capture-Trigger, Pushover/
-  Buzzer-Countdown und FOV-Skizze keyen darauf. Generalisiert den heutigen
-  `sharpcap.body`-Wert von `{Sun,Moon}` auf „aktuelles Active-Target".
-- **Ein Scope = ein Ziel** zur Zeit (spiegelt die bestehende „Sun *oder* Moon"-
-  Regel). Bei Multi-Rig (SharpCap-Rig-Liste existiert schon) hat **jedes Rig
-  sein eigenes** Active-Target → zwei dicht aufeinanderfolgende Events können
-  auf zwei Teleskope verteilt werden.
-- **Persistenz:** Runtime-/Betreiber-Zustand (welches Objekt angefahren ist),
+**Zwei Achsen, nicht eine.** Es geht nicht nur um die ISS — **HST** und
+**Tiangong/CSS** sind seit M81 (`config.iss.satellites`) bereits mitpropagiert
+und müssen genauso berücksichtigt werden. Ein Ereignis ist also immer ein Paar:
+
+- **Himmelsobjekt** (Sonne/Mond/Stern/Planet/DSO) — *wohin* das Teleskop
+  physisch zeigt. **Das** ist das Active-Target eines Rigs.
+- **Satellit** (ISS / HST / CSS) — *was* dort durch-/vorbeizieht. Pro Ereignis;
+  am selben Objekt können nacheinander verschiedene Satelliten queren.
+
+→ Man wählt das **Himmelsobjekt** (Pointing), und der Trigger armt für **jeden
+Satelliten**, der dessen Feld heute Nacht quert. Die Timeline benennt pro
+Eintrag den Satelliten (🛰 ISS / HST / CSS).
+
+**Wo die Auswahl sitzt (Vorgabe des Users):**
+
+- **Hauptrig:** Objekt-Auswahl als **Pull-down direkt oben im Haupt-View**
+  (prominent, schneller Zugriff während der Nacht) — gefüllt **nicht** mit
+  einem statischen All-Sky-Katalog, sondern mit den **Objekten, die heute
+  Nacht real einen Treffer haben** (= die sortierten Predictor-Kandidaten).
+  Man wählt nur aus, wofür es überhaupt etwas zu sehen gibt.
+- **Weitere Rigs** (sofern definiert): deren Active-Target wird **in den
+  Settings** gesetzt — dort, wo das Rig ohnehin definiert ist (SharpCap-Rig-
+  Liste, künftiger Tab „Scopes"). Konsistent: Hauptrig oben/live, Zusatz-Rigs
+  bei ihrer Definition.
+- Das gewählte Objekt wird das **„scharfe"**: Capture-Trigger, Pushover/Buzzer-
+  Countdown und FOV-Skizze des jeweiligen Rigs keyen darauf. Generalisiert
+  `sharpcap.body` von `{Sun,Moon}` auf „beliebiges Active-Target".
+- **Ein Scope = ein Objekt** zur Zeit (spiegelt die „Sun *oder* Moon"-Regel).
+  Jedes Rig hat sein **eigenes** Active-Target → zwei dicht aufeinander folgende
+  Events können auf zwei Teleskope verteilt werden.
+- **Persistenz:** Laufzeit-/Betreiber-Zustand (welches Objekt angefahren ist),
   überlebt Reload; gehört nicht ins Config-Schema der Ziel-*Definitionen*,
-  sondern ist Sitzungs-/Laufzeitzustand.
+  sondern ist Sitzungs-/Laufzeitzustand pro Rig.
 
 ## 11. Beobachtungsplan / „Drehbuch" — die Nacht-Timeline
 
@@ -214,21 +231,24 @@ des **eigenen Standorts** vor, welche Objekte in der kommenden Nacht ISS-Treffer
 haben, **in zeitlicher Reihenfolge** — wie ein Drehbuch:
 
 ```
-21:48  🌙 Mond      — ISS-Transit,  El 41°,  Sep 0,1°
-22:30  M42 (Orion)  — ISS durch FOV, El 28°, Miss 6′
-23:15  ♃ Jupiter    — ISS-Transit,  El 35°,  Miss 12″   ⚠ nur 8 min nach M42
-00:50  Vega         — Appulse,       El 60°,  Miss 9′
+21:48  🌙 Mond      — 🛰 ISS  Transit,    El 41°,  Sep 0,1°
+22:30  M42 (Orion)  — 🛰 ISS  durch FOV,  El 28°,  Miss 6′
+22:54  M42 (Orion)  — 🛰 CSS  durch FOV,  El 25°,  Miss 11′
+23:15  ♃ Jupiter    — 🛰 ISS  Transit,    El 35°,  Miss 12″   ⚠ nur 8 min nach M42
+00:50  Vega         — 🛰 HST  Appulse,    El 60°,  Miss 9′
 ```
 
 Damit weiß der Betreiber **wann er wohin schauen** muss, hakt das laufende
-Objekt ab und stellt das nächste als Active-Target ein.
+Ereignis ab und stellt das nächste Objekt als Active-Target ein.
 
 - **Datenquelle:** Aggregation der bereits sortierten Predictor-Kandidaten
-  über **alle** aktivierten Ziele **inkl. Sonne/Mond**, gemerged und nach Zeit
-  sortiert. Read-Model, kein neuer Rechenkern.
-- **Pro Eintrag:** Objekt · Uhrzeit (closest approach) · Typ (Scheiben-Transit /
-  Bahn-durch-Feld / Appulse) · Elevation · Sep/Miss · ISS sonnenbeschienen?
-  · TLE-Frische-/Konfidenz-Hinweis.
+  über **alle aktivierten Satelliten** (ISS/HST/CSS, `config.iss.satellites`)
+  **× alle aktivierten Ziele inkl. Sonne/Mond**, gemerged und nach Zeit
+  sortiert. Read-Model, kein neuer Rechenkern — der Predictor läuft pro
+  Satellit schon, hier werden die Ergebnisse nur zusammengeführt.
+- **Pro Eintrag:** Objekt · **Satellit (ISS/HST/CSS)** · Uhrzeit (closest
+  approach) · Typ (Scheiben-Transit / Bahn-durch-Feld / Appulse) · Elevation ·
+  Sep/Miss · Satellit sonnenbeschienen? · TLE-Frische-/Konfidenz-Hinweis.
 - **Konflikt-Erkennung:** Zwei Events innerhalb einer **Umschwenk-+Refokus-
   Zeit** (Minuten, konfigurierbar, z. B. `reslewMinGapMin`) sind mit **einem**
   Teleskop nicht beide machbar → als Konflikt markieren („⚠ nur 8 min nach
@@ -263,12 +283,18 @@ Objekt ab und stellt das nächste als Active-Target ein.
 - [ ] `service.js`: `iss.skyTargets`-Config validieren (transaktional, vgl.
       lessons.md 2026-06-08); TLE-Frische-Gate; in den Recompute-Zyklus hängen.
 - [ ] TLE-Frische am Kandidaten führen + anzeigen; Warnung bei Überalterung.
+- [ ] Predictor über **alle aktivierten Satelliten × alle Ziele** laufen lassen
+      (ISS/HST/CSS aus `config.iss.satellites` × `iss.skyTargets.objects`).
 - [ ] **Active-Target-Zustand** (pro Rig): generalisiert `sharpcap.body`;
       Trigger/Alerts/FOV keyen darauf; Laufzeit-persistent.
-- [ ] **Auswahl-Widget** in der Haupt-UI, gefüllt aus den Tonight-Kandidaten.
-- [ ] **Beobachtungsplan-Panel:** gemergte, zeitsortierte Timeline aller
-      aktivierten Ziele inkl. Sonne/Mond; Konflikt-Markierung (`reslewMinGapMin`);
-      „Up next" + manueller „als Active-Target setzen"-Vorschlag.
+- [ ] **Hauptrig:** Objekt-Pull-down **oben im Haupt-View**, gefüllt aus den
+      Tonight-Kandidaten.
+- [ ] **Zusatz-Rigs:** Active-Target-Auswahl **in den Settings** (bei der
+      Rig-Definition / Tab „Scopes").
+- [ ] **Beobachtungsplan-Panel:** gemergte, zeitsortierte Timeline über alle
+      Satelliten × Ziele inkl. Sonne/Mond; Satellit pro Eintrag;
+      Konflikt-Markierung (`reslewMinGapMin`); „Up next" + manueller
+      „als Active-Target setzen"-Vorschlag.
 - [ ] Trigger nur ISS-Burst; Body-Label = Objektname; Disc-xing-Spalte für
       Punkt-Ziele.
 - [ ] Tests: Planet-Az/El, RA/Dec-Stern-Az/El, FOV-Box-Treffer (durch vs.
