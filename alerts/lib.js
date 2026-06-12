@@ -131,6 +131,11 @@ export function fmtLocal(ms, tz) {
   }
 }
 
+/** Unambiguous absolute UTC string, e.g. "2026-06-14 12:02 UTC". */
+export function fmtUtc(ms) {
+  return `${new Date(ms).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
+}
+
 const BODY_GLYPH = { Sun: '☀', Moon: '🌙' };
 
 /**
@@ -145,13 +150,19 @@ const BODY_GLYPH = { Sun: '☀', Moon: '🌙' };
 export function formatAlert(ev, user, { unsubscribeUrl }) {
   const glyph = BODY_GLYPH[ev.body] ?? '';
   const when = fmtLocal(ev.closestApproachAtMs, user.tz);
+  // Always carry an unambiguous absolute UTC alongside the localised time, so a
+  // subscriber in any country (or with no timezone captured) can never misread
+  // it. When no tz is set, fmtLocal already returns UTC, so don't repeat it.
+  const whenLine = user.tz
+    ? `When: ${when}  ·  ${fmtUtc(ev.closestApproachAtMs)}`
+    : `When: ${when}`;
   const elev = Math.round(ev.aircraftAtClosest?.elevationDeg ?? 0);
   const sepArcmin = (ev.closestApproachSepDeg * 60).toFixed(1);
   const durS = ev.durationMs ? (ev.durationMs / 1000).toFixed(1) : null;
   const title = `🛰 ${ev.icao} crosses the ${ev.body} at your location`;
   const lines = [
     `${glyph} ${ev.body} transit by ${ev.callsign ?? ev.icao}`,
-    `When: ${when}`,
+    whenLine,
     `Elevation ${elev}°, miss ${sepArcmin}′${durS ? `, ~${durS} s across the disc` : ''}`,
     '',
     `Stop these alerts: ${unsubscribeUrl}`,

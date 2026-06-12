@@ -122,6 +122,7 @@ describe('formatAlert / fmtLocal', () => {
     expect(title).toContain('ISS');
     expect(title).toContain('Sun');
     expect(message).toContain('14:02:31');           // 12:02:31 UTC = 14:02 CEST
+    expect(message).toContain('2026-06-14 12:02 UTC'); // …plus unambiguous UTC alongside
     expect(message).toContain('6.0′');               // 0.1° = 6 arcmin
     expect(message).toContain('https://x.test/unsubscribe?token=abc');
   });
