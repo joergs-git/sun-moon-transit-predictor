@@ -94,6 +94,6 @@
 - **Rule:** Added a PARALLEL `armForSkyTarget` (separate dedup key namespace)
   instead of refactoring the aircraft path, so the 28 existing trigger tests
   still guarantee the Sun/Moon capture behaviour is byte-identical. When
-  extending a safety/■money/■hardware path, add alongside; don't refactor under
+  extending a safety / money / hardware path, add alongside; don't refactor under
   time pressure.
 - **Applies to:** sharpcap.js, capture trigger, any tested critical path.
