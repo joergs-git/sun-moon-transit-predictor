@@ -1,6 +1,6 @@
 """
 Pillow renderer for the 4.2" e-paper panel (400×300, 1-bit black/white).
-v0.31.18
+v0.31.19
 
 render_state() turns an /api/state snapshot into a PIL Image. The layout is
 deliberately monospace so columns self-align, and fixed into three paragraphs.
@@ -29,7 +29,9 @@ rendering testable on any machine via the client's --dry-run flag.
 """
 
 import os
+import socket
 import time
+from urllib.parse import urlsplit, urlunsplit
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -597,18 +599,65 @@ def _sky_and_list(draw, state, pool):
         ry += 24
 
 
+_lan_ip_cache = None
+
+
+def _lan_ip():
+    """This machine's primary outbound LAN IP (cached). The UDP 'connect' sends
+    no packets — it just asks the routing table which local address would be
+    used, so it works offline as long as a default route exists. None on failure."""
+    global _lan_ip_cache
+    if _lan_ip_cache:
+        return _lan_ip_cache
+    s = None
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        if ip and not ip.startswith("127."):
+            _lan_ip_cache = ip
+            return ip
+    except Exception:
+        pass
+    finally:
+        if s is not None:
+            try:
+                s.close()
+            except Exception:
+                pass
+    return None
+
+
+def _qr_url(url):
+    """The URL to encode in the QR. A loopback source (the panel reading its OWN
+    Pi) is useless from a phone, so swap the host for this Pi's real LAN IP —
+    keeping the scheme/port/path — so the QR opens the local Pi's web UI. Returns
+    None if the host is loopback and no LAN IP could be found."""
+    if not url:
+        return None
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if host in ("localhost", "::1") or host.startswith("127."):
+        ip = _lan_ip()
+        if not ip:
+            return None
+        netloc = "%s:%d" % (ip, parts.port) if parts.port else ip
+        return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    return url
+
+
 def _draw_qr(draw, url):
-    """Draw a tiny QR of `url` (the data source) in the very bottom-right corner.
+    """Draw a tiny QR of the data-source URL in the very bottom-right corner.
 
     As small as the data allows — one panel pixel per QR module (a ~24-char
     `http://ip:port` URL is a 25×25-module code → ~25 px). A white quiet zone is
-    painted behind it so a phone can read it off the e-paper. No-op if the URL is
-    empty/loopback or the qrcode lib is missing."""
-    if not _HAVE_QR or not url:
+    painted behind it so a phone can read it off the e-paper. No-op if the qrcode
+    lib is missing or no usable URL could be derived."""
+    if not _HAVE_QR:
         return
-    low = url.lower()
-    if "127.0.0.1" in low or "localhost" in low:
-        return  # a loopback URL is useless from a phone — skip it
+    url = _qr_url(url)
+    if not url:
+        return
     try:
         qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L,
                            box_size=1, border=0)
