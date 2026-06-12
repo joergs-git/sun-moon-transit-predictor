@@ -577,6 +577,7 @@
           <button type="button" class="settings-tab" role="tab" data-tab="epaper" aria-selected="false" tabindex="-1">E-paper</button>
           <button type="button" class="settings-tab" role="tab" data-tab="data" aria-selected="false" tabindex="-1">Data</button>
           <button type="button" class="settings-tab" role="tab" data-tab="sky" aria-selected="false" tabindex="-1">Sky targets</button>
+          <button type="button" class="settings-tab" role="tab" data-tab="catalog" aria-selected="false" tabindex="-1">Catalog</button>
         </div>
         <fieldset data-tab="general">
           <legend>Observer</legend>
@@ -843,6 +844,19 @@
             <small class="field-hint">Only alert events within this many days. 1–14 (default 7).</small></label>
           <label>Min elevation °<input name="skyTargets.planAlerts.minElevationDeg" type="number" step="1" min="0" max="90" placeholder="20">
             <small class="field-hint">Don't alert passes lower than this. Default 20°.</small></label>
+        </fieldset>
+
+        <fieldset data-tab="catalog">
+          <legend>Sky-target catalogue</legend>
+          <small class="field-hint">The objects scanned for satellite passes (what appears in the Sky-target plan). Each is a <b>star / DSO</b> by <b>J2000</b> RA (hours) + Dec (degrees), or a <b>planet</b> by name (RA/Dec then ignored, the disc comes from its ephemeris). <b>Ø</b> = apparent size in degrees for an extended object (optional). Uncheck to skip one without deleting it. Saved with the rest of Settings.</small>
+          <div class="catalog-editor">
+            <div class="catalog-head">
+              <span title="Include in the scan">✓</span>
+              <span>ID</span><span>Name</span><span>RA h</span><span>Dec °</span><span>Ø °</span><span>Planet</span><span></span>
+            </div>
+            <div id="catalog-rows"></div>
+            <button type="button" id="catalog-add" class="btn">+ Add object</button>
+          </div>
         </fieldset>
 
         </div><!-- /.settings-fields -->

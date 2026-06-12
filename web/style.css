@@ -1310,3 +1310,25 @@ a.acstats-label.hex-link:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 .skyplan-toggle input { vertical-align: middle; margin-right: 3px; }
+
+/* ===== Sky-target catalogue editor (M83) ================================ */
+.catalog-editor { margin-top: 6px; }
+.catalog-head, .catalog-row {
+  display: grid;
+  grid-template-columns: 22px 92px minmax(120px, 1fr) 66px 66px 52px 78px 26px;
+  gap: 5px;
+  align-items: center;
+}
+.catalog-head { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 4px; padding: 0 2px; }
+.catalog-row { margin: 3px 0; }
+.catalog-row input[type="text"], .catalog-row input[type="number"] {
+  width: 100%; min-width: 0;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 3px;
+  padding: 3px 5px; font-size: 11.5px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.catalog-row input:focus { outline: none; border-color: var(--accent); }
+.catalog-row input[type="checkbox"] { width: 14px; height: 14px; justify-self: center; }
+.catalog-row .cat-remove { padding: 2px 6px; }
+#catalog-add { margin-top: 8px; }

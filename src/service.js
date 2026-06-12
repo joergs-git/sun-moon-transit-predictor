@@ -1136,6 +1136,8 @@ export async function runService({
         sunBelowDeg: config.iss?.skyTargets?.sunBelowDeg ?? -6,
         reslewMinGapMin: config.iss?.skyTargets?.reslewMinGapMin ?? 5,
         objectCount: (config.iss?.skyTargets?.objects ?? []).filter((o) => o?.enabled !== false).length,
+        // Full catalogue for the UI editor (no secrets).
+        objects: config.iss?.skyTargets?.objects ?? [],
         planAlerts: {
           enabled: Boolean(config.iss?.skyTargets?.planAlerts?.enabled),
           minConfidence: config.iss?.skyTargets?.planAlerts?.minConfidence ?? 'green',
@@ -1439,8 +1441,45 @@ export async function runService({
         }
         next.planAlerts = pa;
       }
+      // Object catalogue editor (M83): validate each entry. A star/DSO needs a
+      // J2000 RA/Dec; a planet needs a recognised `body`. id + name required.
+      if (Array.isArray(d.objects)) {
+        const PLANET_BODIES = new Set(['Sun', 'Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune']);
+        const objs = [];
+        const ids = new Set();
+        d.objects.forEach((o, i) => {
+          if (!o || typeof o !== 'object') throw new Error(`skyTargets.objects[${i}] must be an object`);
+          const id = String(o.id ?? '').trim();
+          const name = String(o.name ?? '').trim();
+          if (!id) throw new Error(`skyTargets.objects[${i}].id is required`);
+          if (!name) throw new Error(`skyTargets.objects[${i}].name (${id}) is required`);
+          if (ids.has(id)) throw new Error(`skyTargets.objects: duplicate id "${id}"`);
+          ids.add(id);
+          const obj = { id, name };
+          if (o.enabled === false) obj.enabled = false;
+          if (o.body) {
+            const body = String(o.body).trim();
+            if (!PLANET_BODIES.has(body)) throw new Error(`skyTargets.objects[${i}] (${id}): unknown planet "${body}"`);
+            obj.body = body;
+          } else {
+            const ra = Number(o.raHours);
+            const dec = Number(o.decDeg);
+            if (!Number.isFinite(ra) || ra < 0 || ra >= 24) throw new Error(`skyTargets.objects[${i}] (${id}): raHours must be 0–24 (or set a planet)`);
+            if (!Number.isFinite(dec) || dec < -90 || dec > 90) throw new Error(`skyTargets.objects[${i}] (${id}): decDeg must be −90…90`);
+            obj.raHours = ra;
+            obj.decDeg = dec;
+          }
+          if (o.diameterDeg != null && o.diameterDeg !== '') {
+            const dia = Number(o.diameterDeg);
+            if (!Number.isFinite(dia) || dia < 0 || dia > 30) throw new Error(`skyTargets.objects[${i}] (${id}): diameterDeg must be 0–30`);
+            obj.diameterDeg = dia;
+          }
+          objs.push(obj);
+        });
+        next.objects = objs;
+      }
       if (!config.iss) config.iss = {};
-      config.iss.skyTargets = next;          // objects array preserved (not in patch)
+      config.iss.skyTargets = next;          // objects preserved when not in the patch
       applied.skyTargets = { ...next, objects: undefined };
     }
 

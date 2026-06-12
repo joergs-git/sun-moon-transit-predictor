@@ -1987,6 +1987,68 @@ if ($('#sharpcap-add-rig')) {
   $('#sharpcap-add-rig').addEventListener('click', () => scTargetsBox?.appendChild(scRigRow()));
 }
 
+// ── Sky-target catalogue editor (M83) ──────────────────────────────────────
+// One editable row per object: enabled · id · name · RA(h) · Dec(°) · Ø(°) ·
+// planet. Values are set via properties (not innerHTML) so object names with
+// special characters (ω Centauri, η Carinae…) are safe.
+function catalogRow(o = {}) {
+  const row = document.createElement('div');
+  row.className = 'catalog-row';
+  const mk = (cls, type, ph) => {
+    const i = document.createElement('input');
+    i.className = cls; i.type = type; i.placeholder = ph;
+    if (type === 'number') i.step = 'any';
+    return i;
+  };
+  const en = mk('cat-enabled', 'checkbox', ''); en.checked = o.enabled !== false; en.title = 'Include in the scan';
+  const id = mk('cat-id', 'text', 'm42'); id.value = o.id ?? '';
+  const name = mk('cat-name', 'text', 'M42 Orion'); name.value = o.name ?? '';
+  const ra = mk('cat-ra', 'number', '5.588'); ra.value = o.raHours ?? '';
+  const dec = mk('cat-dec', 'number', '-5.39'); dec.value = o.decDeg ?? '';
+  const diam = mk('cat-diam', 'number', ''); diam.value = o.diameterDeg ?? '';
+  const body = mk('cat-body', 'text', 'Jupiter'); body.value = o.body ?? ''; body.title = 'Planet name instead of RA/Dec';
+  const rm = document.createElement('button');
+  rm.type = 'button'; rm.className = 'btn cat-remove'; rm.textContent = '✕'; rm.title = 'Remove';
+  rm.addEventListener('click', () => row.remove());
+  row.append(en, id, name, ra, dec, diam, body, rm);
+  return row;
+}
+
+function fillCatalog(objects) {
+  const box = $('#catalog-rows');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const o of (objects ?? [])) box.appendChild(catalogRow(o));
+}
+
+function collectCatalog() {
+  const rows = Array.from(document.querySelectorAll('#catalog-rows .catalog-row'));
+  const out = [];
+  for (const r of rows) {
+    const id = r.querySelector('.cat-id').value.trim();
+    const name = r.querySelector('.cat-name').value.trim();
+    if (!id && !name) continue;                       // skip a blank row
+    const o = { id, name, enabled: r.querySelector('.cat-enabled').checked };
+    const body = r.querySelector('.cat-body').value.trim();
+    const ra = r.querySelector('.cat-ra').value;
+    const dec = r.querySelector('.cat-dec').value;
+    const diam = r.querySelector('.cat-diam').value;
+    if (body) {
+      o.body = body;
+    } else {
+      if (ra !== '') o.raHours = Number(ra);
+      if (dec !== '') o.decDeg = Number(dec);
+    }
+    if (diam !== '') o.diameterDeg = Number(diam);
+    out.push(o);
+  }
+  return out;
+}
+
+if ($('#catalog-add')) {
+  $('#catalog-add').addEventListener('click', () => $('#catalog-rows')?.appendChild(catalogRow()));
+}
+
 function setNested(obj, dottedKey, value) {
   const parts = dottedKey.split('.');
   let cur = obj;
@@ -2020,6 +2082,7 @@ function fillSettingsForm(cfg) {
   }
   // Dynamic multi-rig list (not part of the named-element loop).
   fillSharpcapTargets(cfg.sharpcap?.targets);
+  fillCatalog(cfg.skyTargets?.objects);
 }
 
 async function openSettings() {
@@ -2075,6 +2138,7 @@ settingsForm.addEventListener('submit', async (ev) => {
   }
   // Multi-rig list → sharpcap.targets (empty array = single-rig mode).
   setNested(patch, 'sharpcap.targets', collectSharpcapTargets());
+  setNested(patch, 'skyTargets.objects', collectCatalog());
   settingsMsg.textContent = 'saving…';
   settingsMsg.className = 'settings-msg';
   try {
