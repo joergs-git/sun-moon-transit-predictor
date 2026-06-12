@@ -141,8 +141,17 @@ der Fehler kommt fast vollständig aus der **TLE-Frische**:
 - **Anforderung:** TLE für diese Ziele **< ~24 h** alt; Alter im
   Kandidaten anzeigen und bei Überschreitung warnen. `scripts/refresh-tle.js`
   existiert — hier nur strenger erzwingen + Frische in der Vorhersage führen.
-- Optional als Vertrauensmaß: geschätzter Along-track-Fehler aus TLE-Alter →
-  „Bahn ±X′ / Timing ±Y s" am Kandidaten ausweisen.
+- **Vertrauensmaß / Konfidenz-Stufen (für die Drehbuch-Spalte, §11):**
+  geschätzter Along-track-Fehler aus dem TLE-Alter **am Ereigniszeitpunkt**
+  (nicht am Jetzt) → „Bahn ±X′ / Timing ±Y s" und eine grobe Ampel
+  🟢/🟡/🟠/🔴. Richtwert: TLE-Alter am Event < 1 d → 🟢, 1–3 d → 🟡,
+  3–6 d → 🟠, > 6 d → 🔴 (Schwellen kalibrierbar via `transit_postmortem`-
+  Historie, die es schon gibt).
+- **ISS-Reboosts:** die ISS macht unvorhersehbare Bahnanhebungen (~monatlich),
+  die eine SGP4-Prognose darüber hinaus **schlagartig** ungültig machen — daher
+  ist die Konfidenz für die ISS am langen Ende grundsätzlich gedeckelt, nicht
+  nur durch linearen Drift. HST/CSS sind ruhiger. Im Konfidenzmodell
+  berücksichtigen (ISS-Langfrist nie besser als 🟠).
 
 ## 8. Config-Schema (`config.iss` / neuer `targets`-Block)
 
@@ -226,16 +235,24 @@ Eintrag den Satelliten (🛰 ISS / HST / CSS).
 
 ## 11. Beobachtungsplan / „Drehbuch" — die Nacht-Timeline
 
-Der eigentlich wertvolle Teil (Idee des Users): Die App **schlägt** auf Basis
-des **eigenen Standorts** vor, welche Objekte in der kommenden Nacht ISS-Treffer
-haben, **in zeitlicher Reihenfolge** — wie ein Drehbuch:
+Der eigentlich wertvolle Teil (Idee des Users): Die App **schlägt proaktiv**
+auf Basis des **eigenen Standorts** vor, welche **Objekt-/Satelliten-
+Kombination als Nächstes ansteht und wann genau** — über die **nächsten ~7 Tage**
+(konfigurierbar), als nach Zeit sortierte Ranking-Tabelle. **Daran orientiert
+sich der Astrofotograf — und stellt erst danach das Active-Target ein.** Es ist
+also die **primäre, standardmäßig sichtbare Planungsfläche** im Web-View, nicht
+ein versteckter Beifang:
 
 ```
-21:48  🌙 Mond      — 🛰 ISS  Transit,    El 41°,  Sep 0,1°
-22:30  M42 (Orion)  — 🛰 ISS  durch FOV,  El 28°,  Miss 6′
-22:54  M42 (Orion)  — 🛰 CSS  durch FOV,  El 25°,  Miss 11′
-23:15  ♃ Jupiter    — 🛰 ISS  Transit,    El 35°,  Miss 12″   ⚠ nur 8 min nach M42
-00:50  Vega         — 🛰 HST  Appulse,    El 60°,  Miss 9′
+Wann                 Objekt        Sat    Typ          El    Miss    Prognose
+─────────────────────────────────────────────────────────────────────────────
+heute 21:48          🌙 Mond       🛰ISS  Transit      41°   0,1°    🟢 sicher
+heute 22:30          M42 (Orion)   🛰ISS  durch FOV    28°   6′      🟢 sicher
+heute 22:54          M42 (Orion)   🛰CSS  durch FOV    25°   11′     🟢 sicher
+heute 23:15          ♃ Jupiter     🛰ISS  Transit      35°   12″     🟢 sicher  ⚠ 8 min nach M42
+Do 00:50             Vega          🛰HST  Appulse      60°   9′      🟡 mittel
+Sa 21:10             ☀ Sonne       🛰ISS  Transit      30°   0,2°    🟠 grob
+Di 03:20             M13           🛰CSS  durch FOV    44°   8′      🔴 unsicher
 ```
 
 Damit weiß der Betreiber **wann er wohin schauen** muss, hakt das laufende
@@ -245,7 +262,8 @@ Ereignis ab und stellt das nächste Objekt als Active-Target ein.
   über **alle aktivierten Satelliten** (ISS/HST/CSS, `config.iss.satellites`)
   **× alle aktivierten Ziele inkl. Sonne/Mond**, gemerged und nach Zeit
   sortiert. Read-Model, kein neuer Rechenkern — der Predictor läuft pro
-  Satellit schon, hier werden die Ergebnisse nur zusammengeführt.
+  Satellit schon (`iss.horizonMs` ist bereits 14 d), hier werden die Ergebnisse
+  nur zusammengeführt und über ~7 Tage angezeigt.
 - **Pro Eintrag:** Objekt · **Satellit (ISS/HST/CSS)** · Uhrzeit (closest
   approach) · Typ (Scheiben-Transit / Bahn-durch-Feld / Appulse) · Elevation ·
   Sep/Miss · Satellit sonnenbeschienen? · TLE-Frische-/Konfidenz-Hinweis.
@@ -259,9 +277,22 @@ Ereignis ab und stellt das nächste Objekt als Active-Target ein.
 - **UI-Ort:** eigene Panel-Sektion in der Haupt-UI (neben/über der Live-Tracking-
   Liste), nicht in den Settings. Die Settings (Tab „Sky targets") definieren nur
   **welche Objekte im Katalog** sind; der Plan ist die Laufzeit-Ansicht daraus.
-- **Horizont:** „heute Nacht" = von Einbruch der Nacht bis Morgendämmerung am
-  Standort (Sonne unter `sunBelowDeg`); tagsüber bleibt es der Sonnen-Transit-
-  Fall.
+- **Prognose-Genauigkeit als eigene Spalte/Icon (wichtig):** Jede Zeile trägt
+  einen Konfidenzwert, weil weit entfernte Vorhersagen unsicherer sind. Modell
+  siehe §7 — Ableitung aus TLE-Alter am *Ereigniszeitpunkt* → grobe Stufen
+  🟢 sicher / 🟡 mittel / 🟠 grob / 🔴 unsicher (Tooltip: geschätzter Bahn-/
+  Timing-Fehler in ′ bzw. s). Sortierung primär nach Zeit; die Konfidenz ist
+  die Entscheidungshilfe „lohnt sich das Aufbauen schon, oder erst näher dran
+  nochmal prüfen".
+- **Selbstschärfung:** Die Tabelle wird laufend neu gerechnet (`recomputeMs`),
+  und `refresh-tle.js` zieht frische TLEs — ein heute „🟠 grob" 6 Tage entfernt
+  liegendes Event wird mit näher rückendem Datum automatisch „🟢 sicher". Das
+  im UI andeuten, damit der Nutzer weiß: ferne Einträge sind Platzhalter mit
+  noch wachsender Genauigkeit, keine Festtermine.
+- **Horizont:** Default ~7 Tage (`planHorizonDays`, ≤ `iss.horizonMs`/14 d).
+  Pro Eintrag gilt das Nacht-/Tag-Gating: Sonnen-Transite tagsüber, alle
+  anderen Ziele nur bei dunklem Himmel (Sonne unter `sunBelowDeg`) **und**
+  sonnenbeschienenem Satelliten.
 
 ## 12. Nicht-Ziele / spätere Features
 
@@ -291,10 +322,11 @@ Ereignis ab und stellt das nächste Objekt als Active-Target ein.
       Tonight-Kandidaten.
 - [ ] **Zusatz-Rigs:** Active-Target-Auswahl **in den Settings** (bei der
       Rig-Definition / Tab „Scopes").
-- [ ] **Beobachtungsplan-Panel:** gemergte, zeitsortierte Timeline über alle
-      Satelliten × Ziele inkl. Sonne/Mond; Satellit pro Eintrag;
-      Konflikt-Markierung (`reslewMinGapMin`); „Up next" + manueller
-      „als Active-Target setzen"-Vorschlag.
+- [ ] **Beobachtungsplan-Tabelle (primär, default sichtbar):** gemergte,
+      zeitsortierte ~7-Tage-Ranking-Tabelle über alle Satelliten × Ziele inkl.
+      Sonne/Mond; Satellit pro Eintrag; **Prognose-Konfidenz-Spalte/Icon**
+      (🟢/🟡/🟠/🔴 aus §7); Konflikt-Markierung (`reslewMinGapMin`); „Up next"
+      + manueller „als Active-Target setzen"-Vorschlag; `planHorizonDays`.
 - [ ] Trigger nur ISS-Burst; Body-Label = Objektname; Disc-xing-Spalte für
       Punkt-Ziele.
 - [ ] Tests: Planet-Az/El, RA/Dec-Stern-Az/El, FOV-Box-Treffer (durch vs.
