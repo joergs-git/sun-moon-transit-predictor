@@ -16,6 +16,20 @@ alerts/lib.js               pure logic — tested in test/alerts-lib.test.js
 The worker re-uses the Pi service's prediction engine (`src/iss.js`,
 `src/sgp4.js`) **read-only** — nothing in `src/` changes.
 
+## Live deployment status (2026-06-12)
+
+Provisioned on the existing Supabase project **astroblink**
+(`bpngramreznwvtssrcbe`, eu-west-1):
+
+- ✅ schema applied (migration `transit_alert_service`)
+- ✅ functions deployed (no-JWT): `…/functions/v1/{subscribe,confirm,unsubscribe}`
+- ✅ signup page points at `https://bpngramreznwvtssrcbe.supabase.co/functions/v1`
+- ⬜ **function secrets** `PUSHOVER_APP_TOKEN`, `ALERTS_HMAC_SECRET`
+  (Dashboard → Edge Functions → Secrets) — functions 500 until set
+- ⬜ **GitHub Actions secrets** (table below)
+- ⬜ **GitHub Pages** from `/docs` (needs this branch merged to the default branch)
+- ⬜ Pushover **application** (pushover.net/apps) → the app token
+
 ## Setup (once)
 
 ### 1. Supabase
