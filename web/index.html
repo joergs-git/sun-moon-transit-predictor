@@ -92,7 +92,7 @@
        confidence rating. Hidden until iss.skyTargets is enabled AND has rows. -->
   <section id="skyplan-section" class="skyplan-section" hidden>
     <h2>🛰 Sky-target plan <span class="skyplan-sub" id="skyplan-sub"></span>
-      <label class="skyplan-toggle" title="Horizon = every pass in the next planHorizonDays. Next opportunity = the SOONEST pass per object×satellite across the full scan horizon, so a chance that's still weeks out shows up too.">
+      <label class="skyplan-toggle" title="Horizon = every pass in the next planHorizonDays (computed continuously). Next opportunity = an ON-DEMAND ~90-day scan for the SOONEST pass per object×satellite, so a chance still weeks out shows up. Runs only while ticked (a few-second scan); off again on reload so it never costs idle resources.">
         <input type="checkbox" id="skyplan-nextever"> next opportunity
       </label>
     </h2>

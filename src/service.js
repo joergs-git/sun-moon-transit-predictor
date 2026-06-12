@@ -303,6 +303,7 @@ export const DEFAULT_CONFIG = {
       enabled: false,
       recomputeMs: 1_800_000,     // re-scan every 30 min (rare-event work)
       planHorizonDays: 7,         // timeline look-ahead (≤ iss.horizonMs / 14 d)
+      nextOpportunityDays: 90,    // on-demand "next opportunity" scan reach (coarse, only when requested)
       minElevationDeg: 20,        // ignore passes lower than this (poor seeing/obstruction)
       requireSunlit: true,        // the satellite must be lit (not in Earth's shadow)
       requireDarkSky: true,       // …and the sky dark — so these cluster in twilight
@@ -766,6 +767,68 @@ export async function runService({
     try { store.pruneSkyPlanAlerts(nowMs - 86400000); } catch { /* non-fatal */ }
   }
 
+  // On-demand "next opportunity" scan (M83): the SOONEST pass per object ×
+  // satellite over a long horizon (nextOpportunityDays, default 90). Run only
+  // when the client requests it — it is a deliberately COARSE scan (10 s step /
+  // 14° gate) so months stay affordable (~8 s for 3 satellites × the full
+  // catalogue); approximate dates are fine for a "when does the chance come"
+  // preview, and refineMinimum still resolves each crossing's time.
+  function computeNextOpportunity() {
+    const skyCfg = config.iss?.skyTargets;
+    const nowMs = Date.now();
+    if (!config.iss?.enabled || !skyCfg?.enabled) return { rows: [], scanDays: 0, computedAtMs: nowMs };
+
+    const f = Number(config.optics?.telescopeFocalMm);
+    const sw = Number(config.optics?.sensorWmm);
+    const sh = Number(config.optics?.sensorHmm);
+    const fovDeg = (mm) => 2 * Math.atan(mm / (2 * f)) * 180 / Math.PI;
+    const fov = (f > 0 && sw > 0 && sh > 0) ? { fovWidthDeg: fovDeg(sw), fovHeightDeg: fovDeg(sh) } : null;
+    const targets = (skyCfg.objects ?? [])
+      .filter((o) => o?.enabled !== false)
+      .map((o) => ({ ...o, fovWidthDeg: o.fovWidthDeg ?? fov?.fovWidthDeg, fovHeightDeg: o.fovHeightDeg ?? fov?.fovHeightDeg }));
+
+    const sats = [];
+    if (issTle) sats.push({ tag: 'ISS', name: 'ISS', satrec: issTle.satrec });
+    for (const satCfg of (config.iss.satellites ?? [])) {
+      const entry = satCache.get(satCfg.tag);
+      if (entry?.tle) sats.push({ tag: satCfg.tag, name: satCfg.name, satrec: entry.tle.satrec });
+    }
+
+    const scanDays = Math.max(1, Math.min(120, skyCfg.nextOpportunityDays ?? 90));
+    const horizonMs = scanDays * 86400000;
+    const candidates = [];
+    const tleEpochMsByTag = {};
+    for (const s of sats) {
+      tleEpochMsByTag[s.tag] = (s.satrec.jdsatepoch - 2440587.5) * 86400000;
+      try {
+        candidates.push(...predictSkyTargetTransits(observer, s.satrec, {
+          fromMs: nowMs,
+          horizonMs,
+          targets,
+          tag: s.tag,
+          name: s.name,
+          minElevationDeg: skyCfg.minElevationDeg ?? 20,
+          requireSunlit: skyCfg.requireSunlit !== false,
+          requireDarkSky: skyCfg.requireDarkSky !== false,
+          sunBelowDeg: skyCfg.sunBelowDeg ?? -6,
+          coarseStepMs: 10_000,
+          coarseGateDeg: 14,
+        }));
+      } catch (e) {
+        logger.warn?.(`next-opportunity scan failed for ${s.tag}:`, e?.message ?? e);
+      }
+    }
+    const rows = buildSkyTargetPlan(candidates, {
+      nowMs,
+      tleEpochMsByTag,
+      planHorizonDays: scanDays,
+      minElevationDeg: skyCfg.minElevationDeg ?? 0,
+      reslewMinGapMin: skyCfg.reslewMinGapMin ?? 5,
+      firstPerCombo: true,
+    });
+    return { rows, scanDays, computedAtMs: nowMs };
+  }
+
   const notifier = new Notifier({
     pushover,
     routeLookup: (cs) => routeLookup.lookup(cs),
@@ -917,8 +980,12 @@ export async function runService({
   // Sky-target plan cache (M83): the merged satellite × sky-target timeline,
   // recomputed on its own slow cadence (config.iss.skyTargets.recomputeMs).
   let skyTargetPlan = [];
-  let skyTargetNextEver = [];   // soonest pass per object×satellite over the full scan horizon
   let lastSkyComputeMs = 0;
+  // On-demand "next opportunity" cache: { rows, computedAtMs, scanDays }. The
+  // long (90-day) coarse scan runs ONLY when the client asks for it (checkbox),
+  // and the result is reused for a few minutes so re-opening the view doesn't
+  // re-scan — so it costs nothing unless explicitly requested.
+  let nextOpportunityCache = null;
   // Active target (M83): which sky object the scope is pointed at. 'auto' = the
   // legacy behaviour (arm capture on any Sun/Moon transit); 'Sun'/'Moon' narrow
   // to one body; a sky-object id (e.g. 'jupiter', 'm42') makes the rig(s) arm on
@@ -1763,6 +1830,18 @@ export async function runService({
       return { ok: true, activeTarget };
     },
     getActiveTarget: () => activeTarget,
+    // On-demand "next opportunity" (M83): runs the long coarse scan, cached for
+    // a few minutes so re-opening the view doesn't re-scan. Costs nothing until
+    // the client asks (the checkbox defaults off on every reload).
+    getNextOpportunity: () => {
+      const FRESH_MS = 10 * 60_000;
+      const now = Date.now();
+      if (nextOpportunityCache && now - nextOpportunityCache.computedAtMs < FRESH_MS) {
+        return { ...nextOpportunityCache, cached: true };
+      }
+      nextOpportunityCache = computeNextOpportunity();
+      return { ...nextOpportunityCache, cached: false };
+    },
   });
   if (httpServer) await httpServer.start();
 
@@ -2312,10 +2391,11 @@ export async function runService({
         if (entry?.tle) sats.push({ tag: satCfg.tag, name: satCfg.name, satrec: entry.tle.satrec });
       }
       const planHorizonDays = skyCfg.planHorizonDays ?? 7;
-      // Scan the FULL horizon (not just planHorizonDays) so the "next
-      // opportunity" view can show a combo's soonest pass even weeks out; the
-      // normal plan still filters down to planHorizonDays below.
-      const horizonMs = config.iss.horizonMs;
+      // The regular plan scans only the plan horizon (cheap, runs every slow
+      // recompute). The longer "next opportunity" scan is computed on demand
+      // instead (see computeNextOpportunity) so it never costs anything unless
+      // the user explicitly asks for it.
+      const horizonMs = Math.min(config.iss.horizonMs, planHorizonDays * 86400000);
       const candidates = [];
       const tleEpochMsByTag = {};
       for (const s of sats) {
@@ -2345,20 +2425,13 @@ export async function runService({
         reslewMinGapMin: skyCfg.reslewMinGapMin ?? 5,
       };
       skyTargetPlan = buildSkyTargetPlan(candidates, { ...planOpts, planHorizonDays });
-      // "Next opportunity" view: soonest pass per object×satellite across the
-      // full scan horizon (so far-out combos still show up).
-      skyTargetNextEver = buildSkyTargetPlan(candidates, {
-        ...planOpts,
-        planHorizonDays: Math.ceil(config.iss.horizonMs / 86400000),
-        firstPerCombo: true,
-      });
       // Edge-triggered Pushover plan-alerts off the fresh plan (no-op unless
       // skyTargets.planAlerts.enabled + Pushover configured).
       runPlanAlerts(skyTargetPlan, nowMs);
       lastSkyComputeMs = nowMs;
-    } else if (!skyCfg?.enabled && (skyTargetPlan.length || skyTargetNextEver.length)) {
+    } else if (!skyCfg?.enabled && skyTargetPlan.length) {
       skyTargetPlan = [];   // feature turned off → clear the stale plan
-      skyTargetNextEver = [];
+      nextOpportunityCache = null;
     }
 
     // Drop a visible pass once it is over so the Sky-now line never shows a
@@ -2427,15 +2500,13 @@ export async function runService({
     // rated timeline of every satellite × sky-target pass (the "Drehbuch").
     // Persists between its slow recomputes; empty when the feature is off.
     state.skyTargetPlan = skyTargetPlan;
-    state.skyTargetNextEver = skyTargetNextEver;
     state.skyTargets = {
       enabled: Boolean(skyCfg?.enabled),
       objectCount: (skyCfg?.objects ?? []).filter((o) => o?.enabled !== false).length,
       planCount: skyTargetPlan.length,
-      nextEverCount: skyTargetNextEver.length,
       nextAtMs: skyTargetPlan[0]?.atMs ?? null,
       planHorizonDays: skyCfg?.planHorizonDays ?? 7,
-      scanHorizonDays: Math.ceil((config.iss?.horizonMs ?? 0) / 86400000),
+      nextOpportunityDays: skyCfg?.nextOpportunityDays ?? 90,
     };
 
     // Feed the lifecycle + notifier only the ISS transits that are close

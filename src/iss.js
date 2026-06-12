@@ -200,16 +200,20 @@ export function predictIssTransits(observer, satrec, opts = {}) {
  * sky-target predictor below. A 2 s coarse step never strides past an approach
  * (the curve still shows a clear local minimum); refineMinimum resolves the time.
  */
-function scanApproaches(sepAt, fromMs, horizonMs, gateDeg, onMinimum) {
+function scanApproaches(sepAt, fromMs, horizonMs, gateDeg, onMinimum, stepMs = COARSE_STEP_MS) {
   let prev2 = Infinity;
   let prev1 = Infinity;
   let prevT = fromMs;
   let prev1T = fromMs;
-  for (let t = fromMs; t <= fromMs + horizonMs; t += COARSE_STEP_MS) {
+  for (let t = fromMs; t <= fromMs + horizonMs; t += stepMs) {
     const s = sepAt(t);
     // Local minimum bracketed by [prev2 @ prev1T-step, s @ t] around prev1.
     if (prev1 < prev2 && prev1 <= s && prev1 < gateDeg) {
-      const refined = refineMinimum(sepAt, prev1T - COARSE_STEP_MS, t);
+      // refineMinimum still resolves the exact time at full precision even when
+      // the coarse step is large (a long "next opportunity" scan uses a coarser
+      // step + wider gate to stay affordable; the gate must exceed the angular
+      // motion per step so a close pass is never bracketed too tightly to see).
+      const refined = refineMinimum(sepAt, prev1T - stepMs, t);
       if (refined) onMinimum(refined);
     }
     prev2 = prev1; prev1 = s; prev1T = prevT; prevT = t;
@@ -369,6 +373,12 @@ export function predictSkyTargetTransits(observer, satrec, opts = {}) {
     requireSunlit = true,
     requireDarkSky = true,
     sunBelowDeg = -6,
+    // Coarse-scan resolution. Default (2 s / 3°) gives full timing precision.
+    // A long "next opportunity" scan passes a coarser step + a proportionally
+    // wider gate (e.g. 10 s / 14°) to stay affordable over months — refineMinimum
+    // still resolves the exact crossing time within each bracketed window.
+    coarseStepMs = COARSE_STEP_MS,
+    coarseGateDeg = COARSE_GATE_DEG,
   } = opts;
 
   const obsEcef = observerEcef(observer);
@@ -404,8 +414,8 @@ export function predictSkyTargetTransits(observer, satrec, opts = {}) {
     if (target?.enabled === false) continue;
     const fieldRadiusDeg = targetFieldRadiusDeg(target);
     // Refine any minimum that could land inside the field (+0.5° margin), never
-    // below the global coarse gate.
-    const gate = Math.max(COARSE_GATE_DEG, fieldRadiusDeg + 0.5);
+    // below the coarse gate (which must exceed the per-step angular motion).
+    const gate = Math.max(coarseGateDeg, fieldRadiusDeg + 0.5);
 
     const sepAt = (tMs) => {
       const sat = satStateAt(tMs);
@@ -423,7 +433,7 @@ export function predictSkyTargetTransits(observer, satrec, opts = {}) {
           { tag, name, typeDesc },
         ));
       }
-    });
+    }, coarseStepMs);
   }
 
   out.sort((a, b) => a.closestApproachAtMs - b.closestApproachAtMs);

@@ -96,7 +96,7 @@ export function createHttpServer(opts) {
   const {
     port, host = '0.0.0.0', getState, store, webRoot,
     getConfig, updateConfig, requestUpdate, requestAcInfo, requestRoute,
-    requestSharpcapTest, requestBuzzerTest, setActiveTarget,
+    requestSharpcapTest, requestBuzzerTest, setActiveTarget, getNextOpportunity,
   } = opts;
 
   const server = createServer(async (req, res) => {
@@ -300,6 +300,16 @@ export function createHttpServer(opts) {
         try {
           const result = setActiveTarget(body?.target);
           return jsonResponse(res, result.ok ? 200 : 400, result);
+        } catch (e) {
+          return jsonResponse(res, 500, { error: String(e?.message ?? e) });
+        }
+      }
+      if (url.pathname === '/api/sky-next-opportunity' && req.method === 'GET') {
+        // On-demand long-horizon "next opportunity" scan (M83). Synchronous +
+        // heavy (~8 s), so it runs only on this explicit request, not per tick.
+        if (!getNextOpportunity) return jsonResponse(res, 404, { error: 'sky next-opportunity api disabled' });
+        try {
+          return jsonResponse(res, 200, getNextOpportunity());
         } catch (e) {
           return jsonResponse(res, 500, { error: String(e?.message ?? e) });
         }

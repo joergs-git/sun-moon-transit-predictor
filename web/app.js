@@ -348,66 +348,109 @@ async function setActiveTarget(target) {
 }
 
 $('#active-target-select')?.addEventListener('change', (ev) => setActiveTarget(ev.target.value));
-// Sky-plan view toggle (horizon ↔ next-opportunity) — re-render from cached state.
-$('#skyplan-nextever')?.addEventListener('change', () => { if (lastSkyState) renderSkyPlan(lastSkyState); });
+// ── Sky-target plan ("Drehbuch") ───────────────────────────────────────────
+let lastSkyState = null;       // cached so the view toggle can re-render without a state refetch
+let nextOppData = null;        // { rows, scanDays, computedAtMs } from the on-demand long scan
+let nextOppLoading = false;
 
-// Render the sky-target observation plan ("Drehbuch"). Hidden unless the
-// feature is on AND there is at least one upcoming pass.
-let lastSkyState = null;   // cached so the view toggle can re-render without a refetch
+function appendSkyPlanRow(tbody, r) {
+  const c = CONFIDENCE_BADGE[r.confidence] ?? { dot: '⚪', label: '—', tip: 'Confidence unknown (no TLE epoch).' };
+  const typeLabel = r.kind === 'transit' ? 'transit' : 'field';
+  const miss = r.missArcmin == null ? '—'
+    : (r.missArcmin >= 60 ? `${(r.missArcmin / 60).toFixed(2)}°` : `${Math.round(r.missArcmin)}′`);
+  const inField = r.timeInFieldMs ? `${(r.timeInFieldMs / 1000).toFixed(1)}s` : '—';
+  const el = r.elevationDeg == null ? '—' : `${Math.round(r.elevationDeg)}°`;
+  const conflict = r.conflictWithPrev
+    ? ` <span class="skyplan-conflict" title="Only ${Math.round((r.conflictGapMs ?? 0) / 60000)} min after the previous event — one scope can't catch both.">⚠</span>`
+    : '';
+  const shadow = r.sunlit === false
+    ? ' <span class="skyplan-shadow" title="Satellite in Earth\'s shadow at closest approach — not sunlit, so invisible.">🌑</span>'
+    : '';
+  const tr = document.createElement('tr');
+  tr.className = `skyplan-row conf-${r.confidence ?? 'none'}${r.conflictWithPrev ? ' has-conflict' : ''}`;
+  tr.innerHTML = `
+    <td class="skyplan-when">${fmtDateTime(r.atMs)}${conflict}</td>
+    <td class="skyplan-obj">${r.targetName ?? '—'}</td>
+    <td class="skyplan-sat">🛰 ${r.satTag ?? '?'}${shadow}</td>
+    <td class="skyplan-type type-${typeLabel}">${typeLabel}</td>
+    <td>${el}</td>
+    <td>${miss}</td>
+    <td>${inField}</td>
+    <td class="skyplan-conf" title="${c.tip}">${c.dot} ${c.label}</td>
+  `;
+  tbody.appendChild(tr);
+}
+
+// Render the sky-target plan. The panel shows whenever the feature is enabled
+// (so the "next opportunity" toggle is reachable). Two views: the per-tick
+// horizon plan, or the on-demand long scan (fetched only when ticked).
 function renderSkyPlan(state) {
   lastSkyState = state;
   const section = $('#skyplan-section');
   if (!section) return;
   const meta = state.skyTargets;
-  const nextEver = $('#skyplan-nextever')?.checked;
-  const plan = nextEver
-    ? (Array.isArray(state.skyTargetNextEver) ? state.skyTargetNextEver : [])
-    : (Array.isArray(state.skyTargetPlan) ? state.skyTargetPlan : []);
-  // Show the panel if EITHER view has data, so the toggle is reachable even when
-  // the horizon view is empty but a far-out opportunity exists.
-  const anyData = (state.skyTargetPlan?.length || state.skyTargetNextEver?.length);
-  if (!meta?.enabled || !anyData) { section.hidden = true; return; }
+  if (!meta?.enabled) { section.hidden = true; return; }
   section.hidden = false;
+  const nextEver = $('#skyplan-nextever')?.checked;
   const sub = $('#skyplan-sub');
-  if (sub) {
-    sub.textContent = nextEver
-      ? `soonest per object · scan ${meta.scanHorizonDays ?? 14} d · ${plan.length} combo${plan.length === 1 ? '' : 's'}`
-      : `${plan.length} pass${plan.length === 1 ? '' : 'es'} · next ${meta.planHorizonDays ?? 7} d · ${meta.objectCount ?? 0} targets`;
-  }
   const tbody = $('#skyplan tbody');
-  tbody.innerHTML = '';
-  if (!plan.length) {
-    tbody.innerHTML = `<tr class="empty"><td colspan="8">No passes in the next ${meta.planHorizonDays ?? 7} days — switch on “next opportunity” to see when each object's chance first comes.</td></tr>`;
+
+  if (nextEver) {
+    if (nextOppLoading) {
+      if (sub) sub.textContent = `computing… (${meta.nextOpportunityDays ?? 90} d scan)`;
+      tbody.innerHTML = `<tr class="empty"><td colspan="8">Scanning the next ${meta.nextOpportunityDays ?? 90} days for the soonest pass per object — a few seconds…</td></tr>`;
+      return;
+    }
+    const rows = nextOppData?.rows ?? [];
+    const days = nextOppData?.scanDays ?? meta.nextOpportunityDays ?? 90;
+    if (sub) sub.textContent = `soonest per object · scan ${days} d · ${rows.length} combo${rows.length === 1 ? '' : 's'}`;
+    tbody.innerHTML = '';
+    if (!rows.length) {
+      tbody.innerHTML = `<tr class="empty"><td colspan="8">No passes for any object in the next ${days} days at your location (southern-sky objects never rise here; short nights shrink the window).</td></tr>`;
+      return;
+    }
+    for (const r of rows) appendSkyPlanRow(tbody, r);
     return;
   }
-  for (const r of plan) {
-    const c = CONFIDENCE_BADGE[r.confidence] ?? { dot: '⚪', label: '—', tip: 'Confidence unknown (no TLE epoch).' };
-    const typeLabel = r.kind === 'transit' ? 'transit' : 'field';
-    const miss = r.missArcmin == null ? '—'
-      : (r.missArcmin >= 60 ? `${(r.missArcmin / 60).toFixed(2)}°` : `${Math.round(r.missArcmin)}′`);
-    const inField = r.timeInFieldMs ? `${(r.timeInFieldMs / 1000).toFixed(1)}s` : '—';
-    const el = r.elevationDeg == null ? '—' : `${Math.round(r.elevationDeg)}°`;
-    const conflict = r.conflictWithPrev
-      ? ` <span class="skyplan-conflict" title="Only ${Math.round((r.conflictGapMs ?? 0) / 60000)} min after the previous event — one scope can't catch both.">⚠</span>`
-      : '';
-    const shadow = r.sunlit === false
-      ? ' <span class="skyplan-shadow" title="Satellite in Earth\'s shadow at closest approach — not sunlit, so invisible.">🌑</span>'
-      : '';
-    const tr = document.createElement('tr');
-    tr.className = `skyplan-row conf-${r.confidence ?? 'none'}${r.conflictWithPrev ? ' has-conflict' : ''}`;
-    tr.innerHTML = `
-      <td class="skyplan-when">${fmtDateTime(r.atMs)}${conflict}</td>
-      <td class="skyplan-obj">${r.targetName ?? '—'}</td>
-      <td class="skyplan-sat">🛰 ${r.satTag ?? '?'}${shadow}</td>
-      <td class="skyplan-type type-${typeLabel}">${typeLabel}</td>
-      <td>${el}</td>
-      <td>${miss}</td>
-      <td>${inField}</td>
-      <td class="skyplan-conf" title="${c.tip}">${c.dot} ${c.label}</td>
-    `;
-    tbody.appendChild(tr);
+
+  const plan = Array.isArray(state.skyTargetPlan) ? state.skyTargetPlan : [];
+  if (sub) sub.textContent = `${plan.length} pass${plan.length === 1 ? '' : 'es'} · next ${meta.planHorizonDays ?? 7} d · ${meta.objectCount ?? 0} targets`;
+  tbody.innerHTML = '';
+  if (!plan.length) {
+    tbody.innerHTML = `<tr class="empty"><td colspan="8">No passes in the next ${meta.planHorizonDays ?? 7} days — tick “next opportunity” to scan ${meta.nextOpportunityDays ?? 90} days for when each object's chance first comes.</td></tr>`;
+    return;
+  }
+  for (const r of plan) appendSkyPlanRow(tbody, r);
+}
+
+// On-demand long scan: ticking "next opportunity" fires it (default OFF on every
+// reload, so it never runs unless asked). Server caches the result ~10 min.
+async function fetchNextOpportunity() {
+  nextOppLoading = true;
+  if (lastSkyState) renderSkyPlan(lastSkyState);
+  try {
+    const res = await fetch('/api/sky-next-opportunity');
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    nextOppData = body;
+  } catch (e) {
+    console.warn('next-opportunity scan failed:', e);
+    nextOppData = { rows: [], scanDays: 0 };
+  } finally {
+    nextOppLoading = false;
+    if (lastSkyState) renderSkyPlan(lastSkyState);
   }
 }
+
+$('#skyplan-nextever')?.addEventListener('change', (ev) => {
+  if (ev.target.checked) {
+    const fresh = nextOppData && (Date.now() - (nextOppData.computedAtMs ?? 0) < 5 * 60_000);
+    if (fresh) { if (lastSkyState) renderSkyPlan(lastSkyState); }
+    else fetchNextOpportunity();
+  } else if (lastSkyState) {
+    renderSkyPlan(lastSkyState);
+  }
+});
 
 const STATUS_LABELS = {
   planned:   { icon: '📅', label: 'planned' },
