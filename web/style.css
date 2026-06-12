@@ -609,6 +609,18 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 8px 12px;
   align-content: start;
+  /* Size each fieldset to its content (don't stretch it to the row height) —
+     otherwise a short fieldset sharing a row with a tall one (Telescope next to
+     SharpCap) becomes a tall empty frame. */
+  align-items: start;
+}
+/* Scopes tab: the SharpCap fieldset is much taller than Telescope+Twilight, so
+   pin it to column 2 spanning both rows and let the two short fieldsets stack in
+   column 1 beside it (masonry) — keeps Twilight parallel to SharpCap instead of
+   sliding far below, and shortens the scroll. Only when ≥2 columns fit. */
+@media (min-width: 700px) {
+  .settings-fields { grid-auto-flow: row dense; }
+  .settings-fields > fieldset.settings-tall { grid-column: 2; grid-row: 1 / span 2; }
 }
 /* Tab bar — spans every grid column and sticks to the top of the scroll area
    so the tabs stay reachable while a long tab (e.g. Sounds) scrolls beneath. */

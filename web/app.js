@@ -452,6 +452,11 @@ $('#skyplan-nextever')?.addEventListener('change', (ev) => {
   }
 });
 
+// Distinct symbol per bright planet so the appulse list isn't all "🪐":
+// Venus bright, Mars red, Jupiter orange/banded, Saturn ringed.
+const PLANET_ICON = { Venus: '🟡', Mars: '🔴', Jupiter: '🟠', Saturn: '🪐', Mercury: '⚪' };
+const planetIcon = (p) => PLANET_ICON[p] ?? '🪐';
+
 // Twilight aircraft × bright-planet appulses. Hidden unless enabled AND there's
 // an upcoming event (the feature only computes during twilight anyway).
 function renderAppulses(state) {
@@ -474,7 +479,7 @@ function renderAppulses(state) {
     tr.innerHTML = `
       <td>${fmtDateTime(a.atMs)}</td>
       <td>${a.flight ?? a.icao ?? '—'}</td>
-      <td class="appulse-planet">🪐 ${a.planet ?? '—'}</td>
+      <td class="appulse-planet">${planetIcon(a.planet)} ${a.planet ?? '—'}</td>
       <td>${sep}</td>
       <td>${el}</td>
     `;
