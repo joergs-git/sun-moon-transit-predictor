@@ -37,6 +37,16 @@
     </div>
   </header>
 
+  <!-- Active-target bar (M83): which object the scope is pointed at. Drives the
+       SharpCap capture — Sun/Moon/Auto = the usual aircraft-vs-disc capture; a
+       sky object = arm on that object's satellite passes. Shown only when the
+       SharpCap trigger is enabled. -->
+  <div id="active-target-bar" class="active-target-bar" hidden>
+    <label for="active-target-select">🔭 Scope target</label>
+    <select id="active-target-select" title="What your telescope is pointed at. Auto / Sun / Moon = the usual aircraft & ISS disc-transit capture. Pick a sky object (only those with an upcoming pass appear) to arm the capture on that object's satellite crossing instead."></select>
+    <span id="active-target-next" class="active-target-next"></span>
+  </div>
+
   <section>
     <h2>Real candidates</h2>
     <p class="hint">

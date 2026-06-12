@@ -1266,3 +1266,28 @@ a.acstats-label.hex-link:hover { text-decoration: underline; }
 .skyplan-row.conf-orange td:first-child { border-left-color: #d98a3a; }
 .skyplan-row.conf-red    td:first-child { border-left-color: var(--warn); }
 .skyplan-row.has-conflict { background: color-mix(in srgb, var(--warn) 7%, transparent); }
+
+/* ===== Active-target bar (scope pointing, M83) =========================== */
+.active-target-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 12.5px;
+}
+.active-target-bar label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-size: 11px; }
+.active-target-bar select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-family: inherit;
+  font-size: 12.5px;
+}
+.active-target-bar select:focus { outline: none; border-color: var(--accent); }
+.active-target-next { color: var(--accent); font-variant-numeric: tabular-nums; }

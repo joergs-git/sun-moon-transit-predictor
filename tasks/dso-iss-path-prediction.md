@@ -1,8 +1,28 @@
 # Design — ISS-Bahn durch/neben beliebige Zielobjekte (Sterne · Planeten · DSO)
 
 Branch: `main`
-Status: **DESIGN / zur Abstimmung** — noch kein Code.
-Milestone-Vorschlag: **M83** (M82 ging an die Settings-Tabs, die zuerst landeten).
+Status: **IMPLEMENTED** (v0.34.0) — Phasen 1–4 gebaut & gepusht; nur die
+Pushover-Plan-Alerts (§12) stehen noch aus.
+Milestone: **M83** (M82 ging an die Settings-Tabs, die zuerst landeten).
+
+**Umsetzungs-Stand (2026-06-12):**
+- ✅ Geometrie (`geometry.js`): Planeten, RA/Dec via DefineStar, `apparentDiameterDeg`.
+- ✅ Predictor (`iss.js` `predictSkyTargetTransits`): FOV-Treffer als **Kreis**
+  (Miss ≤ Feldradius, rotationsagnostisch — die offene PA-Frage so gelöst),
+  transit/field-Klassifikation, Nacht-Gates, objektzentrierte `transitPath`,
+  Sat-State-Memoization für Performance.
+- ✅ Service (`service.js`): `iss.skyTargets`-Config, Predictor über alle
+  Satelliten × Ziele, `state.skyTargetPlan` (`skyplan.js` merge + Konfidenz +
+  Konflikt), Settings-Tab „Sky targets" (Enable + Gates, validiert/persistiert).
+- ✅ Katalog (`skycatalog.js`): ~44 Objekte, hellste Sterne + größte/hellste
+  DSO Nord+Süd + Planeten. **Kuratiert mitgeliefert** (offene Frage so gelöst).
+- ✅ Timeline-Panel oben im Haupt-View (🟢🟡🟠🔴, Konflikt-⚠, Schatten-🌑).
+- ✅ Active-Target: „🔭 Scope target"-Pulldown oben → treibt den SharpCap-Trigger
+  (`armForSkyTarget`, separater Pfad; Aircraft-Pfad unangetastet). Operator-State
+  persistiert via `/api/active-target`. **Vorerst ein globales Active-Target**
+  (nicht per-Rig) — deckt den Haupt-/Single-Rig-Fall; per-Rig = spätere Option.
+- ⏳ **Offen (Phase 5):** Pushover-Plan-Alerts (§12), UI-Katalog-Editor,
+  per-Rig-Active-Target.
 
 ---
 

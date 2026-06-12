@@ -92,6 +92,30 @@ function buildTriggerMeta(c) {
   return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
+/**
+ * Provenance bundle for a SKY-TARGET capture (satellite crossing a framed
+ * DSO/star/planet field, M83). Reuses the listener's existing meta fields so a
+ * clip is self-describing: which satellite, which framed object, how close it
+ * passed, elevation/azimuth and whether it was a through-object transit or a
+ * field crossing.
+ */
+function buildSkyTargetMeta(c) {
+  if (!c) return undefined;
+  const meta = {};
+  if (c.satTag) meta.icao = String(c.satTag).toUpperCase();      // satellite tag → icao slot
+  if (c.satName) meta.flight = String(c.satName).toUpperCase();
+  if (c.targetName) meta.body = c.targetName;                    // framed object → body slot
+  if (c.kind) meta.kind = c.kind;                                // 'transit' | 'field'
+  if (Number.isFinite(c.closestApproachSepDeg)) meta.sepDeg = c.closestApproachSepDeg;
+  if (Number.isFinite(c.closestApproachAtMs)) meta.closestAtMs = c.closestApproachAtMs;
+  const s = c.satAtClosest;
+  if (s) {
+    if (Number.isFinite(s.elevationDeg)) meta.elevationDeg = s.elevationDeg;
+    if (Number.isFinite(s.azimuthDeg)) meta.azimuthDeg = s.azimuthDeg;
+  }
+  return Object.keys(meta).length > 0 ? meta : undefined;
+}
+
 export class SharpCapTrigger {
   /**
    * @param {SharpCapConfig} config
@@ -285,6 +309,77 @@ export class SharpCapTrigger {
     if (!result.sent && !result.response) {
       // No JSON reply at all → connect/timeout/socket-closed. Listener may
       // be down or restarting; clear dedup so the next tick retries.
+      this.lastTriggered.delete(key);
+      this.armedClosest.delete(key);
+    }
+    if (result.sent && reArm) result.reArmed = true;
+    return result;
+  }
+
+  /**
+   * Tick-based arming for a SKY-TARGET pass (a satellite crossing the framed
+   * field of a DSO / star / planet, M83). Used when a rig's active target is a
+   * sky object instead of Sun/Moon. The pass is already known to be in-field,
+   * so there is no body/sep gate — just elevation, the time window and dedup.
+   * The window/drift/dedup logic mirrors armForCandidate but is kept SEPARATE
+   * on purpose: the safety-critical aircraft path stays untouched, and the
+   * `${satTag}|sky:${targetId}` key namespace keeps sky captures from colliding
+   * with aircraft/body ones.
+   *
+   * @param {any} cand a sky-target candidate (closestApproachAtMs, satTag,
+   *   targetId, satAtClosest.elevationDeg, …)
+   * @param {number} [nowMs]
+   */
+  async armForSkyTarget(cand, nowMs = Date.now()) {
+    if (!this.enabled) return { sent: false, reason: 'disabled' };
+    if (!cand || !Number.isFinite(cand.closestApproachAtMs)) {
+      return { sent: false, reason: 'no-candidate' };
+    }
+
+    const minEl = this.config.minElevationDeg;
+    if (Number.isFinite(minEl) && minEl > 0) {
+      const el = cand.satAtClosest?.elevationDeg;
+      if (Number.isFinite(el) && el < minEl) return { sent: false, reason: 'too-low' };
+    }
+
+    const preBufferS = Number.isFinite(this.config.preBufferS) ? this.config.preBufferS : DEFAULT_PRE_BUFFER_S;
+    const postBufferS = Number.isFinite(this.config.postBufferS) ? this.config.postBufferS : DEFAULT_POST_BUFFER_S;
+    const maxPreRollS = Number.isFinite(this.config.maxPreRollS) ? this.config.maxPreRollS : DEFAULT_MAX_PRE_ROLL_S;
+    const tToClosestS = (cand.closestApproachAtMs - nowMs) / 1000;
+    if (tToClosestS > preBufferS + maxPreRollS) return { sent: false, reason: 'too-early' };
+    if (tToClosestS < -postBufferS) return { sent: false, reason: 'too-late' };
+
+    const key = `${cand.satTag ?? 'SAT'}|sky:${cand.targetId ?? cand.targetName ?? '?'}`;
+    const dedupMs = this.config.dedupMs ?? DEFAULT_DEDUP_MS;
+    const last = this.lastTriggered.get(key);
+    let reArm = false;
+    if (last != null && nowMs - last < dedupMs) {
+      const reArmShiftS = Number.isFinite(this.config.reArmShiftS) ? this.config.reArmShiftS : DEFAULT_REARM_SHIFT_S;
+      const armedClosest = this.armedClosest.get(key);
+      const shiftS = Number.isFinite(armedClosest) ? Math.abs(cand.closestApproachAtMs - armedClosest) / 1000 : 0;
+      if (shiftS <= reArmShiftS) return { sent: false, reason: 'deduped' };
+      reArm = true;
+    }
+
+    // Same lead-scaled drift margin as the aircraft path: an early arm records a
+    // proportionally longer clip because the predicted time is less certain.
+    const driftFrac = Number.isFinite(this.config.leadDriftFrac) ? this.config.leadDriftFrac : DEFAULT_LEAD_DRIFT_FRAC;
+    const maxDriftS = Number.isFinite(this.config.maxDriftS) ? this.config.maxDriftS : DEFAULT_MAX_DRIFT_S;
+    const maxCaptureS = Number.isFinite(this.config.maxCaptureS) ? this.config.maxCaptureS : DEFAULT_MAX_CAPTURE_S;
+    let driftS = Math.min(Math.max(0, tToClosestS) * driftFrac, maxDriftS);
+    const driftRoom = Math.max(0, (maxCaptureS - preBufferS - postBufferS) / 2);
+    driftS = Math.min(driftS, driftRoom);
+    const preRollS = Math.max(0, tToClosestS - preBufferS - driftS);
+    const durationS = Math.max(1, Math.min(preBufferS + postBufferS + 2 * driftS, maxCaptureS));
+    const payload = { label: key, preRollS, durationS };
+    if (this.config.token) payload.token = this.config.token;
+    const meta = buildSkyTargetMeta(cand);
+    if (meta) payload.meta = meta;
+
+    this.lastTriggered.set(key, nowMs);
+    this.armedClosest.set(key, cand.closestApproachAtMs);
+    const result = await this._sendPayload(payload);
+    if (!result.sent && !result.response) {
       this.lastTriggered.delete(key);
       this.armedClosest.delete(key);
     }

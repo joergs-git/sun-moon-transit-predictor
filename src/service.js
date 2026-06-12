@@ -2,8 +2,8 @@
 // lookup, notifier, history store and HTTP server together. Exposes a single
 // `runService(config)` entry point used by bin/stp.js and exercised by tests.
 
-import { promises as fsp, existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { promises as fsp, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { networkInterfaces } from 'node:os';
 
@@ -649,6 +649,41 @@ export async function runService({
     }
   }
 
+  // Sky-target arming (M83): when the active target is a sky object, arm every
+  // enabled rig on that object's upcoming satellite passes (from the current
+  // plan) instead of on Sun/Moon aircraft transits. armForSkyTarget gates on
+  // elevation + the time window, so only an imminent pass actually sends; the
+  // `${satTag}|sky:${id}` dedup key keeps it one capture per pass.
+  function armSharpcapForSkyTargets(objId, nowMs) {
+    if (!sharpcapAnyEnabled()) return;
+    const rows = skyTargetPlan
+      .filter((r) => r.targetId === objId && r.atMs >= nowMs - 60_000)
+      .slice(0, 3);                          // the soonest few; the rest are far off
+    for (const row of rows) {
+      const cand = {
+        closestApproachAtMs: row.atMs,
+        satTag: row.satTag, satName: row.satName,
+        targetId: row.targetId, targetName: row.targetName, kind: row.kind,
+        closestApproachSepDeg: row.sepDeg,
+        satAtClosest: { elevationDeg: row.elevationDeg },
+      };
+      for (const { name, trigger } of sharpcapTargets) {
+        if (!trigger.enabled) continue;
+        trigger.armForSkyTarget(cand, nowMs).then((res) => {
+          if (res.sent && !res.reArmed) {
+            sharpcapArmedCount += 1;
+            sharpcapArmedLog.push({
+              icao: row.satTag, body: row.targetName,
+              closestAtMs: row.atMs, armedAtMs: Date.now(), rig: name,
+            });
+            if (sharpcapArmedLog.length > SHARPCAP_ARMED_MAX) sharpcapArmedLog.shift();
+            logger.info?.(`sharpcap[${name}]: SKY capture armed for ${row.satTag} → ${row.targetName} (${res.response?.captureId ?? ''})`);
+          }
+        }).catch((e) => logger.warn?.(`sharpcap[${name}] sky-arm threw:`, e?.message ?? e));
+      }
+    }
+  }
+
   const notifier = new Notifier({
     pushover,
     routeLookup: (cs) => routeLookup.lookup(cs),
@@ -801,6 +836,23 @@ export async function runService({
   // recomputed on its own slow cadence (config.iss.skyTargets.recomputeMs).
   let skyTargetPlan = [];
   let lastSkyComputeMs = 0;
+  // Active target (M83): which sky object the scope is pointed at. 'auto' = the
+  // legacy behaviour (arm capture on any Sun/Moon transit); 'Sun'/'Moon' narrow
+  // to one body; a sky-object id (e.g. 'jupiter', 'm42') makes the rig(s) arm on
+  // that object's satellite passes instead. Operator state, persisted next to
+  // the lifecycle snapshot so it survives a restart.
+  const activeTargetPath = config.lifecyclePersist?.path
+    ? join(dirname(config.lifecyclePersist.path), 'active-target.json') : null;
+  let activeTarget = 'auto';
+  if (activeTargetPath && existsSync(activeTargetPath)) {
+    try { activeTarget = JSON.parse(readFileSync(activeTargetPath, 'utf8'))?.target ?? 'auto'; }
+    catch { /* corrupt/empty → default */ }
+  }
+  function persistActiveTarget() {
+    if (!activeTargetPath) return;
+    try { writeFileSync(activeTargetPath, JSON.stringify({ target: activeTarget }), 'utf8'); }
+    catch (e) { logger.warn?.('active-target persist failed:', e?.message ?? e); }
+  }
 
   const state = {
     observer,
@@ -1547,6 +1599,19 @@ export async function runService({
       buzzerTestId += 1;
       return { ok: true, testId: buzzerTestId, enabled: Boolean(config.buzzer.enabled) };
     },
+    // Active target (M83): set which sky object the scope is pointed at. Valid
+    // values are 'auto', 'Sun', 'Moon' or a catalogued object id. Persisted so
+    // it survives a restart; takes effect on the next tick's arming routing.
+    setActiveTarget: (target) => {
+      const t = String(target ?? '').trim();
+      const ok = t === 'auto' || t === 'Sun' || t === 'Moon'
+        || (config.iss?.skyTargets?.objects ?? []).some((o) => o.id === t);
+      if (!ok) return { ok: false, error: `unknown target: ${t}` };
+      activeTarget = t;
+      persistActiveTarget();
+      return { ok: true, activeTarget };
+    },
+    getActiveTarget: () => activeTarget,
   });
   if (httpServer) await httpServer.start();
 
@@ -2420,7 +2485,20 @@ export async function runService({
     const armList = (issForLifecycle.length
       ? enriched.concat(issForLifecycle)
       : enriched).concat(fallbackCandidates);
-    armSharpcapForCandidates(armList, nowMs);
+    // Route arming by the active target. A sky-object id → arm on its satellite
+    // passes and DON'T arm on Sun/Moon aircraft transits (the scope is pointed
+    // elsewhere). 'Sun'/'Moon' narrow the aircraft arming to that body; 'auto'
+    // (default) keeps the legacy "arm any Sun+Moon transit" behaviour.
+    const isSkyObject = activeTarget && activeTarget !== 'auto'
+      && activeTarget !== 'Sun' && activeTarget !== 'Moon';
+    if (isSkyObject) {
+      armSharpcapForSkyTargets(activeTarget, nowMs);
+    } else {
+      const list = (activeTarget === 'Sun' || activeTarget === 'Moon')
+        ? armList.filter((c) => c.body === activeTarget)
+        : armList;
+      armSharpcapForCandidates(list, nowMs);
+    }
 
     // Header status readout: are any rigs live, for which bodies, how many
     // captures armed this session, and a per-rig breakdown for the tooltip.
@@ -2433,6 +2511,24 @@ export async function runService({
         .filter((t) => t.trigger.enabled)
         .map((t) => ({ name: t.name, body: (t.trigger.config.bodies ?? []).join('+') })),
     };
+
+    // Active target (M83) + the pulldown options: the always-available bodies
+    // plus every sky object that has an upcoming pass in the current plan, so
+    // the operator only picks what's actually catchable tonight.
+    state.activeTarget = activeTarget;
+    const planObjs = [];
+    const seenObj = new Set();
+    for (const r of skyTargetPlan) {
+      if (seenObj.has(r.targetId)) continue;
+      seenObj.add(r.targetId);
+      planObjs.push({ id: r.targetId, label: r.targetName, nextAtMs: r.atMs });
+    }
+    state.activeTargetOptions = [
+      { id: 'auto', label: 'Auto (Sun + Moon)' },
+      { id: 'Sun', label: '☀ Sun' },
+      { id: 'Moon', label: '🌙 Moon' },
+      ...planObjs,
+    ];
   }
 
   // If schedule augmentation is enabled, pull rows from schedule_observations

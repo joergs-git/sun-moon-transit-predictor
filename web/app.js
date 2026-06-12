@@ -302,6 +302,53 @@ const CONFIDENCE_BADGE = {
   red:    { dot: '🔴', label: 'unsicher', tip: 'TLE > 6 d old at the event — very tentative.' },
 };
 
+// Active-target pulldown (M83): what the scope is pointed at. Shown only when
+// the SharpCap trigger is enabled (it targets the capture). Options come from
+// state.activeTargetOptions (Sun/Moon/Auto + objects with upcoming passes).
+let activeTargetBusy = false;   // guard against re-rendering mid-change
+function renderActiveTarget(state) {
+  const bar = $('#active-target-bar');
+  if (!bar) return;
+  if (!state.sharpcap?.enabled) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const sel = $('#active-target-select');
+  const opts = Array.isArray(state.activeTargetOptions) ? state.activeTargetOptions : [];
+  const cur = state.activeTarget ?? 'auto';
+  // Rebuild options only when the set or selection changed (don't stomp an open
+  // dropdown every 2 s).
+  const sig = opts.map((o) => o.id).join(',') + '|' + cur;
+  if (!activeTargetBusy && sel.dataset.sig !== sig) {
+    sel.innerHTML = opts.map((o) => `<option value="${o.id}"${o.id === cur ? ' selected' : ''}>${o.label}</option>`).join('');
+    sel.dataset.sig = sig;
+  }
+  // Next pass for the currently-selected sky object (if any).
+  const nextEl = $('#active-target-next');
+  if (nextEl) {
+    const obj = opts.find((o) => o.id === cur && o.nextAtMs);
+    nextEl.textContent = obj ? `next pass ${fmtDateTime(obj.nextAtMs)}` : '';
+  }
+}
+
+async function setActiveTarget(target) {
+  activeTargetBusy = true;
+  try {
+    const res = await fetch('/api/active-target', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    pollState();   // reflect the new target immediately
+  } catch (e) {
+    console.warn('set active target failed:', e);
+  } finally {
+    activeTargetBusy = false;
+  }
+}
+
+$('#active-target-select')?.addEventListener('change', (ev) => setActiveTarget(ev.target.value));
+
 // Render the sky-target observation plan ("Drehbuch"). Hidden unless the
 // feature is on AND there is at least one upcoming pass.
 function renderSkyPlan(state) {
@@ -931,6 +978,7 @@ async function pollState() {
     sharpcapArmedLog = Array.isArray(state.sharpcap?.armed) ? state.sharpcap.armed : [];
     renderSky(state);
     renderIssPass(state.iss);
+    renderActiveTarget(state);
     renderSkyPlan(state);
     renderTracking(state);
     renderTotalLive(state);
