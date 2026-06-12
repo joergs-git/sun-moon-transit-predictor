@@ -12,7 +12,7 @@ const MS_PER_DAY = 86_400_000;
  * (not now): a far-future event uses a TLE that will be many days stale by
  * then, so its cross-track position is uncertain to kilometres → arcminutes in
  * a narrow field. The daily TLE refresh shrinks this as the event nears, so a
- * "🟠 grob" event 6 days out becomes "🟢 sicher" closer in.
+ * a "🟠 rough" event 6 days out becomes "🟢 sure" closer in.
  *
  *   < 1 d → green · 1–3 d → amber · 3–6 d → orange · > 6 d → red
  *

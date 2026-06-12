@@ -296,10 +296,10 @@ function renderSky(state) {
 
 // Sky-target plan confidence badge (mirrors src/skyplan.js confidenceFor).
 const CONFIDENCE_BADGE = {
-  green:  { dot: '🟢', label: 'sicher',   tip: 'TLE fresh at the event (< 1 d) — reliable.' },
-  amber:  { dot: '🟡', label: 'mittel',   tip: 'TLE 1–3 d old at the event — refines as it nears.' },
-  orange: { dot: '🟠', label: 'grob',     tip: 'TLE 3–6 d old at the event — placeholder, will sharpen.' },
-  red:    { dot: '🔴', label: 'unsicher', tip: 'TLE > 6 d old at the event — very tentative.' },
+  green:  { dot: '🟢', label: 'sure',      tip: 'TLE fresh at the event (< 1 d) — reliable.' },
+  amber:  { dot: '🟡', label: 'medium',    tip: 'TLE 1–3 d old at the event — refines as it nears.' },
+  orange: { dot: '🟠', label: 'rough',     tip: 'TLE 3–6 d old at the event — placeholder, will sharpen.' },
+  red:    { dot: '🔴', label: 'uncertain', tip: 'TLE > 6 d old at the event — very tentative.' },
 };
 
 // Active-target pulldown (M83): what the scope is pointed at. Shown only when
