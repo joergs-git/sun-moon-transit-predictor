@@ -36,7 +36,10 @@ import { createHttpServer } from './server.js';
 import { SharpCapTrigger } from './sharpcap.js';
 import { HistoryStore } from './store.js';
 import { extrapolate, findTransits } from './tracker.js';
-import { loadIssTle, predictIssTransits, nextIssVisiblePass } from './iss.js';
+import {
+  loadIssTle, predictIssTransits, predictSkyTargetTransits, nextIssVisiblePass,
+} from './iss.js';
+import { buildSkyTargetPlan } from './skyplan.js';
 
 export const DEFAULT_CONFIG = {
   adsb: {
@@ -288,6 +291,42 @@ export const DEFAULT_CONFIG = {
       { name: 'Tiangong', tag: 'CSS', catnr: 48274, tlePath: './data/tiangong.tle',
         typeDesc: 'Tiangong (CSS) space station', enabled: true },
     ],
+    // Sky-target passes (M83): predict when a satellite (ISS/HST/CSS) crosses
+    // the framed FOV of a deep-sky object / star / planet — the "shoot the
+    // satellite passing through a DSO field, composite with a separate
+    // long-exposure background" workflow. OPT-IN (off by default): it is a
+    // niche advanced feature and adds a per-recompute scan (≈0.3 s per
+    // satellite over the plan horizon, run on its own slow cadence). Edit in
+    // config/service.json for now; a Settings "Sky targets" tab follows.
+    skyTargets: {
+      enabled: false,
+      recomputeMs: 1_800_000,     // re-scan every 30 min (rare-event work)
+      planHorizonDays: 7,         // timeline look-ahead (≤ iss.horizonMs / 14 d)
+      minElevationDeg: 20,        // ignore passes lower than this (poor seeing/obstruction)
+      requireSunlit: true,        // the satellite must be lit (not in Earth's shadow)
+      requireDarkSky: true,       // …and the sky dark — so these cluster in twilight
+      sunBelowDeg: -6,            // "dark enough": Sun below civil dusk
+      reslewMinGapMin: 5,         // two events closer than this can't share one scope → conflict flag
+      // FOV box per target is taken from the rig optics (config.optics: focal
+      // length + sensor) unless an object sets fovWidthDeg/fovHeightDeg. A
+      // curated starter catalogue (bright stars, a few Messier, the bright
+      // planets); RA/Dec are J2000 (the engine precesses them). Add your own by
+      // RA/Dec (J2000) or a planet `body`; set `enabled: false` to skip one.
+      objects: [
+        { id: 'vega',     name: 'Vega',           raHours: 18.6156, decDeg: 38.7837, distLy: 25 },
+        { id: 'capella',  name: 'Capella',        raHours: 5.2781,  decDeg: 45.9980, distLy: 43 },
+        { id: 'arcturus', name: 'Arcturus',       raHours: 14.2610, decDeg: 19.1825, distLy: 37 },
+        { id: 'altair',   name: 'Altair',         raHours: 19.8464, decDeg: 8.8683,  distLy: 17 },
+        { id: 'deneb',    name: 'Deneb',          raHours: 20.6905, decDeg: 45.2803, distLy: 1400 },
+        { id: 'm42',      name: 'M42 (Orion)',    raHours: 5.5881,  decDeg: -5.3911, diameterDeg: 1.0 },
+        { id: 'm31',      name: 'M31 (Andromeda)', raHours: 0.7123, decDeg: 41.2690, diameterDeg: 3.0 },
+        { id: 'm13',      name: 'M13 (Hercules)', raHours: 16.6949, decDeg: 36.4613, diameterDeg: 0.33 },
+        { id: 'm45',      name: 'M45 (Pleiades)', raHours: 3.7833,  decDeg: 24.1167, diameterDeg: 2.0 },
+        { id: 'jupiter',  name: 'Jupiter',        body: 'Jupiter' },
+        { id: 'saturn',   name: 'Saturn',         body: 'Saturn' },
+        { id: 'mars',     name: 'Mars',           body: 'Mars' },
+      ],
+    },
   },
   // Persistent "how often did it come by" tally over ALL detected ADS-B
   // traffic (airframe hex + ADS-B callsign), kept in SQLite so it survives
@@ -769,6 +808,10 @@ export async function runService({
   // the 2 s tick never re-propagates SGP4. Built lazily in the tick below.
   const satCache = new Map();   // tag → { tle, events }
   let lastSatComputeMs = 0;
+  // Sky-target plan cache (M83): the merged satellite × sky-target timeline,
+  // recomputed on its own slow cadence (config.iss.skyTargets.recomputeMs).
+  let skyTargetPlan = [];
+  let lastSkyComputeMs = 0;
 
   const state = {
     observer,
@@ -1975,6 +2018,72 @@ export async function runService({
       lastSatComputeMs = nowMs;
     }
 
+    // Sky-target plan (M83) — recompute the satellite × sky-target timeline on
+    // its own slow cadence (opt-in; off by default). For each enabled satellite
+    // with a loaded TLE we scan every catalogued sky target; the FOV box comes
+    // from the main rig optics unless an object overrides it. The merged,
+    // confidence-rated, time-sorted plan lands in state.skyTargetPlan.
+    const skyCfg = config.iss?.skyTargets;
+    if (config.iss?.enabled && skyCfg?.enabled
+        && (lastSkyComputeMs === 0 || nowMs - lastSkyComputeMs >= (skyCfg.recomputeMs ?? 1_800_000))) {
+      // FOV box from focal length + sensor; fovDeg = 2·atan(sensor / (2·FL)).
+      const f = Number(config.optics?.telescopeFocalMm);
+      const sw = Number(config.optics?.sensorWmm);
+      const sh = Number(config.optics?.sensorHmm);
+      const fovDeg = (mm) => 2 * Math.atan(mm / (2 * f)) * 180 / Math.PI;
+      const fov = (f > 0 && sw > 0 && sh > 0)
+        ? { fovWidthDeg: fovDeg(sw), fovHeightDeg: fovDeg(sh) }
+        : null;
+      const targets = (skyCfg.objects ?? [])
+        .filter((o) => o?.enabled !== false)
+        .map((o) => ({
+          ...o,
+          fovWidthDeg: o.fovWidthDeg ?? fov?.fovWidthDeg,
+          fovHeightDeg: o.fovHeightDeg ?? fov?.fovHeightDeg,
+        }));
+      // Every enabled satellite with a loaded TLE: ISS + the extra satellites.
+      const sats = [];
+      if (issTle) sats.push({ tag: 'ISS', name: 'ISS', satrec: issTle.satrec });
+      for (const satCfg of (config.iss.satellites ?? [])) {
+        const entry = satCache.get(satCfg.tag);
+        if (entry?.tle) sats.push({ tag: satCfg.tag, name: satCfg.name, satrec: entry.tle.satrec });
+      }
+      const planHorizonDays = skyCfg.planHorizonDays ?? 7;
+      const horizonMs = Math.min(config.iss.horizonMs, planHorizonDays * 86400000);
+      const candidates = [];
+      const tleEpochMsByTag = {};
+      for (const s of sats) {
+        // TLE epoch (Julian date → ms) so the plan can rate confidence by the
+        // element-set age at the event time.
+        tleEpochMsByTag[s.tag] = (s.satrec.jdsatepoch - 2440587.5) * 86400000;
+        try {
+          candidates.push(...predictSkyTargetTransits(observer, s.satrec, {
+            fromMs: nowMs,
+            horizonMs,
+            targets,
+            tag: s.tag,
+            name: s.name,
+            minElevationDeg: skyCfg.minElevationDeg ?? 20,
+            requireSunlit: skyCfg.requireSunlit !== false,
+            requireDarkSky: skyCfg.requireDarkSky !== false,
+            sunBelowDeg: skyCfg.sunBelowDeg ?? -6,
+          }));
+        } catch (e) {
+          logger.warn?.(`sky-target prediction failed for ${s.tag}:`, e?.message ?? e);
+        }
+      }
+      skyTargetPlan = buildSkyTargetPlan(candidates, {
+        nowMs,
+        tleEpochMsByTag,
+        planHorizonDays,
+        minElevationDeg: skyCfg.minElevationDeg ?? 0,
+        reslewMinGapMin: skyCfg.reslewMinGapMin ?? 5,
+      });
+      lastSkyComputeMs = nowMs;
+    } else if (!skyCfg?.enabled && skyTargetPlan.length) {
+      skyTargetPlan = [];   // feature turned off → clear the stale plan
+    }
+
     // Drop a visible pass once it is over so the Sky-now line never shows a
     // stale "next pass" that already happened.
     if (issVisiblePass && issVisiblePass.endMs < nowMs) issVisiblePass = null;
@@ -2033,6 +2142,18 @@ export async function runService({
           : null,
       };
     });
+
+    // Sky-target observation plan (M83) — the merged, time-sorted, confidence-
+    // rated timeline of every satellite × sky-target pass (the "Drehbuch").
+    // Persists between its slow recomputes; empty when the feature is off.
+    state.skyTargetPlan = skyTargetPlan;
+    state.skyTargets = {
+      enabled: Boolean(skyCfg?.enabled),
+      objectCount: (skyCfg?.objects ?? []).filter((o) => o?.enabled !== false).length,
+      planCount: skyTargetPlan.length,
+      nextAtMs: skyTargetPlan[0]?.atMs ?? null,
+      planHorizonDays: skyCfg?.planHorizonDays ?? 7,
+    };
 
     // Feed the lifecycle + notifier only the ISS transits that are close
     // enough to be trustworthy (≤ notifyWithinMs). Beyond that a far-future

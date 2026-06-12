@@ -376,6 +376,30 @@ export function predictSkyTargetTransits(observer, satrec, opts = {}) {
   const obsLon = observer.longitudeDeg;
   const out = [];
 
+  // The satellite's Az/El and the night-visibility verdict at a given time are
+  // identical for every target, so compute them ONCE per time and reuse across
+  // all targets (the doc's "scan each satellite once, targets reuse"). All
+  // targets share the same coarse grid, so the hit rate is ~100%; the cache is
+  // per-call and freed on return (bounded by horizon/COARSE_STEP). `null` =
+  // the satellite is not a usable visible point at that time.
+  const satStateCache = new Map();
+  const satStateAt = (tMs) => {
+    if (satStateCache.has(tMs)) return satStateCache.get(tMs);
+    let state = null;
+    const sat = issAzEl(satrec, obsEcef, obsLat, obsLon, tMs);
+    if (sat && sat.elevationDeg >= minElevationDeg) {
+      let visible = true;
+      if (requireDarkSky || requireSunlit) {
+        const sun = bodyAzEl(observer, 'Sun', new Date(tMs));
+        if (requireDarkSky && sun.elevationDeg > sunBelowDeg) visible = false;
+        if (visible && requireSunlit && !issSunlit(sat.ecef, sunUnitEcef(observer, tMs))) visible = false;
+      }
+      if (visible) state = sat;
+    }
+    satStateCache.set(tMs, state);
+    return state;
+  };
+
   for (const target of targets) {
     if (target?.enabled === false) continue;
     const fieldRadiusDeg = targetFieldRadiusDeg(target);
@@ -384,16 +408,8 @@ export function predictSkyTargetTransits(observer, satrec, opts = {}) {
     const gate = Math.max(COARSE_GATE_DEG, fieldRadiusDeg + 0.5);
 
     const sepAt = (tMs) => {
-      const sat = issAzEl(satrec, obsEcef, obsLat, obsLon, tMs);
-      if (!sat || sat.elevationDeg < minElevationDeg) return Infinity;
-      // Night-target visibility gates: the satellite must be a VISIBLE point —
-      // sunlit (not in Earth's shadow) and the sky dark enough. Off for daytime
-      // Sun transits (caller passes requireDarkSky/Sunlit = false).
-      if (requireDarkSky || requireSunlit) {
-        const sun = bodyAzEl(observer, 'Sun', new Date(tMs));
-        if (requireDarkSky && sun.elevationDeg > sunBelowDeg) return Infinity;
-        if (requireSunlit && !issSunlit(sat.ecef, sunUnitEcef(observer, tMs))) return Infinity;
-      }
+      const sat = satStateAt(tMs);
+      if (!sat) return Infinity;
       const tgt = targetAzEl(observer, target, new Date(tMs));
       if (!isObservable(tgt)) return Infinity;
       return angularSeparationDeg(sat, tgt);
