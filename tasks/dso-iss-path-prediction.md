@@ -294,7 +294,41 @@ Ereignis ab und stellt das nächste Objekt als Active-Target ein.
   anderen Ziele nur bei dunklem Himmel (Sonne unter `sunBelowDeg`) **und**
   sonnenbeschienenem Satelliten.
 
-## 12. Nicht-Ziele / spätere Features
+## 12. Pushover-Plan-Alerts — Benachrichtigung bei Konfidenz-Schwelle
+
+Eigene, **opt-in** Pushover-Kategorie, **getrennt** von den bestehenden Live-
+Transit-Alerts (radio/candidate/imminent). Ein Nutzer will evtl. nur die
+Vorplanung, nicht das Live-Geblinke — oder umgekehrt; beide laufen parallel.
+
+- **Auslöser (edge-triggered):** Ein Plan-Eintrag **erreicht erstmals** die
+  konfigurierte Konfidenz-Schwelle (Default 🟢 grün) — ein künftiger Transit
+  „verfestigt" sich. Feuert **genau einmal** pro Ereignis, **nicht** bei jedem
+  Recompute.
+- **Inhalt:** Objekt · Satellit (ISS/HST/CSS) · **genaue Uhrzeit** · Typ
+  (Transit / durch-Feld / Appulse) · Elevation · Miss/Sep · Vorlaufzeit ·
+  Konfidenz + Link (vorhandene `pushover.url`). Genau die „über welches Objekt
+  und wann genau"-Info, die der User will.
+- **Stabile Ereignis-Identität / Dedup (der knifflige Teil):** Die closest-
+  approach-Zeit eines fernen Events wandert bei jedem TLE-Refresh um Sekunden.
+  → Fuzzy-Key `(satTag, objectId, time-bucket ~±2 min)` in der DB, damit
+  **dasselbe physische Ereignis** über Recomputes hinweg wiedererkannt wird.
+  Pro Key wird gespeichert, welche Schwelle schon gemeldet wurde → ein Upgrade
+  🟠→🟢 meldet einmal, kein Spam, **übersteht Neustart**.
+- **Konfig** (`iss.skyTargets.planAlerts`): `enabled`, `minConfidence`
+  (`green|amber`), `minElevationDeg`, Satelliten-/Objekt-Filter, `leadMaxDays`
+  (nur Events innerhalb X Tagen melden), optional Ruhezeiten (keine Pushes
+  nachts 01–07 Uhr o. ä.).
+- **Abgrenzung:** Planungs-/Vorschau-Push über bis zu `leadMaxDays` Tage,
+  **unabhängig** von der bestehenden `iss.notifyWithinMs`-T-minus-Logik (3 d).
+- **Wiederverwendung:** baut auf `pushover.js` / `notifier.js`; nur eine neue
+  Nachrichten-Kategorie + ein kleines DB-Tabellchen für den Dedup-State (analog
+  zu sightings/postmortem in `store.js`). Validierung transaktional (lessons.md
+  2026-06-08).
+- **Optional (offene Frage):** auch melden, wenn ein zuvor grün gemeldetes
+  Event **wieder unsicher wird oder wegfällt** (z. B. ISS-Reboost verschiebt es)
+  — „Plan geändert"-Push, damit man nicht umsonst aufbaut.
+
+## 13. Nicht-Ziele / spätere Features
 
 - **Zentrallinien-/Bodenspur-Export** (für Planeten-Scheiben-Transits, deren
   Zentrallinie nur zig Meter breit ist → „hinfahren"-Workflow): eigenes,
@@ -304,7 +338,7 @@ Ereignis ab und stellt das nächste Objekt als Active-Target ein.
 
 ---
 
-## 13. Plan (nach Freigabe dieses Docs)
+## 14. Plan (nach Freigabe dieses Docs)
 
 - [ ] `geometry.js`: `bodyEnumOf` Planeten; RA/Dec-Pfad (`DefineStar`);
       `apparentDiameterDeg()`.
@@ -332,10 +366,13 @@ Ereignis ab und stellt das nächste Objekt als Active-Target ein.
 - [ ] Tests: Planet-Az/El, RA/Dec-Stern-Az/El, FOV-Box-Treffer (durch vs.
       daneben), Illuminations-Gate, apparentDiameter, Timeline-Merge+Sort,
       Konflikt-Erkennung.
+- [ ] **Pushover-Plan-Alerts:** edge-getriggerte Push bei Erreichen der
+      Konfidenz-Schwelle; Fuzzy-Dedup-State in DB (neustart-fest); Konfig
+      `iss.skyTargets.planAlerts`; Settings-Feld im Tab „Pushover".
 - [ ] README/MILESTONES: M82; Workflow-Trennung (DSO-Stack + ISS-Lucky-Frame);
-      Drehbuch/Active-Target.
+      Drehbuch/Active-Target; Plan-Alerts.
 
-## 14. Offene Fragen
+## 15. Offene Fragen
 
 - FOV-Box **achsenausgerichtet** (Az/El) ausreichend, oder muss die
   **Kamerarotation** (PA des Sensors) berücksichtigt werden?
