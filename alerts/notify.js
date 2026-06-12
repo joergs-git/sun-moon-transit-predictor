@@ -41,7 +41,7 @@ const SERVICE_KEY = env('SUPABASE_SERVICE_ROLE_KEY');
 const PUSHOVER_TOKEN = env('PUSHOVER_APP_TOKEN');
 const HMAC_SECRET = env('ALERTS_HMAC_SECRET');
 const FUNCTIONS_BASE = env('FUNCTIONS_BASE_URL', `${SUPABASE_URL}/functions/v1`).replace(/\/$/, '');
-const PROMO_URL = env('PROMO_URL', 'https://github.com/joergs-git/sun-moon-transit-predictor');
+const PROMO_URL = env('PROMO_URL', 'https://github.com/joergs-git/sun-moon-transit-predictor/blob/main/README.md');
 const LEAD_MIN_MS = Number(env('LEAD_MIN_HOURS', '6')) * 3600_000;
 const LEAD_MAX_MS = Number(env('LEAD_MAX_HOURS', '48')) * 3600_000;
 const DRY_RUN = process.env.DRY_RUN === '1';
