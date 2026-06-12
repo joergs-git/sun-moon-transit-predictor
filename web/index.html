@@ -587,12 +587,11 @@
            blocking the WHOLE form on one over-restrictive step (the
            look-ahead step=30/min=10 bug) — leave correctness to the server. -->
       <form id="settings-form" novalidate>
-        <div class="settings-fields">
-        <!-- Tab bar — purely a VIEW grouping. Every field keeps its name= and
-             stays inside this one #settings-form, so /api/config save, server
-             validation and hot-reload are completely unchanged (see
-             tasks/settings-tabs-ui.md). Each fieldset carries a data-tab; the
-             switcher in app.js shows only the active tab's fieldsets. -->
+        <!-- Tab bar — a fixed top bar ABOVE the scrolling fields, purely a VIEW
+             grouping. Every field keeps its name= and stays inside this one
+             #settings-form, so /api/config save, validation and hot-reload are
+             unchanged (see tasks/settings-tabs-ui.md). Each fieldset carries a
+             data-tab; the switcher in app.js shows only the active tab's. -->
         <div class="settings-tablist" role="tablist" aria-label="Settings sections">
           <button type="button" class="settings-tab" role="tab" data-tab="general" aria-selected="true">General</button>
           <button type="button" class="settings-tab" role="tab" data-tab="scopes" aria-selected="false" tabindex="-1">Scopes</button>
@@ -603,6 +602,7 @@
           <button type="button" class="settings-tab" role="tab" data-tab="sky" aria-selected="false" tabindex="-1">Sky targets</button>
           <button type="button" class="settings-tab" role="tab" data-tab="catalog" aria-selected="false" tabindex="-1">Catalog</button>
         </div>
+        <div class="settings-fields">
         <fieldset data-tab="general">
           <legend>Observer</legend>
           <label>Name <input name="observer.name" type="text" placeholder="Rheine">
@@ -758,7 +758,7 @@
             <small class="field-hint">On-Demand API v2 base. Change only if AirNav moves the host.</small></label>
         </fieldset>
 
-        <fieldset data-tab="scopes" class="settings-tall">
+        <fieldset data-tab="scopes">
           <legend>SharpCap capture trigger</legend>
           <!-- ── On/off toggles ─────────────────────────────────────── -->
           <label class="checkbox-row">

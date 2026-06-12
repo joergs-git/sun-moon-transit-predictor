@@ -2266,7 +2266,16 @@ function activateSettingsTab(name, { focusTab = false } = {}) {
     tab.tabIndex = on ? 0 : -1;               // roving tabindex
     if (on && focusTab) tab.focus();
   }
-  for (const fs of settingsPanels) fs.hidden = fs.dataset.tab !== name;
+  let visible = 0;
+  for (const fs of settingsPanels) {
+    const show = fs.dataset.tab === name;
+    fs.hidden = !show;
+    if (show) visible += 1;
+  }
+  // Two-column (masonry) layout only when the tab has more than one fieldset;
+  // a single fieldset stays full width.
+  const fieldsBox = settingsForm.querySelector('.settings-fields');
+  if (fieldsBox) fieldsBox.classList.toggle('multi', visible > 1);
   try { localStorage.setItem(SETTINGS_TAB_KEY, name); } catch { /* private mode */ }
 }
 

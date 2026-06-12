@@ -599,41 +599,25 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
   padding-right: 4px;
   flex: 1 1 auto;
   min-height: 0;
-  /* Tabbed view (v0.33.0): the tablist spans the full width; the ACTIVE tab's
-     fieldsets flow into a responsive grid. `auto-fit` collapses empty tracks,
-     so a single-fieldset tab (Pushover, Sounds, …) fills the width while the
-     multi-fieldset "General" tab splits into two columns. Hidden fieldsets
-     (toggled to [hidden] by the tab switcher in app.js) drop out of the grid
-     entirely — no layout gap. */
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 8px 12px;
-  align-content: start;
-  /* Size each fieldset to its content (don't stretch it to the row height) —
-     otherwise a short fieldset sharing a row with a tall one (Telescope next to
-     SharpCap) becomes a tall empty frame. */
-  align-items: start;
+  /* The active tab's fieldsets (v0.38.3). Single-fieldset tabs stay one full-
+     width column. Multi-fieldset tabs get `.multi` from the tab switcher → two
+     CSS columns that pack by height (masonry): two short fieldsets stack in one
+     column beside a tall one with NO gap, and the tall fieldset doesn't force
+     the short ones apart (unlike a row-based grid). `break-inside: avoid` keeps
+     each fieldset whole. The tablist now lives ABOVE this scroll area, so it can
+     never be displaced. */
 }
-/* Scopes tab: the SharpCap fieldset is much taller than Telescope+Twilight, so
-   pin it to column 2 spanning both rows and let the two short fieldsets stack in
-   column 1 beside it (masonry) — keeps Twilight parallel to SharpCap instead of
-   sliding far below, and shortens the scroll. Only when ≥2 columns fit. */
-@media (min-width: 700px) {
-  .settings-fields { grid-auto-flow: row dense; }
-  .settings-fields > fieldset.settings-tall { grid-column: 2; grid-row: 1 / span 2; }
-}
-/* Tab bar — spans every grid column and sticks to the top of the scroll area
-   so the tabs stay reachable while a long tab (e.g. Sounds) scrolls beneath. */
+.settings-card .settings-fields > fieldset { margin: 0 0 8px; }
+.settings-fields.multi { column-count: 2; column-gap: 12px; }
+.settings-card .settings-fields.multi > fieldset { break-inside: avoid; }
+/* Tab bar — a fixed row above the scrolling fields (not inside it any more). */
 .settings-tablist {
-  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--panel);
+  flex: 0 0 auto;
   padding-bottom: 6px;
+  margin-bottom: 8px;
   border-bottom: 1px solid var(--line);
 }
 .settings-tab {
