@@ -1760,6 +1760,17 @@ function specRow(label, value) {
 // identifying at all (hide the panel entirely).
 function renderFovSpecs(meta) {
   if (!fovSpecs) return;
+  // Satellites (ISS/HST/CSS) are not airframes — show a clean orbital card
+  // instead of the aircraft "type not in the offline spec DB" note, which read
+  // as a confusing error for the ISS.
+  if (SAT_TAGS.has(meta?.typeCode)) {
+    fovSpecs.innerHTML =
+      `<div class="spec-head">🛰 ${meta.typeCode}</div>`
+      + (meta.typeDesc ? specRow('Object', meta.typeDesc) : '')
+      + '<div class="spec-foot">Orbiting satellite (offline SGP4 from a TLE) — the frame uses a station glyph, not an airframe silhouette.</div>';
+    fovSpecs.hidden = false;
+    return;
+  }
   const spec = resolveAircraftType(meta?.typeCode);
   if (spec) {
     const seats = spec.seats == null ? 'n/a (non-pax)' : `~${spec.seats}`;
