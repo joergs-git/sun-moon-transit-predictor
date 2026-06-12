@@ -523,9 +523,20 @@
            look-ahead step=30/min=10 bug) — leave correctness to the server. -->
       <form id="settings-form" novalidate>
         <div class="settings-fields">
-        <!-- Left column: observation & optical hardware + Pushover -->
-        <div class="settings-col">
-        <fieldset>
+        <!-- Tab bar — purely a VIEW grouping. Every field keeps its name= and
+             stays inside this one #settings-form, so /api/config save, server
+             validation and hot-reload are completely unchanged (see
+             tasks/settings-tabs-ui.md). Each fieldset carries a data-tab; the
+             switcher in app.js shows only the active tab's fieldsets. -->
+        <div class="settings-tablist" role="tablist" aria-label="Settings sections">
+          <button type="button" class="settings-tab" role="tab" data-tab="general" aria-selected="true">General</button>
+          <button type="button" class="settings-tab" role="tab" data-tab="scopes" aria-selected="false" tabindex="-1">Scopes</button>
+          <button type="button" class="settings-tab" role="tab" data-tab="pushover" aria-selected="false" tabindex="-1">Pushover</button>
+          <button type="button" class="settings-tab" role="tab" data-tab="sounds" aria-selected="false" tabindex="-1">Sounds</button>
+          <button type="button" class="settings-tab" role="tab" data-tab="epaper" aria-selected="false" tabindex="-1">E-paper</button>
+          <button type="button" class="settings-tab" role="tab" data-tab="data" aria-selected="false" tabindex="-1">Data</button>
+        </div>
+        <fieldset data-tab="general">
           <legend>Observer</legend>
           <label>Name <input name="observer.name" type="text" placeholder="Rheine">
             <small class="field-hint">Display label only — shown in the header and logs.</small></label>
@@ -541,7 +552,7 @@
             <small class="field-hint">Optional, refraction model only. Blank = 1010.</small></label>
         </fieldset>
 
-        <fieldset>
+        <fieldset data-tab="general">
           <legend>Telescope &amp; sensor (FOV sketch)</legend>
           <label>Focal length (mm)<input name="optics.telescopeFocalMm" type="number" step="any" min="1" required>
             <small class="field-hint">Telescope effective focal length — sets the FOV-sketch scale (your reducer/Barlow included).</small></label>
@@ -557,7 +568,7 @@
             <small class="field-hint">Vertical resolution — informational only.</small></label>
         </fieldset>
 
-        <fieldset>
+        <fieldset data-tab="pushover">
           <legend>Pushover</legend>
           <label class="checkbox-row">
             <input name="pushover.enabled" type="checkbox"> Enabled
@@ -586,7 +597,7 @@
             <small class="field-hint">The clickable URL Pushover shows on the alert (tap → opens this predictor's web UI). Blank = auto-detected LAN IP on the app's port (e.g. http://&lt;lan-ip&gt;:8081/).</small></label>
         </fieldset>
 
-        <fieldset>
+        <fieldset data-tab="sounds">
           <legend>Audio / buzzer</legend>
           <small class="field-hint">Piezo buzzer on the Pi (a GPIO pin ↔ GND), driven by <code>display/buzzer.py</code>. Beeps a transit countdown so you don't have to watch the screen. Durations are milliseconds; values below are the defaults. Each signal can <b>fade out</b> (the % of the beep whose volume ramps down — softer, less penetrant) .</small>
           <label class="checkbox-row">
@@ -653,11 +664,7 @@
           </div>
         </fieldset>
 
-        </div><!-- /.settings-col -->
-        <!-- Right column: tracker + ADS-B integrations + capture trigger -->
-        <div class="settings-col">
-
-        <fieldset>
+        <fieldset data-tab="general">
           <legend>Tracker</legend>
           <label>
             Look-ahead (s)<input name="tracker.horizonS" type="number" step="1" min="10" max="1800">
@@ -673,7 +680,7 @@
             <small class="field-hint">Only consider aircraft <b>at or above</b> this altitude (m MSL). <b>0 = off</b>. E.g. <b>2000</b> drops helicopters, GA, drones and keeps airliner traffic. Applies to the whole pipeline — candidates, alerts, History, SharpCap arming.</small></label>
         </fieldset>
 
-        <fieldset>
+        <fieldset data-tab="data">
           <legend>AirNav Radar API</legend>
           <label class="checkbox-row">
             <input name="airnav.enabled" type="checkbox"> Enabled
@@ -684,7 +691,7 @@
             <small class="field-hint">On-Demand API v2 base. Change only if AirNav moves the host.</small></label>
         </fieldset>
 
-        <fieldset>
+        <fieldset data-tab="scopes">
           <legend>SharpCap capture trigger</legend>
           <!-- ── On/off toggles ─────────────────────────────────────── -->
           <label class="checkbox-row">
@@ -745,7 +752,7 @@
           </div>
         </fieldset>
 
-        <fieldset>
+        <fieldset data-tab="epaper">
           <legend>E-paper display</legend>
           <small class="field-hint">Drives a standalone Waveshare 4.2" e-paper panel (400×300) via the Python client in <code>display/</code> on the Pi — a browserless readout of clock, location, live count and the soonest Real candidates. The client polls these settings live, so changes here take effect within a few seconds without restarting it. See <code>display/README.md</code> for wiring + install.</small>
           <label class="checkbox-row">
@@ -759,7 +766,6 @@
             <small class="field-hint">Full-refresh cadence — the periodic brief flash that clears e-paper ghosting. <b>Default 60 s.</b> Must be ≥ Quick refresh.</small></label>
         </fieldset>
 
-        </div><!-- /.settings-col (right) -->
         </div><!-- /.settings-fields -->
 
         <div class="settings-actions">

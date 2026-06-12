@@ -599,20 +599,52 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
   padding-right: 4px;
   flex: 1 1 auto;
   min-height: 0;
-  /* Two explicit columns so the user controls which fieldset sits where
-     (left vs right). Inner .settings-col stacks its fieldsets vertically.
-     Drops to one column on narrow screens via auto-fit. */
+  /* Tabbed view (v0.33.0): the tablist spans the full width; the ACTIVE tab's
+     fieldsets flow into a responsive grid. `auto-fit` collapses empty tracks,
+     so a single-fieldset tab (Pushover, Sounds, …) fills the width while the
+     multi-fieldset "General" tab splits into two columns. Hidden fieldsets
+     (toggled to [hidden] by the tab switcher in app.js) drop out of the grid
+     entirely — no layout gap. */
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 8px 12px;
   align-content: start;
 }
-.settings-col {
+/* Tab bar — spans every grid column and sticks to the top of the scroll area
+   so the tabs stay reachable while a long tab (e.g. Sounds) scrolls beneath. */
+.settings-tablist {
+  grid-column: 1 / -1;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--panel);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
 }
+.settings-tab {
+  appearance: none;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px 4px 0 0;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.settings-tab:hover { color: var(--fg); border-color: var(--accent); }
+.settings-tab[aria-selected="true"] {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.settings-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .settings-card fieldset {
   border: 1px solid var(--line);
   border-radius: 4px;

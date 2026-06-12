@@ -1900,6 +1900,10 @@ async function openSettings() {
     if (!res.ok) throw new Error(`/api/config ${res.status}`);
     const cfg = await res.json();
     fillSettingsForm(cfg);
+    // Restore the last-used tab (falls back to General if unset/unknown).
+    let saved = 'general';
+    try { saved = localStorage.getItem(SETTINGS_TAB_KEY) || 'general'; } catch { /* ignore */ }
+    activateSettingsTab(saved);
     settingsModal.hidden = false;
   } catch (e) {
     settingsMsg.textContent = `load failed: ${e.message ?? e}`;
@@ -1961,8 +1965,75 @@ settingsForm.addEventListener('submit', async (ev) => {
   } catch (e) {
     settingsMsg.textContent = `save failed: ${e.message ?? e}`;
     settingsMsg.className = 'settings-msg err';
+    // If the server pinned the failure to a specific field, jump to its tab and
+    // focus it — otherwise the error would point at a field on a hidden panel.
+    const bad = settingsFieldForError(e.message);
+    if (bad) {
+      const tab = bad.closest('fieldset[data-tab]')?.dataset.tab;
+      if (tab) activateSettingsTab(tab);
+      bad.focus();
+    }
   }
 });
+
+// ── Settings tabs (v0.33.0) ────────────────────────────────────────────────
+// Pure VIEW grouping over the single #settings-form (see tasks/settings-tabs-ui
+// .md). Every field keeps its name= and stays in the form, so save/validation/
+// hot-reload are untouched — the switcher only shows/hides fieldsets by their
+// data-tab. Default tab = General; the last-used tab is remembered.
+const settingsTablist = settingsForm.querySelector('.settings-tablist');
+const settingsTabs = Array.from(settingsForm.querySelectorAll('.settings-tab'));
+const settingsPanels = Array.from(settingsForm.querySelectorAll('fieldset[data-tab]'));
+const SETTINGS_TAB_KEY = 'stp.settingsTab';
+
+function activateSettingsTab(name, { focusTab = false } = {}) {
+  if (!settingsTabs.some((t) => t.dataset.tab === name)) name = 'general';
+  for (const tab of settingsTabs) {
+    const on = tab.dataset.tab === name;
+    tab.setAttribute('aria-selected', on ? 'true' : 'false');
+    tab.tabIndex = on ? 0 : -1;               // roving tabindex
+    if (on && focusTab) tab.focus();
+  }
+  for (const fs of settingsPanels) fs.hidden = fs.dataset.tab !== name;
+  try { localStorage.setItem(SETTINGS_TAB_KEY, name); } catch { /* private mode */ }
+}
+
+settingsTablist?.addEventListener('click', (ev) => {
+  const tab = ev.target.closest('.settings-tab');
+  if (tab) activateSettingsTab(tab.dataset.tab);
+});
+// Keyboard: ←/→ (and ↑/↓) move between tabs, Home/End jump to ends — the
+// standard tablist interaction so the dialog stays keyboard-navigable.
+settingsTablist?.addEventListener('keydown', (ev) => {
+  const idx = settingsTabs.findIndex((t) => t.getAttribute('aria-selected') === 'true');
+  if (idx < 0) return;
+  let next = null;
+  if (ev.key === 'ArrowRight' || ev.key === 'ArrowDown') next = (idx + 1) % settingsTabs.length;
+  else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowUp') next = (idx - 1 + settingsTabs.length) % settingsTabs.length;
+  else if (ev.key === 'Home') next = 0;
+  else if (ev.key === 'End') next = settingsTabs.length - 1;
+  if (next == null) return;
+  ev.preventDefault();
+  activateSettingsTab(settingsTabs[next].dataset.tab, { focusTab: true });
+});
+
+// Find the form element a server validation error refers to, by matching any
+// known field name mentioned in the (string) error message — so we can jump to
+// the right tab and focus it instead of leaving the error pointing at a hidden
+// panel. Returns null when no field name is recognised.
+function settingsFieldForError(errStr) {
+  const s = String(errStr ?? '');
+  let best = null;
+  for (const el of settingsForm.elements) {
+    // Prefer the longest matching name (e.g. "pushover.minElevationDeg" over a
+    // hypothetical "pushover") to land on the most specific field.
+    if (el.name && s.includes(el.name) && (!best || el.name.length > best.name.length)) best = el;
+  }
+  return best;
+}
+
+// Initial consistent state (modal is hidden, but keep the DOM coherent).
+activateSettingsTab('general');
 
 $('#settings-btn').addEventListener('click', openSettings);
 
