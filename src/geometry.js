@@ -170,10 +170,48 @@ export function aircraftAzEl(observer, latDeg, lonDeg, altMHae) {
   );
 }
 
+// Ephemeris bodies the predictor can target: Sun, Moon and the major planets.
+// Pluto is intentionally omitted (never a useful satellite-transit target).
+const BODY_ENUM = {
+  Sun: 'Sun', Moon: 'Moon',
+  Mercury: 'Mercury', Venus: 'Venus', Mars: 'Mars',
+  Jupiter: 'Jupiter', Saturn: 'Saturn', Uranus: 'Uranus', Neptune: 'Neptune',
+};
+
+// Equatorial physical radii (km) for the apparent-diameter helper. Saturn is
+// the solid globe only (rings are not modelled).
+const BODY_RADIUS_KM = {
+  Sun: 695700, Moon: 1737.4,
+  Mercury: 2439.7, Venus: 6051.8, Mars: 3389.5,
+  Jupiter: 69911, Saturn: 58232, Uranus: 25362, Neptune: 24622,
+};
+
 function bodyEnumOf(body) {
-  if (body === 'Sun') return Astronomy.Body.Sun;
-  if (body === 'Moon') return Astronomy.Body.Moon;
-  throw new Error(`Unsupported body: ${body}. Expected 'Sun' or 'Moon'.`);
+  const name = BODY_ENUM[body];
+  if (name) return Astronomy.Body[name];
+  throw new Error(`Unsupported body: ${body}. Expected Sun, Moon or a major planet.`);
+}
+
+/**
+ * Normalise a "sky target" descriptor into one of two shapes:
+ *   - { body }                     ephemeris body (Sun/Moon/planet)
+ *   - { raHours, decDeg, distLy?, diameterDeg? }   fixed star / DSO
+ * Accepts a bare string ('Jupiter') as shorthand for { body: 'Jupiter' }.
+ */
+function normaliseTarget(target) {
+  if (typeof target === 'string') return { body: target };
+  if (target && typeof target === 'object') {
+    if (target.body) return { body: target.body };
+    if (Number.isFinite(target.raHours) && Number.isFinite(target.decDeg)) {
+      return {
+        raHours: target.raHours,
+        decDeg: target.decDeg,
+        distLy: target.distLy,
+        diameterDeg: target.diameterDeg,
+      };
+    }
+  }
+  throw new Error('Invalid sky target: expected a body name / { body } or { raHours, decDeg }.');
 }
 
 /**
@@ -222,6 +260,63 @@ export function sunAzEl(observer, whenUtc, opts) {
  */
 export function moonAzEl(observer, whenUtc, opts) {
   return bodyAzEl(observer, 'Moon', whenUtc, opts);
+}
+
+/**
+ * Az/El of an arbitrary sky target — an ephemeris body (Sun/Moon/planet) OR a
+ * fixed equatorial position (star / DSO). The generalisation of `bodyAzEl`
+ * used by the satellite-vs-sky-target predictor (M83).
+ *
+ * For a fixed target the catalogue RA/Dec is J2000 mean equatorial; we register
+ * it into an Astronomy-Engine star slot so the engine applies precession,
+ * aberration and the topocentric correction (catalogue → apparent-of-date),
+ * exactly the same pipeline the bodies use. `rangeM` is null for fixed targets
+ * (a star's distance is irrelevant to angular separation).
+ *
+ * @param {Observer} observer
+ * @param {string|{body?:string, raHours?:number, decDeg?:number, distLy?:number}} target
+ * @param {Date|string|number} whenUtc
+ * @param {{ applyRefraction?: boolean }} [opts]
+ * @returns {AzEl}
+ */
+export function targetAzEl(observer, target, whenUtc, opts = {}) {
+  const t = normaliseTarget(target);
+  if (t.body) return bodyAzEl(observer, t.body, whenUtc, opts);
+  const { applyRefraction = true } = opts;
+  const aobs = new Astronomy.Observer(
+    observer.latitudeDeg,
+    observer.longitudeDeg,
+    observer.elevationM,
+  );
+  const time = Astronomy.MakeTime(whenUtc instanceof Date ? whenUtc : new Date(whenUtc));
+  // distLy only affects parallax (negligible for stars/DSO); a large default is
+  // fine. Re-defining the same slot per call is cheap and side-effect-free.
+  Astronomy.DefineStar(Astronomy.Body.Star1, t.raHours, t.decDeg, t.distLy ?? 1000);
+  const equ = Astronomy.Equator(Astronomy.Body.Star1, time, aobs, true, true);
+  const hor = Astronomy.Horizon(time, aobs, equ.ra, equ.dec, applyRefraction ? 'normal' : null);
+  return { azimuthDeg: hor.azimuth, elevationDeg: hor.altitude, rangeM: null };
+}
+
+/**
+ * Apparent angular diameter of a target, in degrees, at a given time.
+ * Bodies: computed from physical radius + geocentric distance (so the Sun's
+ * ~0.533° and the Moon's ~0.518° fall out naturally, and a planet's disc is
+ * correct to the second). Fixed targets: the descriptor's `diameterDeg`
+ * (e.g. M42 ≈ 1°, M13 ≈ 0.33°) or 0 for a point source.
+ *
+ * @param {string|object} target
+ * @param {Date|string|number} whenUtc
+ * @returns {number} apparent diameter in degrees
+ */
+export function apparentDiameterDeg(target, whenUtc) {
+  const t = normaliseTarget(target);
+  if (!t.body) return Number.isFinite(t.diameterDeg) ? t.diameterDeg : 0;
+  const rKm = BODY_RADIUS_KM[t.body];
+  if (!rKm) return 0;
+  const time = Astronomy.MakeTime(whenUtc instanceof Date ? whenUtc : new Date(whenUtc));
+  const v = Astronomy.GeoVector(bodyEnumOf(t.body), time, true);    // AU, aberration on
+  const distKm = Math.hypot(v.x, v.y, v.z) * (AU_M / 1000);
+  return 2 * Math.atan(rKm / distKm) * 180 / Math.PI;
 }
 
 /**

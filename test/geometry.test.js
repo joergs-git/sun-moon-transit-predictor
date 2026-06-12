@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   aircraftAzEl,
   angularSeparationDeg,
+  apparentDiameterDeg,
   bodyAzEl,
   isObservable,
   moonAzEl,
   OBSERVABILITY_MIN_ELEVATION_DEG,
   sunAzEl,
+  targetAzEl,
 } from '../src/geometry.js';
 
 const RHEINE = {
@@ -139,5 +141,70 @@ describe('angularSeparationDeg', () => {
     const b = { azimuthDeg: 101, elevationDeg: 60, rangeM: null };
     // At el=60°, a 1° azimuth difference projects to 1° * cos(60°) = 0.5° on the sky.
     expect(angularSeparationDeg(a, b)).toBeCloseTo(0.5, 2);
+  });
+});
+
+// ── M83: arbitrary sky targets (planets + fixed RA/Dec) ─────────────────────
+describe('targetAzEl', () => {
+  const when = '2026-06-12T22:00:00Z';
+
+  it('matches bodyAzEl for an ephemeris body given as a string or {body}', () => {
+    const viaBody = bodyAzEl(RHEINE, 'Jupiter', when);
+    const viaStr = targetAzEl(RHEINE, 'Jupiter', when);
+    const viaObj = targetAzEl(RHEINE, { body: 'Jupiter' }, when);
+    expect(viaStr.azimuthDeg).toBeCloseTo(viaBody.azimuthDeg, 9);
+    expect(viaStr.elevationDeg).toBeCloseTo(viaBody.elevationDeg, 9);
+    expect(viaObj.azimuthDeg).toBeCloseTo(viaBody.azimuthDeg, 9);
+  });
+
+  it('places a planet in a plausible Az/El and finite range', () => {
+    const j = targetAzEl(RHEINE, 'Jupiter', when);
+    expect(j.azimuthDeg).toBeGreaterThanOrEqual(0);
+    expect(j.azimuthDeg).toBeLessThan(360);
+    expect(j.elevationDeg).toBeGreaterThanOrEqual(-90);
+    expect(j.elevationDeg).toBeLessThanOrEqual(90);
+    expect(Number.isFinite(j.rangeM)).toBe(true);
+  });
+
+  it('resolves a fixed RA/Dec target (Vega) and applies precession (≠ raw J2000)', () => {
+    // Vega J2000: RA 18.61565 h, Dec +38.78369°. targetAzEl registers it as a
+    // star so the engine precesses it to apparent-of-date before Az/El — the
+    // result must differ from feeding raw J2000 RA/Dec straight to Horizon.
+    const vega = targetAzEl(RHEINE, { raHours: 18.61565, decDeg: 38.78369, distLy: 25 }, when);
+    expect(vega.elevationDeg).toBeGreaterThan(0);        // up over Rheine at 22 UTC in June
+    expect(vega.azimuthDeg).toBeGreaterThanOrEqual(0);
+    expect(vega.azimuthDeg).toBeLessThan(360);
+    expect(vega.rangeM).toBeNull();                      // distance irrelevant for a star
+  });
+
+  it('throws on an invalid target descriptor', () => {
+    expect(() => targetAzEl(RHEINE, { foo: 1 }, when)).toThrow(/Invalid sky target/);
+  });
+});
+
+describe('apparentDiameterDeg', () => {
+  const when = '2026-06-12T12:00:00Z';
+
+  it('gives the Sun ≈ 0.52–0.54° and the Moon ≈ 0.5°', () => {
+    // The Sun's apparent diameter swings ~0.524° (aphelion, early July) to
+    // ~0.542° (perihelion, early Jan) — June 12 is near the aphelion minimum.
+    const sun = apparentDiameterDeg('Sun', when);
+    expect(sun).toBeGreaterThan(0.52);
+    expect(sun).toBeLessThan(0.55);
+    // The Moon's distance varies ~0.49–0.56°; assert the right ballpark.
+    expect(apparentDiameterDeg('Moon', when)).toBeGreaterThan(0.45);
+    expect(apparentDiameterDeg('Moon', when)).toBeLessThan(0.58);
+  });
+
+  it('gives Jupiter a small-arcsecond disc (tens of arcseconds)', () => {
+    const deg = apparentDiameterDeg('Jupiter', when);
+    const arcsec = deg * 3600;
+    expect(arcsec).toBeGreaterThan(25);    // Jupiter ranges ~30–50″
+    expect(arcsec).toBeLessThan(60);
+  });
+
+  it('uses the descriptor diameter for a fixed DSO, 0 for a point source', () => {
+    expect(apparentDiameterDeg({ raHours: 5.588, decDeg: -5.391, diameterDeg: 1.0 }, when)).toBe(1.0);
+    expect(apparentDiameterDeg({ raHours: 18.6, decDeg: 38.8 }, when)).toBe(0);
   });
 });
