@@ -825,8 +825,11 @@ export async function runService({
           tag: s.tag,
           name: s.name,
           minElevationDeg: skyCfg.minElevationDeg ?? 20,
-          requireSunlit: skyCfg.requireSunlit !== false,
-          requireDarkSky: skyCfg.requireDarkSky !== false,
+          // ALWAYS required — a DSO/star/planet is never imageable in daylight
+          // and a satellite in Earth's shadow is invisible. Not user-toggleable
+          // (a stale `false` would otherwise leak nonsensical daytime events).
+          requireSunlit: true,
+          requireDarkSky: true,
           sunBelowDeg: skyCfg.sunBelowDeg ?? -6,
           coarseStepMs: 10_000,
           coarseGateDeg: 14,
@@ -2551,8 +2554,8 @@ export async function runService({
             tag: s.tag,
             name: s.name,
             minElevationDeg: skyCfg.minElevationDeg ?? 20,
-            requireSunlit: skyCfg.requireSunlit !== false,
-            requireDarkSky: skyCfg.requireDarkSky !== false,
+            requireSunlit: true,      // always — see the recompute path above
+            requireDarkSky: true,
             sunBelowDeg: skyCfg.sunBelowDeg ?? -6,
           }));
         } catch (e) {

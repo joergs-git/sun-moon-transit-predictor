@@ -864,14 +864,8 @@
             <small class="field-hint">How many days ahead the plan looks. 1–14 (default 7). Far-out rows are placeholders that sharpen as the TLE refreshes.</small></label>
           <label>Min elevation °<input name="skyTargets.minElevationDeg" type="number" step="1" min="0" max="90" placeholder="20">
             <small class="field-hint">Ignore passes lower than this — poor seeing / horizon obstructions. Default 20°.</small></label>
-          <label class="checkbox-row">
-            <input name="skyTargets.requireSunlit" type="checkbox"> Require sunlit satellite
-            <small class="field-hint">Only count passes where the satellite is lit (not in Earth's shadow) — otherwise it's an invisible dot. Leave on.</small></label>
-          <label class="checkbox-row">
-            <input name="skyTargets.requireDarkSky" type="checkbox"> Require dark sky
-            <small class="field-hint">Only after dusk (Sun below the angle set below). With both gates on, these events naturally cluster in twilight.</small></label>
           <label>Sun below °<input name="skyTargets.sunBelowDeg" type="number" step="1" min="-18" max="10" placeholder="-6">
-            <small class="field-hint">"Dark enough" threshold for the dark-sky gate. −6 = civil dusk (default); −12 = nautical, −18 = astronomical.</small></label>
+            <small class="field-hint"><b>Always</b> required: the satellite must be sunlit AND the sky dark — a DSO/star/planet is never imageable in daylight, so daytime events are never shown. This sets <b>how</b> dark: −6° = civil dusk (default); −12° = nautical, −18° = astronomical (darker = better for faint objects, but a narrower sunlit-satellite window).</small></label>
           <label>Re-slew gap (min)<input name="skyTargets.reslewMinGapMin" type="number" step="1" min="0" max="120" placeholder="5">
             <small class="field-hint">Two events closer together than this can't both be caught by one telescope → flagged ⚠ in the plan. Default 5 min.</small></label>
           <div class="field-group-label">Plan alerts (Pushover)</div>
