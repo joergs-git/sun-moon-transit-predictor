@@ -119,6 +119,30 @@
     </table>
   </section>
 
+  <!-- Twilight aircraft × bright-planet appulses (v0.38.0). Hidden unless the
+       feature is on AND there's an upcoming aircraft-near-planet event. -->
+  <section id="appulse-section" class="appulse-section" hidden>
+    <h2>📸 Twilight appulses <span class="appulse-sub" id="appulse-sub"></span></h2>
+    <p class="hint">
+      An aircraft passing near a <b>bright planet</b> with both inside your FOV,
+      during twilight — a wide-field "plane next to Venus/Jupiter" shot. Uses
+      your real telescope FOV (loosened a bit); a point source in a small field,
+      so it's a bit of a gamble. Not a disc transit.
+    </p>
+    <table id="appulse" class="appulse-table">
+      <thead>
+        <tr>
+          <th title="Predicted closest-approach time">When</th>
+          <th title="IATA flight / ADS-B callsign">Flight</th>
+          <th title="The bright planet sharing the frame">Planet</th>
+          <th title="Minimum angular separation aircraft ↔ planet">Sep</th>
+          <th title="Aircraft elevation at closest approach">Plane&nbsp;El</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
   <div class="top-row">
     <div class="top-left">
       <!-- LEFT column (v0.30.41): Sky now reads first, then the FOV
@@ -807,6 +831,22 @@
             <small class="field-hint">Partial-refresh cadence — the fast, flash-free text update. <b>Default 2 s.</b> Floor 1 s (the panel physically needs ~0.3–0.5 s per partial refresh).</small></label>
           <label>Long refresh (s)<input name="display.longRefreshS" type="number" step="1" min="5" placeholder="60">
             <small class="field-hint">Full-refresh cadence — the periodic brief flash that clears e-paper ghosting. <b>Default 60 s.</b> Must be ≥ Quick refresh.</small></label>
+        </fieldset>
+
+        <fieldset data-tab="scopes">
+          <legend>Twilight appulses (aircraft × bright planet)</legend>
+          <small class="field-hint">Detect an aircraft passing near a <b>bright planet</b> (Venus/Jupiter/Saturn/Mars) with both inside your FOV, during twilight — a wide-field "plane next to the evening star" shot, shown in the <b>Twilight appulses</b> panel. Uses your real telescope FOV (from Telescope &amp; sensor), loosened by the factor below. Off by default.</small>
+          <label class="checkbox-row">
+            <input name="appulse.enabled" type="checkbox"> Enabled
+            <small class="field-hint">Master switch. Only runs during twilight (Sun within the band below).</small></label>
+          <label>FOV loosen ×<input name="appulse.fovLoosenFactor" type="number" step="0.5" min="1" max="10" placeholder="2">
+            <small class="field-hint">Match threshold = your FOV half-diagonal × this. 2 = a bit looser than the bare FOV (calc tolerances make it a gamble anyway). Default 2.</small></label>
+          <label>Twilight Sun max °<input name="appulse.sunElevMaxDeg" type="number" step="1" min="-18" max="5" placeholder="-2">
+            <small class="field-hint">Only when the Sun is at most this high — dark enough for the planet. −2° (default) = late civil dusk.</small></label>
+          <label>Twilight Sun min °<input name="appulse.sunElevMinDeg" type="number" step="1" min="-24" max="0" placeholder="-14">
+            <small class="field-hint">…and at least this high — so the aircraft is still lit/visible. Below ~−14° the plane is a dark shape with only nav lights. Default −14°.</small></label>
+          <label>Min planet elevation °<input name="appulse.minPlanetElevationDeg" type="number" step="1" min="0" max="90" placeholder="10">
+            <small class="field-hint">Ignore planets lower than this. Default 10°.</small></label>
         </fieldset>
 
         <fieldset data-tab="sky">

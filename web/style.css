@@ -1332,3 +1332,11 @@ a.acstats-label.hex-link:hover { text-decoration: underline; }
 .catalog-row input[type="checkbox"] { width: 14px; height: 14px; justify-self: center; }
 .catalog-row .cat-remove { padding: 2px 6px; }
 #catalog-add { margin-top: 8px; }
+
+/* ===== Twilight appulses (aircraft × bright planet, v0.38.0) ============= */
+.appulse-section { margin: 14px 0; }
+.appulse-section h2 { display: flex; align-items: baseline; gap: 10px; }
+.appulse-sub { font-size: 11px; font-weight: 400; color: var(--muted); text-transform: none; letter-spacing: 0; }
+.appulse-table { font-size: 12.5px; }
+.appulse-table td { padding: 5px 10px; }
+.appulse-planet { color: var(--accent); white-space: nowrap; }

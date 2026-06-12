@@ -335,6 +335,21 @@ export const DEFAULT_CONFIG = {
   // restarts. A visit = a fresh sighting ≥ gapMs after the last one.
   sightings: { enabled: true, gapMs: 1_800_000, flushMs: 300_000 },
   routes: { enabled: true, ttlMs: 3600_000, negativeTtlMs: 300_000 },
+  // Twilight aircraft × bright-planet appulses (v0.38.0): a RELAXED "an aircraft
+  // and a bright planet share your FOV during twilight" detection — not a tight
+  // disc transit. Off by default. Reuses the tracker against the bright planets
+  // with a threshold based on YOUR rig's FOV (no scope change needed), gated to
+  // twilight (planet visible + aircraft still lit). A bit of a gamble (point
+  // source, small field) — surfaced in its own panel, separate from transits.
+  appulse: {
+    enabled: false,
+    planets: ['Venus', 'Jupiter', 'Saturn', 'Mars'],
+    fovLoosenFactor: 2,        // threshold = rig FOV half-diagonal × this (keeps your real FOV, just looser)
+    fallbackThresholdDeg: 1.0, // used when optics/FOV are unknown
+    sunElevMaxDeg: -2,         // twilight: Sun at most this high (dark enough for the planet)
+    sunElevMinDeg: -14,        // …and at least this high (aircraft still lit / visible)
+    minPlanetElevationDeg: 10,
+  },
   // AirNav On-Demand API v2 (optional; off until a token is set). The
   // token lives ONLY here / in service.json (masked in /api/config) — the
   // browser calls our /api/acinfo proxy, never AirNav directly. Every
@@ -1185,6 +1200,14 @@ export async function runService({
           hasToken: Boolean(t.token ?? config.sharpcap.token),
         })),
       },
+      // Twilight aircraft × bright-planet appulse knobs (v0.38.0).
+      appulse: {
+        enabled: Boolean(config.appulse?.enabled),
+        fovLoosenFactor: config.appulse?.fovLoosenFactor ?? 2,
+        sunElevMaxDeg: config.appulse?.sunElevMaxDeg ?? -2,
+        sunElevMinDeg: config.appulse?.sunElevMinDeg ?? -14,
+        minPlanetElevationDeg: config.appulse?.minPlanetElevationDeg ?? 10,
+      },
       // E-paper display client config (no secrets). The Python client reads
       // this block from /api/config and configures itself live from the UI.
       display: { ...config.display },
@@ -1550,6 +1573,30 @@ export async function runService({
       applied.skyTargets = { ...next, objects: undefined };
     }
 
+    if (patch.appulse && typeof patch.appulse === 'object') {
+      const a = patch.appulse;
+      const next = { ...config.appulse };
+      if (typeof a.enabled === 'boolean') next.enabled = a.enabled;
+      const NUM = {
+        fovLoosenFactor: [1, 10],
+        sunElevMaxDeg: [-18, 5],
+        sunElevMinDeg: [-24, 0],
+        minPlanetElevationDeg: [0, 90],
+      };
+      for (const [k, [lo, hi]] of Object.entries(NUM)) {
+        if (k in a) {
+          const v = Number(a[k]);
+          if (!Number.isFinite(v) || v < lo || v > hi) throw new Error(`appulse.${k} must be a number ${lo}–${hi}`);
+          next[k] = v;
+        }
+      }
+      if (next.sunElevMinDeg > next.sunElevMaxDeg) {
+        throw new Error('appulse.sunElevMinDeg must be ≤ sunElevMaxDeg (it is the darker bound)');
+      }
+      config.appulse = next;
+      applied.appulse = { ...next };
+    }
+
     if (patch.airnav && typeof patch.airnav === 'object') {
       const a = patch.airnav;
       // Never accept the masked placeholder back as the real token.
@@ -1712,6 +1759,7 @@ export async function runService({
           // other iss fields keep their defaults / any existing service.json
           // overrides. Written only when the UI actually edited it.
           iss:           { ...(existing.iss ?? {}), skyTargets: config.iss?.skyTargets },
+          appulse:       { ...(existing.appulse ?? {}), ...config.appulse },
         };
         await fsp.writeFile(configPaths.service, JSON.stringify(merged, null, 2), 'utf8');
       } catch (e) {
@@ -1960,6 +2008,66 @@ export async function runService({
       return { ...c, route };
     }));
     state.candidates = enriched;
+
+    // ── Twilight aircraft × bright-planet appulses (v0.38.0) ──────────────────
+    // Relaxed "aircraft + a bright planet in the same FOV during twilight" — not
+    // a disc transit. Reuses findTransits with the bright planets as bodies and
+    // a FOV-based threshold; kept separate from the Sun/Moon transit lifecycle.
+    state.appulses = [];
+    const apCfg = config.appulse;
+    const sunElNow = state.bodies?.Sun?.elevationDeg ?? null;
+    if (apCfg?.enabled && Number.isFinite(sunElNow)
+        && sunElNow <= (apCfg.sunElevMaxDeg ?? -2)
+        && sunElNow >= (apCfg.sunElevMinDeg ?? -14)) {
+      const minPlanetEl = apCfg.minPlanetElevationDeg ?? 10;
+      const planetsUp = (apCfg.planets ?? []).filter((p) => {
+        try { return bodyAzEl(observer, p, new Date(nowMs)).elevationDeg >= minPlanetEl; }
+        catch { return false; }
+      });
+      if (planetsUp.length) {
+        // Threshold from the rig FOV (half-diagonal × loosen factor) so the user
+        // keeps their real telescope/FOV; fall back to a fixed angle if unknown.
+        const f = Number(config.optics?.telescopeFocalMm);
+        const sw = Number(config.optics?.sensorWmm);
+        const sh = Number(config.optics?.sensorHmm);
+        let thr = apCfg.fallbackThresholdDeg ?? 1.0;
+        if (f > 0 && sw > 0 && sh > 0) {
+          const fovDeg = (mm) => 2 * Math.atan(mm / (2 * f)) * 180 / Math.PI;
+          thr = 0.5 * Math.hypot(fovDeg(sw), fovDeg(sh)) * (apCfg.fovLoosenFactor ?? 2);
+        }
+        let apCands = [];
+        try {
+          apCands = findTransits(observer, aircraft, nowMs, {
+            ...trackerOpts,
+            bodies: planetsUp,
+            thresholdDeg: thr,
+            looseThresholdDeg: thr,
+            minBodyElevationDeg: minPlanetEl,
+            onSkip: undefined,   // don't spam the tracker-skip log for the appulse pass
+          });
+        } catch (e) {
+          logger.warn?.('appulse pass failed:', e?.message ?? e);
+        }
+        state.appulses = apCands
+          .filter((c) => c.closestApproachAtMs >= nowMs - 30_000)
+          .sort((a, b) => a.closestApproachAtMs - b.closestApproachAtMs)
+          .slice(0, 12)
+          .map((c) => ({
+            icao: c.icao,
+            flight: c.callsign ?? null,
+            planet: c.body,
+            atMs: c.closestApproachAtMs,
+            sepDeg: c.closestApproachSepDeg,
+            aircraftElevationDeg: c.aircraftAtClosest?.elevationDeg ?? null,
+            altMmsl: c.aircraft?.altMmsl ?? null,
+          }));
+      }
+    }
+    state.appulseInfo = {
+      enabled: Boolean(apCfg?.enabled),
+      sunElevDeg: sunElNow,
+      count: state.appulses.length,
+    };
 
     // ── Total live trackings ────────────────────────────────────────────────
     // Per-tick snapshot of EVERY tracked aircraft's current angular distance

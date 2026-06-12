@@ -452,6 +452,36 @@ $('#skyplan-nextever')?.addEventListener('change', (ev) => {
   }
 });
 
+// Twilight aircraft × bright-planet appulses. Hidden unless enabled AND there's
+// an upcoming event (the feature only computes during twilight anyway).
+function renderAppulses(state) {
+  const section = $('#appulse-section');
+  if (!section) return;
+  const list = Array.isArray(state.appulses) ? state.appulses : [];
+  if (!state.appulseInfo?.enabled || !list.length) { section.hidden = true; return; }
+  section.hidden = false;
+  const sub = $('#appulse-sub');
+  if (sub) {
+    const sunEl = state.appulseInfo.sunElevDeg;
+    sub.textContent = `${list.length} · twilight (Sun ${sunEl != null ? Math.round(sunEl) + '°' : '—'})`;
+  }
+  const tbody = $('#appulse tbody');
+  tbody.innerHTML = '';
+  for (const a of list) {
+    const sep = a.sepDeg != null ? `${a.sepDeg.toFixed(2)}°` : '—';
+    const el = a.aircraftElevationDeg != null ? `${Math.round(a.aircraftElevationDeg)}°` : '—';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${fmtDateTime(a.atMs)}</td>
+      <td>${a.flight ?? a.icao ?? '—'}</td>
+      <td class="appulse-planet">🪐 ${a.planet ?? '—'}</td>
+      <td>${sep}</td>
+      <td>${el}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
 const STATUS_LABELS = {
   planned:   { icon: '📅', label: 'planned' },
   radio:     { icon: '📡', label: 'radio' },
@@ -1051,6 +1081,7 @@ async function pollState() {
     renderSatellitePasses(state);
     renderActiveTarget(state);
     renderSkyPlan(state);
+    renderAppulses(state);
     renderTracking(state);
     renderTotalLive(state);
     renderDetectFunnel(state.detectStats);
