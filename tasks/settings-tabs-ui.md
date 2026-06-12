@@ -28,8 +28,8 @@ kein seitenlanges Scrollen mehr.
 
 | Tab | Enthält (heutige Fieldsets) |
 |---|---|
-| **General** | Observer · Telescope &amp; sensor (FOV-Optik) · Tracker |
-| **Scopes** | SharpCap capture trigger (Global defaults · Main rig · Capture rigs) |
+| **General** | Observer · Tracker |
+| **Scopes** | Telescope &amp; sensor (FOV-Optik) · SharpCap capture trigger (Global defaults · Main rig · Capture rigs) |
 | **Pushover** | Pushover |
 | **Sounds** | Audio / Buzzer (alle Signal-Gruppen) |
 | **E-paper** | E-paper display |
@@ -109,8 +109,9 @@ solange jeder Input
       springt bei Validierungsfehler auf den Tab des Feldes + fokussiert es.
 - [x] `style.css`: `.settings-tablist` (sticky), `.settings-tab`; `auto-fit`-Grid
       blendet versteckte Fieldsets aus und füllt Einzel-Tab voll, General 2-spaltig.
-- [x] Smoke-Test: HTML serviert mit 6 Tabs + 8 zugeordneten Fieldsets (general=3,
-      Rest je 1), keine `settings-col`-Reste; name-basiertes Save/Load unverändert;
+- [x] Smoke-Test: HTML serviert mit 6 Tabs + 8 zugeordneten Fieldsets (general=2:
+      Observer+Tracker, scopes=2: Telescope+SharpCap, Rest je 1), keine
+      `settings-col`-Reste; name-basiertes Save/Load unverändert;
       Buzzer-/SharpCap-Test + „+ Add rig" hängen an IDs (unberührt).
 - [x] MILESTONES: M82 (Settings-Tabs, reiner View-Umbau, kein Schema-Change).
 
