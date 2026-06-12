@@ -40,6 +40,7 @@ import {
   loadIssTle, predictIssTransits, predictSkyTargetTransits, nextIssVisiblePass,
 } from './iss.js';
 import { buildSkyTargetPlan } from './skyplan.js';
+import { DEFAULT_SKY_TARGETS } from './skycatalog.js';
 
 export const DEFAULT_CONFIG = {
   adsb: {
@@ -308,24 +309,12 @@ export const DEFAULT_CONFIG = {
       sunBelowDeg: -6,            // "dark enough": Sun below civil dusk
       reslewMinGapMin: 5,         // two events closer than this can't share one scope → conflict flag
       // FOV box per target is taken from the rig optics (config.optics: focal
-      // length + sensor) unless an object sets fovWidthDeg/fovHeightDeg. A
-      // curated starter catalogue (bright stars, a few Messier, the bright
-      // planets); RA/Dec are J2000 (the engine precesses them). Add your own by
-      // RA/Dec (J2000) or a planet `body`; set `enabled: false` to skip one.
-      objects: [
-        { id: 'vega',     name: 'Vega',           raHours: 18.6156, decDeg: 38.7837, distLy: 25 },
-        { id: 'capella',  name: 'Capella',        raHours: 5.2781,  decDeg: 45.9980, distLy: 43 },
-        { id: 'arcturus', name: 'Arcturus',       raHours: 14.2610, decDeg: 19.1825, distLy: 37 },
-        { id: 'altair',   name: 'Altair',         raHours: 19.8464, decDeg: 8.8683,  distLy: 17 },
-        { id: 'deneb',    name: 'Deneb',          raHours: 20.6905, decDeg: 45.2803, distLy: 1400 },
-        { id: 'm42',      name: 'M42 (Orion)',    raHours: 5.5881,  decDeg: -5.3911, diameterDeg: 1.0 },
-        { id: 'm31',      name: 'M31 (Andromeda)', raHours: 0.7123, decDeg: 41.2690, diameterDeg: 3.0 },
-        { id: 'm13',      name: 'M13 (Hercules)', raHours: 16.6949, decDeg: 36.4613, diameterDeg: 0.33 },
-        { id: 'm45',      name: 'M45 (Pleiades)', raHours: 3.7833,  decDeg: 24.1167, diameterDeg: 2.0 },
-        { id: 'jupiter',  name: 'Jupiter',        body: 'Jupiter' },
-        { id: 'saturn',   name: 'Saturn',         body: 'Saturn' },
-        { id: 'mars',     name: 'Mars',           body: 'Mars' },
-      ],
+      // length + sensor) unless an object sets fovWidthDeg/fovHeightDeg. The
+      // catalogue (brightest stars + largest/brightest DSO across BOTH
+      // hemispheres + the bright planets) lives in src/skycatalog.js; RA/Dec
+      // are J2000 (the engine precesses them). Add your own by RA/Dec or a
+      // planet `body`; set `enabled: false` on an entry to skip it.
+      objects: DEFAULT_SKY_TARGETS,
     },
   },
   // Persistent "how often did it come by" tally over ALL detected ADS-B
