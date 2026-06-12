@@ -17,6 +17,9 @@
         <span>If you like it —
         <a href="https://buymeacoffee.com/joergsflow" target="_blank" rel="noopener noreferrer" title="Support the project with a coffee (opens in a new tab).">☕ buy me a coffee</a></span>
       </div>
+      <!-- Sky now (Sun/Moon Az·El) — compact one-liner; the old table block was
+           removed and folded in here. -->
+      <div id="sky-line" class="sky-line" title="Current Sun and Moon position for the observer — azimuth (from N) / elevation. ✓/✗ = above/below the transit-detector's elevation floor."></div>
     </div>
     <div class="header-right">
       <div class="ext-links">
@@ -91,28 +94,26 @@
        sky-target pass over the next planHorizonDays, time-sorted, with a
        confidence rating. Hidden until iss.skyTargets is enabled AND has rows. -->
   <section id="skyplan-section" class="skyplan-section" hidden>
-    <h2>🛰 Sky-target plan <span class="skyplan-sub" id="skyplan-sub"></span>
-      <label class="skyplan-toggle" title="Horizon = every pass in the next planHorizonDays (computed continuously). Next opportunity = an ON-DEMAND ~90-day scan for the SOONEST pass per object×satellite, so a chance still weeks out shows up. Runs only while ticked (a few-second scan); off again on reload so it never costs idle resources.">
+    <h2>🛰 Sky plan <span class="skyplan-sub" id="skyplan-sub"></span>
+      <label class="skyplan-toggle" title="Horizon = every sky-target pass in the next planHorizonDays (computed continuously). Next opportunity = an ON-DEMAND ~90-day scan for the SOONEST sky-target pass per object×satellite, so a chance still weeks out shows up. Runs only while ticked; off again on reload. (The satellite visible passes + Sun/Moon transits always show.)">
         <input type="checkbox" id="skyplan-nextever"> next opportunity
       </label>
     </h2>
     <p class="hint">
-      Predicted satellite (ISS / HST / Tiangong) passes through your framed
-      deep-sky / star / planet fields — for the "shoot the satellite, composite
-      with a separate background stack" workflow. Each row's confidence sharpens
-      as the event nears and the TLE refreshes; far-out rows are placeholders.
+      One time-sorted timeline of every upcoming ISS / Hubble / Tiangong event:
+      next naked-eye <b>visible pass</b>, next <b>Sun/Moon transit</b>, and —
+      when Sky targets is enabled — passes through your framed deep-sky / star /
+      planet fields. Confidence sharpens as each event nears and the TLE refreshes.
     </p>
     <table id="skyplan" class="skyplan-table">
       <thead>
         <tr>
-          <th title="Predicted closest-approach time. Shows the weekday + date when it's not today.">When</th>
-          <th title="The framed sky target the satellite crosses.">Object</th>
+          <th title="Predicted time. Shows the weekday + date when it's not today.">When</th>
+          <th title="What the satellite crosses / passes: Sun, Moon, a framed sky target, or — for a naked-eye visible pass — the sky.">Object</th>
           <th title="Which satellite — ISS, Hubble (HST) or Tiangong (CSS).">Sat</th>
-          <th title="transit = the satellite passes through the object/disc itself; field = it crosses the framed FOV near the object.">Type</th>
-          <th title="Satellite elevation above the horizon at closest approach.">El</th>
-          <th title="Closest approach to the field centre (arcminutes, or degrees if wide).">Miss</th>
-          <th title="How long the satellite stays inside the framed field.">In&nbsp;field</th>
-          <th title="Prediction confidence from the TLE age at the event: 🟢 sure (&lt;1 d) · 🟡 medium (1–3 d) · 🟠 rough (3–6 d) · 🔴 uncertain (&gt;6 d). The ISS is capped at 🟡 beyond ~2 d (reboost risk).">Conf.</th>
+          <th title="visible = naked-eye overhead pass · transit = through the Sun/Moon disc or the object itself · field = crosses your framed FOV near the object.">Type</th>
+          <th title="Visible pass: rise→set compass + max elevation + duration. Transit/field: separation/miss + satellite elevation + time in field.">Detail</th>
+          <th title="Prediction confidence from the TLE age at the event: 🟢 sure (&lt;1 d) · 🟡 medium (1–3 d) · 🟠 rough (3–6 d) · 🔴 uncertain (&gt;6 d). ISS capped at 🟡 beyond ~2 d (reboost risk).">Conf.</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -145,27 +146,9 @@
 
   <div class="top-row">
     <div class="top-left">
-      <!-- LEFT column (v0.30.41): Sky now reads first, then the FOV
-           preview sketch (dominant visual), then the plan view + side
-           view geometry cells directly under it. -->
-      <section id="sky-section">
-        <h2>Sky now</h2>
-        <table id="sky">
-          <thead>
-            <tr>
-              <th title="Celestial body — Sun or Moon, evaluated for the configured observer location.">Body</th>
-              <th title="Azimuth in degrees, measured clockwise from true north (0° = N, 90° = E, 180° = S, 270° = W).">Az</th>
-              <th title="Elevation in degrees above the local horizon (refraction-corrected).">El</th>
-              <th title="✓ when the body is above the elevation floor the transit detector currently uses. Default 20°, auto-widened down to the lowest enabled rig's minElevationDeg (floor 5°). Below the threshold, refraction residuals + obstructions make a transit unreliable.">Observable</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-        <!-- Per-satellite next-pass table (ISS / Tiangong / HST): next naked-eye
-             visible pass + next Sun/Moon disc transit. Offline SGP4 from the
-             TLEs; hidden until at least one satellite is active. -->
-        <div id="sat-passes" class="sat-passes" hidden></div>
-      </section>
+      <!-- LEFT column: the FOV preview now reads first (Sky now folded into the
+           header line; the per-satellite pass table folded into the Sky-target
+           plan above), then the plan/side view geometry cells. -->
       <section id="fov-section">
         <h2>
           FOV preview

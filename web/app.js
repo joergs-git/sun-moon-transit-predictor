@@ -278,20 +278,19 @@ function statsLabelLink(key, kind, tooltip) {
   return `<span class="acstats-label flight-cell" ${attr} title="${tip.trim()}">${up}</span>`;
 }
 
+// Sky now — Sun/Moon Az·El as a compact header one-liner (was a table block).
 function renderSky(state) {
-  const tbody = $('#sky tbody');
-  tbody.innerHTML = '';
-  if (!state.bodies) return;
+  const line = $('#sky-line');
+  if (!line) return;
+  if (!state.bodies) { line.innerHTML = ''; return; }
+  const parts = [];
   for (const [name, body] of Object.entries(state.bodies)) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td class="body-${name}">${name}</td>
-      <td>${body.azimuthDeg.toFixed(1)}°</td>
-      <td>${body.elevationDeg.toFixed(1)}°</td>
-      <td>${body.observable ? '✓' : '—'}</td>
-    `;
-    tbody.appendChild(tr);
+    if (!body) continue;
+    const icon = name === 'Sun' ? '☀' : name === 'Moon' ? '🌙' : name;
+    const ok = body.observable ? '✓' : '✗';
+    parts.push(`<span class="body-${name}">${icon} ${body.azimuthDeg.toFixed(0)}°/${body.elevationDeg.toFixed(0)}° <span class="sky-ok">${ok}</span></span>`);
   }
+  line.innerHTML = parts.join('<span class="sky-sep"> · </span>');
 }
 
 // Sky-target plan confidence badge (mirrors src/skyplan.js confidenceFor).
@@ -353,74 +352,119 @@ let lastSkyState = null;       // cached so the view toggle can re-render withou
 let nextOppData = null;        // { rows, scanDays, computedAtMs } from the on-demand long scan
 let nextOppLoading = false;
 
+const SKYPLAN_TYPE = { visible: 'visible', transit: 'transit', field: 'field' };
+
 function appendSkyPlanRow(tbody, r) {
-  const c = CONFIDENCE_BADGE[r.confidence] ?? { dot: '⚪', label: '—', tip: 'Confidence unknown (no TLE epoch).' };
-  const typeLabel = r.kind === 'transit' ? 'transit' : 'field';
-  const miss = r.missArcmin == null ? '—'
-    : (r.missArcmin >= 60 ? `${(r.missArcmin / 60).toFixed(2)}°` : `${Math.round(r.missArcmin)}′`);
-  const inField = r.timeInFieldMs ? `${(r.timeInFieldMs / 1000).toFixed(1)}s` : '—';
-  const el = r.elevationDeg == null ? '—' : `${Math.round(r.elevationDeg)}°`;
+  const typeLabel = SKYPLAN_TYPE[r.kind] ?? r.kind;
+  const c = r.confidence ? CONFIDENCE_BADGE[r.confidence] : null;
+  const conf = c ? `${c.dot} ${c.label}` : '—';
+  const confTip = c ? c.tip : 'Always-on prediction (next visible pass / next transit) — no confidence rating.';
   const conflict = r.conflictWithPrev
     ? ` <span class="skyplan-conflict" title="Only ${Math.round((r.conflictGapMs ?? 0) / 60000)} min after the previous event — one scope can't catch both.">⚠</span>`
     : '';
   const shadow = r.sunlit === false
     ? ' <span class="skyplan-shadow" title="Satellite in Earth\'s shadow at closest approach — not sunlit, so invisible.">🌑</span>'
     : '';
+  const objCell = r.kind === 'visible'
+    ? '<span class="skyplan-vis">naked-eye</span>'
+    : `${r.objectIcon ? r.objectIcon + ' ' : ''}${r.object ?? '—'}`;
   const tr = document.createElement('tr');
   tr.className = `skyplan-row conf-${r.confidence ?? 'none'}${r.conflictWithPrev ? ' has-conflict' : ''}`;
   tr.innerHTML = `
     <td class="skyplan-when">${fmtDateTime(r.atMs)}${conflict}</td>
-    <td class="skyplan-obj">${r.targetName ?? '—'}</td>
+    <td class="skyplan-obj">${objCell}</td>
     <td class="skyplan-sat">🛰 ${r.satTag ?? '?'}${shadow}</td>
     <td class="skyplan-type type-${typeLabel}">${typeLabel}</td>
-    <td>${el}</td>
-    <td>${miss}</td>
-    <td>${inField}</td>
-    <td class="skyplan-conf" title="${c.tip}">${c.dot} ${c.label}</td>
+    <td class="skyplan-detail">${r.detailHtml ?? '—'}</td>
+    <td class="skyplan-conf" title="${confTip}">${conf}</td>
   `;
   tbody.appendChild(tr);
 }
 
-// Render the sky-target plan. The panel shows whenever the feature is enabled
-// (so the "next opportunity" toggle is reachable). Two views: the per-tick
-// horizon plan, or the on-demand long scan (fetched only when ticked).
+// Build ONE time-sorted timeline: each satellite's always-on next visible pass +
+// next Sun/Moon transit (from state.iss / state.satellites), merged with the
+// sky-target (DSO) passes passed in.
+function unifiedPlanRows(state, dsoRows) {
+  const rows = [];
+  const sats = [];
+  if (state.iss?.active) sats.push({ tag: 'ISS', vp: state.iss.visiblePass, nt: state.iss.nextTransit });
+  for (const s of (state.satellites ?? [])) if (s.active) sats.push({ tag: s.tag, vp: s.visiblePass, nt: s.nextTransit });
+  for (const s of sats) {
+    const vp = s.vp;
+    if (vp && Number.isFinite(vp.startMs)) {
+      rows.push({
+        atMs: vp.startMs, satTag: s.tag, kind: 'visible',
+        detailHtml: `${azToCompass(vp.startAzDeg)}→${azToCompass(vp.endAzDeg)} · max ${vp.maxElevationDeg}° · ${vp.durationS}s`,
+        confidence: null,
+      });
+    }
+    const nt = s.nt;
+    if (nt && Number.isFinite(nt.atMs)) {
+      rows.push({
+        atMs: nt.atMs, satTag: s.tag, kind: 'transit',
+        object: nt.body, objectIcon: nt.body === 'Sun' ? '☀' : '🌙',
+        detailHtml: `sep ${fmtSep(nt.sepDeg)}${nt.tentative ? ' <span class="skyplan-tentative">· tentative</span>' : ''}`,
+        confidence: null,
+      });
+    }
+  }
+  for (const r of (dsoRows ?? [])) {
+    const miss = r.missArcmin == null ? '—'
+      : (r.missArcmin >= 60 ? `${(r.missArcmin / 60).toFixed(2)}°` : `${Math.round(r.missArcmin)}′`);
+    const parts = [`miss ${miss}`];
+    if (r.elevationDeg != null) parts.push(`el ${Math.round(r.elevationDeg)}°`);
+    if (r.timeInFieldMs) parts.push(`${(r.timeInFieldMs / 1000).toFixed(1)}s`);
+    rows.push({
+      atMs: r.atMs, satTag: r.satTag, kind: r.kind,
+      object: r.targetName, detailHtml: parts.join(' · '),
+      confidence: r.confidence, sunlit: r.sunlit,
+      conflictWithPrev: r.conflictWithPrev, conflictGapMs: r.conflictGapMs,
+    });
+  }
+  rows.sort((a, b) => a.atMs - b.atMs);
+  return rows;
+}
+
+// Render the unified Sky plan. Always shows the satellite visible-pass + Sun/Moon
+// transit rows (when a satellite is active); the sky-target (DSO) rows are added
+// when Sky targets is enabled — either the per-tick horizon plan, or the on-demand
+// long scan when "next opportunity" is ticked.
 function renderSkyPlan(state) {
   lastSkyState = state;
   const section = $('#skyplan-section');
   if (!section) return;
-  const meta = state.skyTargets;
-  if (!meta?.enabled) { section.hidden = true; return; }
-  section.hidden = false;
+  const meta = state.skyTargets ?? {};
   const nextEver = $('#skyplan-nextever')?.checked;
   const sub = $('#skyplan-sub');
   const tbody = $('#skyplan tbody');
+  // The "next opportunity" toggle only applies to the sky-target (DSO) scan.
+  const toggle = $('.skyplan-toggle');
+  if (toggle) toggle.style.display = meta.enabled ? '' : 'none';
 
-  if (nextEver) {
-    if (nextOppLoading) {
-      if (sub) sub.textContent = `computing… (${meta.nextOpportunityDays ?? 90} d scan)`;
-      tbody.innerHTML = `<tr class="empty"><td colspan="8">Scanning the next ${meta.nextOpportunityDays ?? 90} days for the soonest pass per object — a few seconds…</td></tr>`;
-      return;
-    }
-    const rows = nextOppData?.rows ?? [];
-    const days = nextOppData?.scanDays ?? meta.nextOpportunityDays ?? 90;
-    if (sub) sub.textContent = `soonest per object · scan ${days} d · ${rows.length} combo${rows.length === 1 ? '' : 's'}`;
-    tbody.innerHTML = '';
-    if (!rows.length) {
-      tbody.innerHTML = `<tr class="empty"><td colspan="8">No passes for any object in the next ${days} days at your location (southern-sky objects never rise here; short nights shrink the window).</td></tr>`;
-      return;
-    }
-    for (const r of rows) appendSkyPlanRow(tbody, r);
-    return;
+  let dsoRows = [];
+  let computing = false;
+  if (meta.enabled && nextEver) {
+    if (nextOppLoading) computing = true;
+    else dsoRows = nextOppData?.rows ?? [];
+  } else if (meta.enabled) {
+    dsoRows = Array.isArray(state.skyTargetPlan) ? state.skyTargetPlan : [];
   }
 
-  const plan = Array.isArray(state.skyTargetPlan) ? state.skyTargetPlan : [];
-  if (sub) sub.textContent = `${plan.length} pass${plan.length === 1 ? '' : 'es'} · next ${meta.planHorizonDays ?? 7} d · ${meta.objectCount ?? 0} targets`;
+  const rows = unifiedPlanRows(state, dsoRows);
+  if (!rows.length && !computing) { section.hidden = true; return; }
+  section.hidden = false;
+
+  const dsoNote = meta.enabled
+    ? (nextEver ? `sky-targets: soonest/obj, ${meta.nextOpportunityDays ?? 90} d` : `sky-targets: next ${meta.planHorizonDays ?? 7} d`)
+    : 'sky-targets off';
+  if (sub) sub.textContent = computing ? `computing ${meta.nextOpportunityDays ?? 90} d scan…` : `${rows.length} event${rows.length === 1 ? '' : 's'} · ${dsoNote}`;
+
   tbody.innerHTML = '';
-  if (!plan.length) {
-    tbody.innerHTML = `<tr class="empty"><td colspan="8">No passes in the next ${meta.planHorizonDays ?? 7} days — tick “next opportunity” to scan ${meta.nextOpportunityDays ?? 90} days for when each object's chance first comes.</td></tr>`;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr class="empty"><td colspan="6">No upcoming satellite events.</td></tr>';
     return;
   }
-  for (const r of plan) appendSkyPlanRow(tbody, r);
+  for (const r of rows) appendSkyPlanRow(tbody, r);
 }
 
 // On-demand long scan: ticking "next opportunity" fires it (default OFF on every
@@ -988,50 +1032,6 @@ function fmtWhenAbs(ms) {
 
 // Two ISS lines under the Sky-now table: the next naked-eye visible pass
 // and the next Sun/Moon disc transit — both shown even if weeks away.
-// The whole block hides only when the ISS feature is inactive (no TLE).
-// Per-satellite next-pass table (ISS · Tiangong · HST): next naked-eye visible
-// pass + next Sun/Moon disc transit, one column per satellite. Replaces the old
-// ISS-only two-liner. Hidden until at least one satellite has a loaded TLE.
-function renderSatellitePasses(state) {
-  const el = $('#sat-passes');
-  if (!el) return;
-  const byTag = {};
-  if (state.iss?.active) {
-    byTag.ISS = { visiblePass: state.iss.visiblePass, nextTransit: state.iss.nextTransit };
-  }
-  for (const s of (state.satellites ?? [])) {
-    if (s.active) byTag[s.tag] = { visiblePass: s.visiblePass, nextTransit: s.nextTransit };
-  }
-  // Column order requested by the user: ISS, Tiangong (CSS), HST.
-  const order = [['ISS', 'ISS'], ['CSS', 'Tiangong'], ['HST', 'HST']].filter(([tag]) => byTag[tag]);
-  if (!order.length) { el.hidden = true; el.innerHTML = ''; return; }
-  el.hidden = false;
-
-  const visCell = (s) => {
-    const p = s?.visiblePass;
-    if (!p) return '<span class="sat-none">—</span>';
-    return `${fmtWhenAbs(p.startMs)}<br><span class="sat-sub">${azToCompass(p.startAzDeg)}→${azToCompass(p.endAzDeg)} · max ${p.maxElevationDeg}° · ${p.durationS}s</span>`;
-  };
-  const transitCell = (s) => {
-    const t = s?.nextTransit;
-    if (!t) return '<span class="sat-none">—</span>';
-    const icon = t.body === 'Sun' ? '☀' : '🌙';
-    return `${icon} ${fmtWhenAbs(t.atMs)}<br><span class="sat-sub">sep ${fmtSep(t.sepDeg)}${t.tentative ? ' · tentative' : ''}</span>`;
-  };
-
-  const head = order.map(([, label]) => `<th>🛰 ${label}</th>`).join('');
-  const visRow = order.map(([tag]) => `<td>${visCell(byTag[tag])}</td>`).join('');
-  const transitRow = order.map(([tag]) => `<td>${transitCell(byTag[tag])}</td>`).join('');
-  el.innerHTML = `
-    <table class="sat-pass-table">
-      <thead><tr><th></th>${head}</tr></thead>
-      <tbody>
-        <tr><th class="sat-row-label" title="Next naked-eye visible pass: satellite above 20°, sky dark (Sun below −6°), satellite sunlit. (Geometry only — HST is faint near the naked-eye limit.)">Next visible pass</th>${visRow}</tr>
-        <tr><th class="sat-row-label" title="Next crossing of the Sun or Moon disc for this site. Offline SGP4 prediction; 'tentative' = beyond the trustworthy window, refines with each daily TLE.">Next ☀/🌙 transit</th>${transitRow}</tr>
-      </tbody>
-    </table>`;
-}
-
 // "Total live trackings" — single sorted-by-SEP table of EVERY aircraft in
 // dump1090 range, with each one's current angular distance to the nearest
 // observable body. v0.30.28: ALWAYS rendered at the top of the right
@@ -1083,7 +1083,6 @@ async function pollState() {
     // markers reflect the latest tick.
     sharpcapArmedLog = Array.isArray(state.sharpcap?.armed) ? state.sharpcap.armed : [];
     renderSky(state);
-    renderSatellitePasses(state);
     renderActiveTarget(state);
     renderSkyPlan(state);
     renderAppulses(state);
