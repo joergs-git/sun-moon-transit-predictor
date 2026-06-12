@@ -498,3 +498,49 @@ describe('HistoryStore — hourStats (best hours for usable hits)', () => {
     } finally { store.close(); }
   });
 });
+
+describe('HistoryStore — sky-target plan-alert dedup (M83)', () => {
+  const T = 1_800_000_000_000;   // a fixed event time
+  const TOL = 5 * 60_000;        // 5-min fuzzy window
+
+  it('returns null until an alert is recorded, then matches within tolerance', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      expect(store.findSkyPlanAlert('ISS', 'm42', T, TOL)).toBeNull();
+      store.upsertSkyPlanAlert({ satTag: 'ISS', objectId: 'm42', atMs: T, confidence: 'green', alertedAtMs: T });
+      // Exact + within ±5 min match; outside does not.
+      expect(store.findSkyPlanAlert('ISS', 'm42', T, TOL)?.confidence).toBe('green');
+      expect(store.findSkyPlanAlert('ISS', 'm42', T + 2 * 60_000, TOL)?.confidence).toBe('green');
+      expect(store.findSkyPlanAlert('ISS', 'm42', T + 9 * 60_000, TOL)).toBeNull();
+      // Different satellite / object → no match (separate events).
+      expect(store.findSkyPlanAlert('HST', 'm42', T, TOL)).toBeNull();
+      expect(store.findSkyPlanAlert('ISS', 'vega', T, TOL)).toBeNull();
+    } finally { store.close(); }
+  });
+
+  it('upgrades an existing event in place (amber → green) without duplicating', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      const id = store.upsertSkyPlanAlert({ satTag: 'ISS', objectId: 'm42', atMs: T, confidence: 'amber', alertedAtMs: T });
+      // Re-anchor at a slightly drifted time + upgrade confidence on the SAME row.
+      const drifted = T + 90_000;
+      store.upsertSkyPlanAlert({ id, satTag: 'ISS', objectId: 'm42', atMs: drifted, confidence: 'green', alertedAtMs: drifted });
+      const row = store.findSkyPlanAlert('ISS', 'm42', drifted, TOL);
+      expect(row.id).toBe(id);                 // same row, not a new one
+      expect(row.confidence).toBe('green');
+      expect(row.atMs).toBe(drifted);
+    } finally { store.close(); }
+  });
+
+  it('prunes events whose time is well in the past', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      store.upsertSkyPlanAlert({ satTag: 'ISS', objectId: 'old', atMs: T - 2 * 86_400_000, confidence: 'green', alertedAtMs: T });
+      store.upsertSkyPlanAlert({ satTag: 'ISS', objectId: 'new', atMs: T, confidence: 'green', alertedAtMs: T });
+      const removed = store.pruneSkyPlanAlerts(T - 86_400_000);
+      expect(removed).toBe(1);
+      expect(store.findSkyPlanAlert('ISS', 'old', T - 2 * 86_400_000, TOL)).toBeNull();
+      expect(store.findSkyPlanAlert('ISS', 'new', T, TOL)).not.toBeNull();
+    } finally { store.close(); }
+  });
+});

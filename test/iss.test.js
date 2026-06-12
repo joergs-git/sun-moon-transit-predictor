@@ -2,7 +2,9 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadIssTle, predictIssTransits, nextIssVisiblePass } from '../src/iss.js';
+import {
+  loadIssTle, predictIssTransits, predictSkyTargetTransits, nextIssVisiblePass,
+} from '../src/iss.js';
 import { observerEcef, targetEcefAzEl } from '../src/geometry.js';
 
 // A valid, well-formed ISS (ZARYA) element set. SGP4 correctness itself is
@@ -120,6 +122,71 @@ describe('predictIssTransits', () => {
       expect(c.aircraft.typeCode).toBe('HST');
       expect(c.aircraft.typeDesc).toBe('Hubble Space Telescope');
     }
+  });
+});
+
+describe('predictSkyTargetTransits', () => {
+  const tle = (() => {
+    const p = join(tmp, 'iss-sky.tle');
+    writeFileSync(p, `${NAME}\n${L1}\n${L2}\n`);
+    return loadIssTle(p);
+  })();
+  // Observer placed under the fixture's ground track so a Sun approach exists
+  // (the same spot the multi-sat tagging test uses).
+  const under = { name: 'under-track', latitudeDeg: 30, longitudeDeg: -10, elevationM: 50 };
+  const fromMs = Date.UTC(2024, 4, 3, 0, 0, 0);
+  const sunBox = { id: 'sun', name: 'Sun', body: 'Sun', fovWidthDeg: 2, fovHeightDeg: 2 };
+
+  it('finds a satellite pass through a framed field and shapes it correctly', () => {
+    // Daytime Sun transit → disable the night gates so the approach registers.
+    const ev = predictSkyTargetTransits(under, tle.satrec, {
+      fromMs, horizonMs: 14 * 24 * 3600_000, targets: [sunBox],
+      tag: 'ISS', name: 'ISS', requireSunlit: false, requireDarkSky: false,
+    });
+    expect(ev.length).toBeGreaterThan(0);
+    const c = ev[0];
+    expect(c.satTag).toBe('ISS');
+    expect(c.targetName).toBe('Sun');
+    expect(['transit', 'field']).toContain(c.kind);
+    expect(c.closestApproachSepDeg).toBeLessThanOrEqual(c.fieldRadiusDeg + 1e-9);
+    expect(c.missArcmin).toBeCloseTo(c.closestApproachSepDeg * 60, 6);
+    expect(c.timeInFieldMs).toBeGreaterThan(0);
+    expect(c.entersFieldAtMs).toBeLessThanOrEqual(c.closestApproachAtMs);
+    expect(c.leavesFieldAtMs).toBeGreaterThanOrEqual(c.closestApproachAtMs);
+    expect(c.satAtClosest).not.toBeNull();
+    expect(Array.isArray(c.transitPath)).toBe(true);
+    // Object-centred path: the closest sample sits near (0,0) arcmin.
+    const nearest = c.transitPath.reduce((a, b) => (Math.abs(b.tOffsetMs) < Math.abs(a.tOffsetMs) ? b : a));
+    expect(Math.hypot(nearest.dAzArcmin, nearest.dElArcmin)).toBeLessThan(c.fieldRadiusDeg * 60 + 1);
+    expect(typeof c.sunlit).toBe('boolean');
+  });
+
+  it('classifies a sub-disc miss as a transit (through the object)', () => {
+    const ev = predictSkyTargetTransits(under, tle.satrec, {
+      fromMs, horizonMs: 14 * 24 * 3600_000, targets: [sunBox],
+      requireSunlit: false, requireDarkSky: false,
+    });
+    // The fixture's closest Sun approach here is ~0.05° ≪ Sun radius (~0.27°).
+    const through = ev.find((c) => c.throughObject);
+    expect(through).toBeDefined();
+    expect(through.kind).toBe('transit');
+    expect(through.closestApproachSepDeg).toBeLessThan(through.objectDiameterDeg / 2 + 1e-9);
+  });
+
+  it('the dark-sky gate suppresses a daytime Sun approach', () => {
+    const ev = predictSkyTargetTransits(under, tle.satrec, {
+      fromMs, horizonMs: 14 * 24 * 3600_000, targets: [sunBox],
+      requireSunlit: false, requireDarkSky: true, sunBelowDeg: -6,
+    });
+    expect(ev.length).toBe(0);   // the Sun is necessarily up during its own transit
+  });
+
+  it('runs for a fixed RA/Dec (DSO) target without throwing', () => {
+    const m42 = { id: 'm42', name: 'M42', raHours: 5.588, decDeg: -5.391, diameterDeg: 1.0, fovWidthDeg: 1.5, fovHeightDeg: 1.0 };
+    const ev = predictSkyTargetTransits(under, tle.satrec, {
+      fromMs, horizonMs: 14 * 24 * 3600_000, targets: [m42],
+    });
+    expect(Array.isArray(ev)).toBe(true);
   });
 });
 

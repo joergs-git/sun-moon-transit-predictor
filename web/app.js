@@ -294,6 +294,121 @@ function renderSky(state) {
   }
 }
 
+// Sky-target plan confidence badge (mirrors src/skyplan.js confidenceFor).
+const CONFIDENCE_BADGE = {
+  green:  { dot: '🟢', label: 'sicher',   tip: 'TLE fresh at the event (< 1 d) — reliable.' },
+  amber:  { dot: '🟡', label: 'mittel',   tip: 'TLE 1–3 d old at the event — refines as it nears.' },
+  orange: { dot: '🟠', label: 'grob',     tip: 'TLE 3–6 d old at the event — placeholder, will sharpen.' },
+  red:    { dot: '🔴', label: 'unsicher', tip: 'TLE > 6 d old at the event — very tentative.' },
+};
+
+// Active-target pulldown (M83): what the scope is pointed at. Shown only when
+// the SharpCap trigger is enabled (it targets the capture). Options come from
+// state.activeTargetOptions (Sun/Moon/Auto + objects with upcoming passes).
+let activeTargetBusy = false;   // guard against re-rendering mid-change
+function renderActiveTarget(state) {
+  const bar = $('#active-target-bar');
+  if (!bar) return;
+  if (!state.sharpcap?.enabled) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const sel = $('#active-target-select');
+  const opts = Array.isArray(state.activeTargetOptions) ? state.activeTargetOptions : [];
+  const cur = state.activeTarget ?? 'auto';
+  // Rebuild options only when the set or selection changed (don't stomp an open
+  // dropdown every 2 s).
+  const sig = opts.map((o) => o.id).join(',') + '|' + cur;
+  if (!activeTargetBusy && sel.dataset.sig !== sig) {
+    sel.innerHTML = opts.map((o) => `<option value="${o.id}"${o.id === cur ? ' selected' : ''}>${o.label}</option>`).join('');
+    sel.dataset.sig = sig;
+  }
+  // Next pass for the currently-selected sky object (if any).
+  const nextEl = $('#active-target-next');
+  if (nextEl) {
+    const obj = opts.find((o) => o.id === cur && o.nextAtMs);
+    nextEl.textContent = obj ? `next pass ${fmtDateTime(obj.nextAtMs)}` : '';
+  }
+}
+
+async function setActiveTarget(target) {
+  activeTargetBusy = true;
+  try {
+    const res = await fetch('/api/active-target', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    pollState();   // reflect the new target immediately
+  } catch (e) {
+    console.warn('set active target failed:', e);
+  } finally {
+    activeTargetBusy = false;
+  }
+}
+
+$('#active-target-select')?.addEventListener('change', (ev) => setActiveTarget(ev.target.value));
+// Sky-plan view toggle (horizon ↔ next-opportunity) — re-render from cached state.
+$('#skyplan-nextever')?.addEventListener('change', () => { if (lastSkyState) renderSkyPlan(lastSkyState); });
+
+// Render the sky-target observation plan ("Drehbuch"). Hidden unless the
+// feature is on AND there is at least one upcoming pass.
+let lastSkyState = null;   // cached so the view toggle can re-render without a refetch
+function renderSkyPlan(state) {
+  lastSkyState = state;
+  const section = $('#skyplan-section');
+  if (!section) return;
+  const meta = state.skyTargets;
+  const nextEver = $('#skyplan-nextever')?.checked;
+  const plan = nextEver
+    ? (Array.isArray(state.skyTargetNextEver) ? state.skyTargetNextEver : [])
+    : (Array.isArray(state.skyTargetPlan) ? state.skyTargetPlan : []);
+  // Show the panel if EITHER view has data, so the toggle is reachable even when
+  // the horizon view is empty but a far-out opportunity exists.
+  const anyData = (state.skyTargetPlan?.length || state.skyTargetNextEver?.length);
+  if (!meta?.enabled || !anyData) { section.hidden = true; return; }
+  section.hidden = false;
+  const sub = $('#skyplan-sub');
+  if (sub) {
+    sub.textContent = nextEver
+      ? `soonest per object · scan ${meta.scanHorizonDays ?? 14} d · ${plan.length} combo${plan.length === 1 ? '' : 's'}`
+      : `${plan.length} pass${plan.length === 1 ? '' : 'es'} · next ${meta.planHorizonDays ?? 7} d · ${meta.objectCount ?? 0} targets`;
+  }
+  const tbody = $('#skyplan tbody');
+  tbody.innerHTML = '';
+  if (!plan.length) {
+    tbody.innerHTML = `<tr class="empty"><td colspan="8">No passes in the next ${meta.planHorizonDays ?? 7} days — switch on “next opportunity” to see when each object's chance first comes.</td></tr>`;
+    return;
+  }
+  for (const r of plan) {
+    const c = CONFIDENCE_BADGE[r.confidence] ?? { dot: '⚪', label: '—', tip: 'Confidence unknown (no TLE epoch).' };
+    const typeLabel = r.kind === 'transit' ? 'transit' : 'field';
+    const miss = r.missArcmin == null ? '—'
+      : (r.missArcmin >= 60 ? `${(r.missArcmin / 60).toFixed(2)}°` : `${Math.round(r.missArcmin)}′`);
+    const inField = r.timeInFieldMs ? `${(r.timeInFieldMs / 1000).toFixed(1)}s` : '—';
+    const el = r.elevationDeg == null ? '—' : `${Math.round(r.elevationDeg)}°`;
+    const conflict = r.conflictWithPrev
+      ? ` <span class="skyplan-conflict" title="Only ${Math.round((r.conflictGapMs ?? 0) / 60000)} min after the previous event — one scope can't catch both.">⚠</span>`
+      : '';
+    const shadow = r.sunlit === false
+      ? ' <span class="skyplan-shadow" title="Satellite in Earth\'s shadow at closest approach — not sunlit, so invisible.">🌑</span>'
+      : '';
+    const tr = document.createElement('tr');
+    tr.className = `skyplan-row conf-${r.confidence ?? 'none'}${r.conflictWithPrev ? ' has-conflict' : ''}`;
+    tr.innerHTML = `
+      <td class="skyplan-when">${fmtDateTime(r.atMs)}${conflict}</td>
+      <td class="skyplan-obj">${r.targetName ?? '—'}</td>
+      <td class="skyplan-sat">🛰 ${r.satTag ?? '?'}${shadow}</td>
+      <td class="skyplan-type type-${typeLabel}">${typeLabel}</td>
+      <td>${el}</td>
+      <td>${miss}</td>
+      <td>${inField}</td>
+      <td class="skyplan-conf" title="${c.tip}">${c.dot} ${c.label}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
 const STATUS_LABELS = {
   planned:   { icon: '📅', label: 'planned' },
   radio:     { icon: '📡', label: 'radio' },
@@ -796,35 +911,47 @@ function fmtWhenAbs(ms) {
 // Two ISS lines under the Sky-now table: the next naked-eye visible pass
 // and the next Sun/Moon disc transit — both shown even if weeks away.
 // The whole block hides only when the ISS feature is inactive (no TLE).
-function renderIssPass(iss) {
-  const el = $('#iss-pass');
+// Per-satellite next-pass table (ISS · Tiangong · HST): next naked-eye visible
+// pass + next Sun/Moon disc transit, one column per satellite. Replaces the old
+// ISS-only two-liner. Hidden until at least one satellite has a loaded TLE.
+function renderSatellitePasses(state) {
+  const el = $('#sat-passes');
   if (!el) return;
-  if (!iss?.active) { el.hidden = true; el.innerHTML = ''; return; }
+  const byTag = {};
+  if (state.iss?.active) {
+    byTag.ISS = { visiblePass: state.iss.visiblePass, nextTransit: state.iss.nextTransit };
+  }
+  for (const s of (state.satellites ?? [])) {
+    if (s.active) byTag[s.tag] = { visiblePass: s.visiblePass, nextTransit: s.nextTransit };
+  }
+  // Column order requested by the user: ISS, Tiangong (CSS), HST.
+  const order = [['ISS', 'ISS'], ['CSS', 'Tiangong'], ['HST', 'HST']].filter(([tag]) => byTag[tag]);
+  if (!order.length) { el.hidden = true; el.innerHTML = ''; return; }
   el.hidden = false;
 
-  const p = iss.visiblePass;
-  const visLine = p
-    ? `🛰 <b>Next visible ISS pass</b> ${fmtWhenAbs(p.startMs)}: `
-      + `${fmtTime(p.startMs)} (${azToCompass(p.startAzDeg)}) → `
-      + `${fmtTime(p.endMs)} (${azToCompass(p.endAzDeg)}) · `
-      + `max ${p.maxElevationDeg}° · ${p.durationS}s`
-    : '🛰 <b>Next visible ISS pass</b>: none predicted in the scan window.';
+  const visCell = (s) => {
+    const p = s?.visiblePass;
+    if (!p) return '<span class="sat-none">—</span>';
+    return `${fmtWhenAbs(p.startMs)}<br><span class="sat-sub">${azToCompass(p.startAzDeg)}→${azToCompass(p.endAzDeg)} · max ${p.maxElevationDeg}° · ${p.durationS}s</span>`;
+  };
+  const transitCell = (s) => {
+    const t = s?.nextTransit;
+    if (!t) return '<span class="sat-none">—</span>';
+    const icon = t.body === 'Sun' ? '☀' : '🌙';
+    return `${icon} ${fmtWhenAbs(t.atMs)}<br><span class="sat-sub">sep ${fmtSep(t.sepDeg)}${t.tentative ? ' · tentative' : ''}</span>`;
+  };
 
-  const t = iss.nextTransit;
-  const tLine = t
-    ? `☀🌙 <b>Next ISS ${t.body} transit</b> ${fmtWhenAbs(t.atMs)} · `
-      + `sep ${fmtSep(t.sepDeg)}`
-      + (t.tentative
-        ? ` <span class="iss-tentative">— tentative (&gt; ${iss.notifyWithinDays ?? 3} d out:`
-          + ` refines with each daily TLE; no alert until closer)</span>`
-        : '')
-    : `☀🌙 <b>Next ISS Sun/Moon transit</b>: none in the next `
-      + `${iss.horizonDays ?? '—'} days (raise <code>iss.horizonMs</code> to look further).`;
-
-  el.innerHTML = `<div>${visLine}</div><div class="iss-pass-2">${tLine}</div>`;
-  el.title = 'Visible pass = ISS above 20°, sky dark (Sun below −6°), '
-    + 'station sunlit. Transit = ISS crossing the Sun/Moon disc for this '
-    + 'site. Both are offline SGP4 predictions; refresh with the TLE.';
+  const head = order.map(([, label]) => `<th>🛰 ${label}</th>`).join('');
+  const visRow = order.map(([tag]) => `<td>${visCell(byTag[tag])}</td>`).join('');
+  const transitRow = order.map(([tag]) => `<td>${transitCell(byTag[tag])}</td>`).join('');
+  el.innerHTML = `
+    <table class="sat-pass-table">
+      <thead><tr><th></th>${head}</tr></thead>
+      <tbody>
+        <tr><th class="sat-row-label" title="Next naked-eye visible pass: satellite above 20°, sky dark (Sun below −6°), satellite sunlit. (Geometry only — HST is faint near the naked-eye limit.)">Next visible pass</th>${visRow}</tr>
+        <tr><th class="sat-row-label" title="Next crossing of the Sun or Moon disc for this site. Offline SGP4 prediction; 'tentative' = beyond the trustworthy window, refines with each daily TLE.">Next ☀/🌙 transit</th>${transitRow}</tr>
+      </tbody>
+    </table>`;
 }
 
 // "Total live trackings" — single sorted-by-SEP table of EVERY aircraft in
@@ -878,7 +1005,9 @@ async function pollState() {
     // markers reflect the latest tick.
     sharpcapArmedLog = Array.isArray(state.sharpcap?.armed) ? state.sharpcap.armed : [];
     renderSky(state);
-    renderIssPass(state.iss);
+    renderSatellitePasses(state);
+    renderActiveTarget(state);
+    renderSkyPlan(state);
     renderTracking(state);
     renderTotalLive(state);
     renderDetectFunnel(state.detectStats);
@@ -1858,6 +1987,68 @@ if ($('#sharpcap-add-rig')) {
   $('#sharpcap-add-rig').addEventListener('click', () => scTargetsBox?.appendChild(scRigRow()));
 }
 
+// ── Sky-target catalogue editor (M83) ──────────────────────────────────────
+// One editable row per object: enabled · id · name · RA(h) · Dec(°) · Ø(°) ·
+// planet. Values are set via properties (not innerHTML) so object names with
+// special characters (ω Centauri, η Carinae…) are safe.
+function catalogRow(o = {}) {
+  const row = document.createElement('div');
+  row.className = 'catalog-row';
+  const mk = (cls, type, ph) => {
+    const i = document.createElement('input');
+    i.className = cls; i.type = type; i.placeholder = ph;
+    if (type === 'number') i.step = 'any';
+    return i;
+  };
+  const en = mk('cat-enabled', 'checkbox', ''); en.checked = o.enabled !== false; en.title = 'Include in the scan';
+  const id = mk('cat-id', 'text', 'm42'); id.value = o.id ?? '';
+  const name = mk('cat-name', 'text', 'M42 Orion'); name.value = o.name ?? '';
+  const ra = mk('cat-ra', 'number', '5.588'); ra.value = o.raHours ?? '';
+  const dec = mk('cat-dec', 'number', '-5.39'); dec.value = o.decDeg ?? '';
+  const diam = mk('cat-diam', 'number', ''); diam.value = o.diameterDeg ?? '';
+  const body = mk('cat-body', 'text', 'Jupiter'); body.value = o.body ?? ''; body.title = 'Planet name instead of RA/Dec';
+  const rm = document.createElement('button');
+  rm.type = 'button'; rm.className = 'btn cat-remove'; rm.textContent = '✕'; rm.title = 'Remove';
+  rm.addEventListener('click', () => row.remove());
+  row.append(en, id, name, ra, dec, diam, body, rm);
+  return row;
+}
+
+function fillCatalog(objects) {
+  const box = $('#catalog-rows');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const o of (objects ?? [])) box.appendChild(catalogRow(o));
+}
+
+function collectCatalog() {
+  const rows = Array.from(document.querySelectorAll('#catalog-rows .catalog-row'));
+  const out = [];
+  for (const r of rows) {
+    const id = r.querySelector('.cat-id').value.trim();
+    const name = r.querySelector('.cat-name').value.trim();
+    if (!id && !name) continue;                       // skip a blank row
+    const o = { id, name, enabled: r.querySelector('.cat-enabled').checked };
+    const body = r.querySelector('.cat-body').value.trim();
+    const ra = r.querySelector('.cat-ra').value;
+    const dec = r.querySelector('.cat-dec').value;
+    const diam = r.querySelector('.cat-diam').value;
+    if (body) {
+      o.body = body;
+    } else {
+      if (ra !== '') o.raHours = Number(ra);
+      if (dec !== '') o.decDeg = Number(dec);
+    }
+    if (diam !== '') o.diameterDeg = Number(diam);
+    out.push(o);
+  }
+  return out;
+}
+
+if ($('#catalog-add')) {
+  $('#catalog-add').addEventListener('click', () => $('#catalog-rows')?.appendChild(catalogRow()));
+}
+
 function setNested(obj, dottedKey, value) {
   const parts = dottedKey.split('.');
   let cur = obj;
@@ -1891,6 +2082,7 @@ function fillSettingsForm(cfg) {
   }
   // Dynamic multi-rig list (not part of the named-element loop).
   fillSharpcapTargets(cfg.sharpcap?.targets);
+  fillCatalog(cfg.skyTargets?.objects);
 }
 
 async function openSettings() {
@@ -1900,6 +2092,10 @@ async function openSettings() {
     if (!res.ok) throw new Error(`/api/config ${res.status}`);
     const cfg = await res.json();
     fillSettingsForm(cfg);
+    // Restore the last-used tab (falls back to General if unset/unknown).
+    let saved = 'general';
+    try { saved = localStorage.getItem(SETTINGS_TAB_KEY) || 'general'; } catch { /* ignore */ }
+    activateSettingsTab(saved);
     settingsModal.hidden = false;
   } catch (e) {
     settingsMsg.textContent = `load failed: ${e.message ?? e}`;
@@ -1942,6 +2138,7 @@ settingsForm.addEventListener('submit', async (ev) => {
   }
   // Multi-rig list → sharpcap.targets (empty array = single-rig mode).
   setNested(patch, 'sharpcap.targets', collectSharpcapTargets());
+  setNested(patch, 'skyTargets.objects', collectCatalog());
   settingsMsg.textContent = 'saving…';
   settingsMsg.className = 'settings-msg';
   try {
@@ -1961,8 +2158,75 @@ settingsForm.addEventListener('submit', async (ev) => {
   } catch (e) {
     settingsMsg.textContent = `save failed: ${e.message ?? e}`;
     settingsMsg.className = 'settings-msg err';
+    // If the server pinned the failure to a specific field, jump to its tab and
+    // focus it — otherwise the error would point at a field on a hidden panel.
+    const bad = settingsFieldForError(e.message);
+    if (bad) {
+      const tab = bad.closest('fieldset[data-tab]')?.dataset.tab;
+      if (tab) activateSettingsTab(tab);
+      bad.focus();
+    }
   }
 });
+
+// ── Settings tabs (v0.33.0) ────────────────────────────────────────────────
+// Pure VIEW grouping over the single #settings-form (see tasks/settings-tabs-ui
+// .md). Every field keeps its name= and stays in the form, so save/validation/
+// hot-reload are untouched — the switcher only shows/hides fieldsets by their
+// data-tab. Default tab = General; the last-used tab is remembered.
+const settingsTablist = settingsForm.querySelector('.settings-tablist');
+const settingsTabs = Array.from(settingsForm.querySelectorAll('.settings-tab'));
+const settingsPanels = Array.from(settingsForm.querySelectorAll('fieldset[data-tab]'));
+const SETTINGS_TAB_KEY = 'stp.settingsTab';
+
+function activateSettingsTab(name, { focusTab = false } = {}) {
+  if (!settingsTabs.some((t) => t.dataset.tab === name)) name = 'general';
+  for (const tab of settingsTabs) {
+    const on = tab.dataset.tab === name;
+    tab.setAttribute('aria-selected', on ? 'true' : 'false');
+    tab.tabIndex = on ? 0 : -1;               // roving tabindex
+    if (on && focusTab) tab.focus();
+  }
+  for (const fs of settingsPanels) fs.hidden = fs.dataset.tab !== name;
+  try { localStorage.setItem(SETTINGS_TAB_KEY, name); } catch { /* private mode */ }
+}
+
+settingsTablist?.addEventListener('click', (ev) => {
+  const tab = ev.target.closest('.settings-tab');
+  if (tab) activateSettingsTab(tab.dataset.tab);
+});
+// Keyboard: ←/→ (and ↑/↓) move between tabs, Home/End jump to ends — the
+// standard tablist interaction so the dialog stays keyboard-navigable.
+settingsTablist?.addEventListener('keydown', (ev) => {
+  const idx = settingsTabs.findIndex((t) => t.getAttribute('aria-selected') === 'true');
+  if (idx < 0) return;
+  let next = null;
+  if (ev.key === 'ArrowRight' || ev.key === 'ArrowDown') next = (idx + 1) % settingsTabs.length;
+  else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowUp') next = (idx - 1 + settingsTabs.length) % settingsTabs.length;
+  else if (ev.key === 'Home') next = 0;
+  else if (ev.key === 'End') next = settingsTabs.length - 1;
+  if (next == null) return;
+  ev.preventDefault();
+  activateSettingsTab(settingsTabs[next].dataset.tab, { focusTab: true });
+});
+
+// Find the form element a server validation error refers to, by matching any
+// known field name mentioned in the (string) error message — so we can jump to
+// the right tab and focus it instead of leaving the error pointing at a hidden
+// panel. Returns null when no field name is recognised.
+function settingsFieldForError(errStr) {
+  const s = String(errStr ?? '');
+  let best = null;
+  for (const el of settingsForm.elements) {
+    // Prefer the longest matching name (e.g. "pushover.minElevationDeg" over a
+    // hypothetical "pushover") to land on the most specific field.
+    if (el.name && s.includes(el.name) && (!best || el.name.length > best.name.length)) best = el;
+  }
+  return best;
+}
+
+// Initial consistent state (modal is hidden, but keep the DOM coherent).
+activateSettingsTab('general');
 
 $('#settings-btn').addEventListener('click', openSettings);
 

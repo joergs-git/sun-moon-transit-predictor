@@ -2,8 +2,8 @@
 // lookup, notifier, history store and HTTP server together. Exposes a single
 // `runService(config)` entry point used by bin/stp.js and exercised by tests.
 
-import { promises as fsp, existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { promises as fsp, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { networkInterfaces } from 'node:os';
 
@@ -36,7 +36,11 @@ import { createHttpServer } from './server.js';
 import { SharpCapTrigger } from './sharpcap.js';
 import { HistoryStore } from './store.js';
 import { extrapolate, findTransits } from './tracker.js';
-import { loadIssTle, predictIssTransits, nextIssVisiblePass } from './iss.js';
+import {
+  loadIssTle, predictIssTransits, predictSkyTargetTransits, nextIssVisiblePass,
+} from './iss.js';
+import { buildSkyTargetPlan, CONFIDENCE_RANK } from './skyplan.js';
+import { DEFAULT_SKY_TARGETS } from './skycatalog.js';
 
 export const DEFAULT_CONFIG = {
   adsb: {
@@ -288,6 +292,42 @@ export const DEFAULT_CONFIG = {
       { name: 'Tiangong', tag: 'CSS', catnr: 48274, tlePath: './data/tiangong.tle',
         typeDesc: 'Tiangong (CSS) space station', enabled: true },
     ],
+    // Sky-target passes (M83): predict when a satellite (ISS/HST/CSS) crosses
+    // the framed FOV of a deep-sky object / star / planet — the "shoot the
+    // satellite passing through a DSO field, composite with a separate
+    // long-exposure background" workflow. OPT-IN (off by default): it is a
+    // niche advanced feature and adds a per-recompute scan (≈0.3 s per
+    // satellite over the plan horizon, run on its own slow cadence). Edit in
+    // config/service.json for now; a Settings "Sky targets" tab follows.
+    skyTargets: {
+      enabled: false,
+      recomputeMs: 1_800_000,     // re-scan every 30 min (rare-event work)
+      planHorizonDays: 7,         // timeline look-ahead (≤ iss.horizonMs / 14 d)
+      minElevationDeg: 20,        // ignore passes lower than this (poor seeing/obstruction)
+      requireSunlit: true,        // the satellite must be lit (not in Earth's shadow)
+      requireDarkSky: true,       // …and the sky dark — so these cluster in twilight
+      sunBelowDeg: -6,            // "dark enough": Sun below civil dusk
+      reslewMinGapMin: 5,         // two events closer than this can't share one scope → conflict flag
+      // Pushover plan-alerts (M83 §12): a heads-up the moment a future pass
+      // FIRST reaches the confidence threshold ("a transit is firming up"),
+      // separate from the live radio→imminent transit alerts and edge-triggered
+      // (one push per event, restart-safe via the sky_plan_alerts dedup table).
+      planAlerts: {
+        enabled: false,
+        minConfidence: 'green',   // 'green' | 'amber' — fire once it reaches this
+        minElevationDeg: 20,      // ignore low passes
+        leadMaxDays: 7,           // only alert events within this many days
+        satellites: [],           // [] = all (else ['ISS','HST',…])
+        objects: [],              // [] = all (else ['m42','jupiter',…] object ids)
+      },
+      // FOV box per target is taken from the rig optics (config.optics: focal
+      // length + sensor) unless an object sets fovWidthDeg/fovHeightDeg. The
+      // catalogue (brightest stars + largest/brightest DSO across BOTH
+      // hemispheres + the bright planets) lives in src/skycatalog.js; RA/Dec
+      // are J2000 (the engine precesses them). Add your own by RA/Dec or a
+      // planet `body`; set `enabled: false` on an entry to skip it.
+      objects: DEFAULT_SKY_TARGETS,
+    },
   },
   // Persistent "how often did it come by" tally over ALL detected ADS-B
   // traffic (airframe hex + ADS-B callsign), kept in SQLite so it survives
@@ -621,6 +661,111 @@ export async function runService({
     }
   }
 
+  // Sky-target arming (M83): when the active target is a sky object, arm every
+  // enabled rig on that object's upcoming satellite passes (from the current
+  // plan) instead of on Sun/Moon aircraft transits. armForSkyTarget gates on
+  // elevation + the time window, so only an imminent pass actually sends; the
+  // `${satTag}|sky:${id}` dedup key keeps it one capture per pass.
+  function armSharpcapForSkyTargets(objId, nowMs) {
+    if (!sharpcapAnyEnabled()) return;
+    const rows = skyTargetPlan
+      .filter((r) => r.targetId === objId && r.atMs >= nowMs - 60_000)
+      .slice(0, 3);                          // the soonest few; the rest are far off
+    for (const row of rows) {
+      const cand = {
+        closestApproachAtMs: row.atMs,
+        satTag: row.satTag, satName: row.satName,
+        targetId: row.targetId, targetName: row.targetName, kind: row.kind,
+        closestApproachSepDeg: row.sepDeg,
+        satAtClosest: { elevationDeg: row.elevationDeg },
+      };
+      for (const { name, trigger } of sharpcapTargets) {
+        if (!trigger.enabled) continue;
+        trigger.armForSkyTarget(cand, nowMs).then((res) => {
+          if (res.sent && !res.reArmed) {
+            sharpcapArmedCount += 1;
+            sharpcapArmedLog.push({
+              icao: row.satTag, body: row.targetName,
+              closestAtMs: row.atMs, armedAtMs: Date.now(), rig: name,
+            });
+            if (sharpcapArmedLog.length > SHARPCAP_ARMED_MAX) sharpcapArmedLog.shift();
+            logger.info?.(`sharpcap[${name}]: SKY capture armed for ${row.satTag} → ${row.targetName} (${res.response?.captureId ?? ''})`);
+          }
+        }).catch((e) => logger.warn?.(`sharpcap[${name}] sky-arm threw:`, e?.message ?? e));
+      }
+    }
+  }
+
+  // Pushover plan-alerts (M83 §12): an opt-in heads-up the moment a planned pass
+  // FIRST reaches the confidence threshold ("this transit is firming up") —
+  // separate from the live radio→imminent transit alerts. Edge-triggered + the
+  // sky_plan_alerts dedup table make it fire once per event, restart-safe, even
+  // as recomputes nudge the predicted time.
+  const PLAN_ALERT_TOL_MS = 5 * 60_000;   // fuzzy event-match window
+  async function sendPlanAlert(row) {
+    const dot = { green: '🟢', amber: '🟡', orange: '🟠', red: '🔴' }[row.confidence] ?? '';
+    const typeLabel = row.kind === 'transit' ? 'transit' : 'field pass';
+    const missTxt = row.missArcmin == null ? '?'
+      : (row.missArcmin >= 60 ? `${(row.missArcmin / 60).toFixed(2)}°` : `${Math.round(row.missArcmin)}′`);
+    const leadH = row.leadMs / 3600_000;
+    const leadTxt = leadH >= 48 ? `${(leadH / 24).toFixed(1)} d` : `${leadH.toFixed(1)} h`;
+    const when = new Date(row.atMs).toLocaleString();
+    const url = config.pushover?.url || undefined;
+    return pushover.send({
+      title: `🛰 ${row.satTag} ${typeLabel}: ${row.targetName}`,
+      message: `${dot} ${row.confidence} · ${when}\n`
+        + `Sat: ${row.satName ?? row.satTag} · Object: ${row.targetName}\n`
+        + `Miss ${missTxt} · El ${Math.round(row.elevationDeg ?? 0)}° · lead ${leadTxt}`,
+      url,
+      urlTitle: url ? 'Open predictor' : undefined,
+    });
+  }
+
+  function runPlanAlerts(plan, nowMs) {
+    const cfg = config.iss?.skyTargets?.planAlerts;
+    if (!cfg?.enabled || !pushover.enabled) return;
+    const minRank = CONFIDENCE_RANK[cfg.minConfidence] ?? CONFIDENCE_RANK.green;
+    const leadMaxMs = (cfg.leadMaxDays ?? 7) * 86400000;
+    const minEl = cfg.minElevationDeg ?? 0;
+    const satFilter = Array.isArray(cfg.satellites) && cfg.satellites.length ? new Set(cfg.satellites) : null;
+    const objFilter = Array.isArray(cfg.objects) && cfg.objects.length ? new Set(cfg.objects) : null;
+    for (const row of plan) {
+      if (row.leadMs < 0 || row.leadMs > leadMaxMs) continue;
+      if (minEl && Number.isFinite(row.elevationDeg) && row.elevationDeg < minEl) continue;
+      if (satFilter && !satFilter.has(row.satTag)) continue;
+      if (objFilter && !objFilter.has(row.targetId)) continue;
+      const rank = CONFIDENCE_RANK[row.confidence];
+      if (rank == null || rank < minRank) continue;
+
+      let existing = null;
+      try { existing = store.findSkyPlanAlert(row.satTag, row.targetId, row.atMs, PLAN_ALERT_TOL_MS); }
+      catch (e) { logger.warn?.('plan-alert lookup failed:', e?.message ?? e); continue; }
+      const prevRank = existing ? (CONFIDENCE_RANK[existing.confidence] ?? -1) : -1;
+      if (existing && prevRank >= rank) {
+        // Already alerted at ≥ this confidence — just re-anchor the stored time
+        // so the daily TLE drift keeps matching the SAME event (no re-alert).
+        try {
+          store.upsertSkyPlanAlert({
+            id: existing.id, satTag: row.satTag, objectId: row.targetId,
+            atMs: row.atMs, confidence: existing.confidence, alertedAtMs: existing.alertedAtMs ?? nowMs,
+          });
+        } catch { /* non-fatal */ }
+        continue;
+      }
+      // New event OR a confidence upgrade (amber→green) → push exactly once.
+      sendPlanAlert(row).then((r) => {
+        if (r?.sent) logger.info?.(`plan-alert: ${row.satTag} → ${row.targetName} ${row.confidence} (lead ${(row.leadMs / 3600000).toFixed(1)} h)`);
+      }).catch((e) => logger.warn?.('plan-alert push failed:', e?.message ?? e));
+      try {
+        store.upsertSkyPlanAlert({
+          id: existing?.id, satTag: row.satTag, objectId: row.targetId,
+          atMs: row.atMs, confidence: row.confidence, alertedAtMs: nowMs,
+        });
+      } catch (e) { logger.warn?.('plan-alert record failed:', e?.message ?? e); }
+    }
+    try { store.pruneSkyPlanAlerts(nowMs - 86400000); } catch { /* non-fatal */ }
+  }
+
   const notifier = new Notifier({
     pushover,
     routeLookup: (cs) => routeLookup.lookup(cs),
@@ -769,6 +914,28 @@ export async function runService({
   // the 2 s tick never re-propagates SGP4. Built lazily in the tick below.
   const satCache = new Map();   // tag → { tle, events }
   let lastSatComputeMs = 0;
+  // Sky-target plan cache (M83): the merged satellite × sky-target timeline,
+  // recomputed on its own slow cadence (config.iss.skyTargets.recomputeMs).
+  let skyTargetPlan = [];
+  let skyTargetNextEver = [];   // soonest pass per object×satellite over the full scan horizon
+  let lastSkyComputeMs = 0;
+  // Active target (M83): which sky object the scope is pointed at. 'auto' = the
+  // legacy behaviour (arm capture on any Sun/Moon transit); 'Sun'/'Moon' narrow
+  // to one body; a sky-object id (e.g. 'jupiter', 'm42') makes the rig(s) arm on
+  // that object's satellite passes instead. Operator state, persisted next to
+  // the lifecycle snapshot so it survives a restart.
+  const activeTargetPath = config.lifecyclePersist?.path
+    ? join(dirname(config.lifecyclePersist.path), 'active-target.json') : null;
+  let activeTarget = 'auto';
+  if (activeTargetPath && existsSync(activeTargetPath)) {
+    try { activeTarget = JSON.parse(readFileSync(activeTargetPath, 'utf8'))?.target ?? 'auto'; }
+    catch { /* corrupt/empty → default */ }
+  }
+  function persistActiveTarget() {
+    if (!activeTargetPath) return;
+    try { writeFileSync(activeTargetPath, JSON.stringify({ target: activeTarget }), 'utf8'); }
+    catch (e) { logger.warn?.('active-target persist failed:', e?.message ?? e); }
+  }
 
   const state = {
     observer,
@@ -957,6 +1124,27 @@ export async function runService({
       // Piezo buzzer alert config (no secrets) — read by display/buzzer.py.
       // `testId` is the transient one-shot test nudge (not saved config).
       buzzer: { ...config.buzzer, testId: buzzerTestId },
+      // Sky-target scan knobs (M83). The object catalogue itself stays in
+      // service.json (iss.skyTargets.objects); the UI exposes only the gates +
+      // the master switch. objectCount is read-only feedback.
+      skyTargets: {
+        enabled: Boolean(config.iss?.skyTargets?.enabled),
+        planHorizonDays: config.iss?.skyTargets?.planHorizonDays ?? 7,
+        minElevationDeg: config.iss?.skyTargets?.minElevationDeg ?? 20,
+        requireSunlit: config.iss?.skyTargets?.requireSunlit !== false,
+        requireDarkSky: config.iss?.skyTargets?.requireDarkSky !== false,
+        sunBelowDeg: config.iss?.skyTargets?.sunBelowDeg ?? -6,
+        reslewMinGapMin: config.iss?.skyTargets?.reslewMinGapMin ?? 5,
+        objectCount: (config.iss?.skyTargets?.objects ?? []).filter((o) => o?.enabled !== false).length,
+        // Full catalogue for the UI editor (no secrets).
+        objects: config.iss?.skyTargets?.objects ?? [],
+        planAlerts: {
+          enabled: Boolean(config.iss?.skyTargets?.planAlerts?.enabled),
+          minConfidence: config.iss?.skyTargets?.planAlerts?.minConfidence ?? 'green',
+          minElevationDeg: config.iss?.skyTargets?.planAlerts?.minElevationDeg ?? 20,
+          leadMaxDays: config.iss?.skyTargets?.planAlerts?.leadMaxDays ?? 7,
+        },
+      },
       _servicePath: configPaths.service ?? null,
     };
   }
@@ -1206,6 +1394,95 @@ export async function runService({
       applied.buzzer = { ...config.buzzer };
     }
 
+    if (patch.skyTargets && typeof patch.skyTargets === 'object') {
+      // Sky-target scan gates (M83). The object catalogue is NOT touched here
+      // (it lives in service.json) — only the master switch + numeric gates.
+      // Transactional into `next` so a bad value rejects the whole patch.
+      const d = patch.skyTargets;
+      const next = { ...(config.iss?.skyTargets ?? {}) };
+      if (typeof d.enabled === 'boolean') next.enabled = d.enabled;
+      if (typeof d.requireSunlit === 'boolean') next.requireSunlit = d.requireSunlit;
+      if (typeof d.requireDarkSky === 'boolean') next.requireDarkSky = d.requireDarkSky;
+      const NUM = {
+        planHorizonDays: [1, 14, false],
+        minElevationDeg: [0, 90, false],
+        sunBelowDeg: [-18, 10, false],
+        reslewMinGapMin: [0, 120, false],
+      };
+      for (const [k, [lo, hi]] of Object.entries(NUM)) {
+        if (k in d) {
+          const v = Number(d[k]);
+          if (!Number.isFinite(v) || v < lo || v > hi) {
+            throw new Error(`skyTargets.${k} must be a number ${lo}–${hi}`);
+          }
+          next[k] = v;
+        }
+      }
+      // Nested plan-alert knobs (M83 §12) — validated into the same `next`.
+      if (d.planAlerts && typeof d.planAlerts === 'object') {
+        const pa = { ...(next.planAlerts ?? {}) };
+        const p = d.planAlerts;
+        if (typeof p.enabled === 'boolean') pa.enabled = p.enabled;
+        if ('minConfidence' in p) {
+          if (p.minConfidence !== 'green' && p.minConfidence !== 'amber') {
+            throw new Error("skyTargets.planAlerts.minConfidence must be 'green' or 'amber'");
+          }
+          pa.minConfidence = p.minConfidence;
+        }
+        if ('minElevationDeg' in p) {
+          const v = Number(p.minElevationDeg);
+          if (!Number.isFinite(v) || v < 0 || v > 90) throw new Error('skyTargets.planAlerts.minElevationDeg must be 0–90');
+          pa.minElevationDeg = v;
+        }
+        if ('leadMaxDays' in p) {
+          const v = Number(p.leadMaxDays);
+          if (!Number.isFinite(v) || v < 1 || v > 14) throw new Error('skyTargets.planAlerts.leadMaxDays must be 1–14');
+          pa.leadMaxDays = v;
+        }
+        next.planAlerts = pa;
+      }
+      // Object catalogue editor (M83): validate each entry. A star/DSO needs a
+      // J2000 RA/Dec; a planet needs a recognised `body`. id + name required.
+      if (Array.isArray(d.objects)) {
+        const PLANET_BODIES = new Set(['Sun', 'Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune']);
+        const objs = [];
+        const ids = new Set();
+        d.objects.forEach((o, i) => {
+          if (!o || typeof o !== 'object') throw new Error(`skyTargets.objects[${i}] must be an object`);
+          const id = String(o.id ?? '').trim();
+          const name = String(o.name ?? '').trim();
+          if (!id) throw new Error(`skyTargets.objects[${i}].id is required`);
+          if (!name) throw new Error(`skyTargets.objects[${i}].name (${id}) is required`);
+          if (ids.has(id)) throw new Error(`skyTargets.objects: duplicate id "${id}"`);
+          ids.add(id);
+          const obj = { id, name };
+          if (o.enabled === false) obj.enabled = false;
+          if (o.body) {
+            const body = String(o.body).trim();
+            if (!PLANET_BODIES.has(body)) throw new Error(`skyTargets.objects[${i}] (${id}): unknown planet "${body}"`);
+            obj.body = body;
+          } else {
+            const ra = Number(o.raHours);
+            const dec = Number(o.decDeg);
+            if (!Number.isFinite(ra) || ra < 0 || ra >= 24) throw new Error(`skyTargets.objects[${i}] (${id}): raHours must be 0–24 (or set a planet)`);
+            if (!Number.isFinite(dec) || dec < -90 || dec > 90) throw new Error(`skyTargets.objects[${i}] (${id}): decDeg must be −90…90`);
+            obj.raHours = ra;
+            obj.decDeg = dec;
+          }
+          if (o.diameterDeg != null && o.diameterDeg !== '') {
+            const dia = Number(o.diameterDeg);
+            if (!Number.isFinite(dia) || dia < 0 || dia > 30) throw new Error(`skyTargets.objects[${i}] (${id}): diameterDeg must be 0–30`);
+            obj.diameterDeg = dia;
+          }
+          objs.push(obj);
+        });
+        next.objects = objs;
+      }
+      if (!config.iss) config.iss = {};
+      config.iss.skyTargets = next;          // objects preserved when not in the patch
+      applied.skyTargets = { ...next, objects: undefined };
+    }
+
     if (patch.airnav && typeof patch.airnav === 'object') {
       const a = patch.airnav;
       // Never accept the masked placeholder back as the real token.
@@ -1364,6 +1641,10 @@ export async function runService({
           sharpcap:      { ...(existing.sharpcap ?? {}), ...config.sharpcap },
           display:       { ...(existing.display  ?? {}), ...config.display },
           buzzer:        { ...(existing.buzzer   ?? {}), ...config.buzzer },
+          // Persist only the sky-target sub-block (incl. its object catalogue);
+          // other iss fields keep their defaults / any existing service.json
+          // overrides. Written only when the UI actually edited it.
+          iss:           { ...(existing.iss ?? {}), skyTargets: config.iss?.skyTargets },
         };
         await fsp.writeFile(configPaths.service, JSON.stringify(merged, null, 2), 'utf8');
       } catch (e) {
@@ -1469,6 +1750,19 @@ export async function runService({
       buzzerTestId += 1;
       return { ok: true, testId: buzzerTestId, enabled: Boolean(config.buzzer.enabled) };
     },
+    // Active target (M83): set which sky object the scope is pointed at. Valid
+    // values are 'auto', 'Sun', 'Moon' or a catalogued object id. Persisted so
+    // it survives a restart; takes effect on the next tick's arming routing.
+    setActiveTarget: (target) => {
+      const t = String(target ?? '').trim();
+      const ok = t === 'auto' || t === 'Sun' || t === 'Moon'
+        || (config.iss?.skyTargets?.objects ?? []).some((o) => o.id === t);
+      if (!ok) return { ok: false, error: `unknown target: ${t}` };
+      activeTarget = t;
+      persistActiveTarget();
+      return { ok: true, activeTarget };
+    },
+    getActiveTarget: () => activeTarget,
   });
   if (httpServer) await httpServer.start();
 
@@ -1970,9 +2264,101 @@ export async function runService({
         } catch (e) {
           logger.warn?.(`${sat.tag} prediction failed:`, e?.message ?? e);
         }
-        satCache.set(sat.tag, { tle, events });
+        // Next naked-eye visible pass for this satellite too (same calc as the
+        // ISS), so the Sky-now table can show a "next visible pass" row for all
+        // three satellites — not just the ISS.
+        let visiblePass = null;
+        try {
+          visiblePass = nextIssVisiblePass(observer, tle.satrec, {
+            fromMs: nowMs,
+            horizonMs: config.iss.visibleHorizonMs ?? config.iss.horizonMs,
+          });
+        } catch (e) {
+          logger.warn?.(`${sat.tag} visible-pass calc failed:`, e?.message ?? e);
+        }
+        satCache.set(sat.tag, { tle, events, visiblePass });
       }
       lastSatComputeMs = nowMs;
+    }
+
+    // Sky-target plan (M83) — recompute the satellite × sky-target timeline on
+    // its own slow cadence (opt-in; off by default). For each enabled satellite
+    // with a loaded TLE we scan every catalogued sky target; the FOV box comes
+    // from the main rig optics unless an object overrides it. The merged,
+    // confidence-rated, time-sorted plan lands in state.skyTargetPlan.
+    const skyCfg = config.iss?.skyTargets;
+    if (config.iss?.enabled && skyCfg?.enabled
+        && (lastSkyComputeMs === 0 || nowMs - lastSkyComputeMs >= (skyCfg.recomputeMs ?? 1_800_000))) {
+      // FOV box from focal length + sensor; fovDeg = 2·atan(sensor / (2·FL)).
+      const f = Number(config.optics?.telescopeFocalMm);
+      const sw = Number(config.optics?.sensorWmm);
+      const sh = Number(config.optics?.sensorHmm);
+      const fovDeg = (mm) => 2 * Math.atan(mm / (2 * f)) * 180 / Math.PI;
+      const fov = (f > 0 && sw > 0 && sh > 0)
+        ? { fovWidthDeg: fovDeg(sw), fovHeightDeg: fovDeg(sh) }
+        : null;
+      const targets = (skyCfg.objects ?? [])
+        .filter((o) => o?.enabled !== false)
+        .map((o) => ({
+          ...o,
+          fovWidthDeg: o.fovWidthDeg ?? fov?.fovWidthDeg,
+          fovHeightDeg: o.fovHeightDeg ?? fov?.fovHeightDeg,
+        }));
+      // Every enabled satellite with a loaded TLE: ISS + the extra satellites.
+      const sats = [];
+      if (issTle) sats.push({ tag: 'ISS', name: 'ISS', satrec: issTle.satrec });
+      for (const satCfg of (config.iss.satellites ?? [])) {
+        const entry = satCache.get(satCfg.tag);
+        if (entry?.tle) sats.push({ tag: satCfg.tag, name: satCfg.name, satrec: entry.tle.satrec });
+      }
+      const planHorizonDays = skyCfg.planHorizonDays ?? 7;
+      // Scan the FULL horizon (not just planHorizonDays) so the "next
+      // opportunity" view can show a combo's soonest pass even weeks out; the
+      // normal plan still filters down to planHorizonDays below.
+      const horizonMs = config.iss.horizonMs;
+      const candidates = [];
+      const tleEpochMsByTag = {};
+      for (const s of sats) {
+        // TLE epoch (Julian date → ms) so the plan can rate confidence by the
+        // element-set age at the event time.
+        tleEpochMsByTag[s.tag] = (s.satrec.jdsatepoch - 2440587.5) * 86400000;
+        try {
+          candidates.push(...predictSkyTargetTransits(observer, s.satrec, {
+            fromMs: nowMs,
+            horizonMs,
+            targets,
+            tag: s.tag,
+            name: s.name,
+            minElevationDeg: skyCfg.minElevationDeg ?? 20,
+            requireSunlit: skyCfg.requireSunlit !== false,
+            requireDarkSky: skyCfg.requireDarkSky !== false,
+            sunBelowDeg: skyCfg.sunBelowDeg ?? -6,
+          }));
+        } catch (e) {
+          logger.warn?.(`sky-target prediction failed for ${s.tag}:`, e?.message ?? e);
+        }
+      }
+      const planOpts = {
+        nowMs,
+        tleEpochMsByTag,
+        minElevationDeg: skyCfg.minElevationDeg ?? 0,
+        reslewMinGapMin: skyCfg.reslewMinGapMin ?? 5,
+      };
+      skyTargetPlan = buildSkyTargetPlan(candidates, { ...planOpts, planHorizonDays });
+      // "Next opportunity" view: soonest pass per object×satellite across the
+      // full scan horizon (so far-out combos still show up).
+      skyTargetNextEver = buildSkyTargetPlan(candidates, {
+        ...planOpts,
+        planHorizonDays: Math.ceil(config.iss.horizonMs / 86400000),
+        firstPerCombo: true,
+      });
+      // Edge-triggered Pushover plan-alerts off the fresh plan (no-op unless
+      // skyTargets.planAlerts.enabled + Pushover configured).
+      runPlanAlerts(skyTargetPlan, nowMs);
+      lastSkyComputeMs = nowMs;
+    } else if (!skyCfg?.enabled && (skyTargetPlan.length || skyTargetNextEver.length)) {
+      skyTargetPlan = [];   // feature turned off → clear the stale plan
+      skyTargetNextEver = [];
     }
 
     // Drop a visible pass once it is over so the Sky-now line never shows a
@@ -2016,12 +2402,15 @@ export async function runService({
       const entry = satCache.get(sat.tag);
       const evs = entry?.events ?? [];
       const next = evs.find(e => e.closestApproachAtMs >= nowMs) ?? null;
+      // Drop a visible pass once it is over.
+      const vp = (entry?.visiblePass && entry.visiblePass.endMs >= nowMs) ? entry.visiblePass : null;
       return {
         tag: sat.tag,
         name: sat.name,
         enabled: sat.enabled !== false,
         active: Boolean(entry?.tle),
         upcoming: evs.length,
+        visiblePass: vp,
         nextTransit: next
           ? {
             atMs: next.closestApproachAtMs,
@@ -2033,6 +2422,21 @@ export async function runService({
           : null,
       };
     });
+
+    // Sky-target observation plan (M83) — the merged, time-sorted, confidence-
+    // rated timeline of every satellite × sky-target pass (the "Drehbuch").
+    // Persists between its slow recomputes; empty when the feature is off.
+    state.skyTargetPlan = skyTargetPlan;
+    state.skyTargetNextEver = skyTargetNextEver;
+    state.skyTargets = {
+      enabled: Boolean(skyCfg?.enabled),
+      objectCount: (skyCfg?.objects ?? []).filter((o) => o?.enabled !== false).length,
+      planCount: skyTargetPlan.length,
+      nextEverCount: skyTargetNextEver.length,
+      nextAtMs: skyTargetPlan[0]?.atMs ?? null,
+      planHorizonDays: skyCfg?.planHorizonDays ?? 7,
+      scanHorizonDays: Math.ceil((config.iss?.horizonMs ?? 0) / 86400000),
+    };
 
     // Feed the lifecycle + notifier only the ISS transits that are close
     // enough to be trustworthy (≤ notifyWithinMs). Beyond that a far-future
@@ -2264,7 +2668,20 @@ export async function runService({
     const armList = (issForLifecycle.length
       ? enriched.concat(issForLifecycle)
       : enriched).concat(fallbackCandidates);
-    armSharpcapForCandidates(armList, nowMs);
+    // Route arming by the active target. A sky-object id → arm on its satellite
+    // passes and DON'T arm on Sun/Moon aircraft transits (the scope is pointed
+    // elsewhere). 'Sun'/'Moon' narrow the aircraft arming to that body; 'auto'
+    // (default) keeps the legacy "arm any Sun+Moon transit" behaviour.
+    const isSkyObject = activeTarget && activeTarget !== 'auto'
+      && activeTarget !== 'Sun' && activeTarget !== 'Moon';
+    if (isSkyObject) {
+      armSharpcapForSkyTargets(activeTarget, nowMs);
+    } else {
+      const list = (activeTarget === 'Sun' || activeTarget === 'Moon')
+        ? armList.filter((c) => c.body === activeTarget)
+        : armList;
+      armSharpcapForCandidates(list, nowMs);
+    }
 
     // Header status readout: are any rigs live, for which bodies, how many
     // captures armed this session, and a per-rig breakdown for the tooltip.
@@ -2277,6 +2694,24 @@ export async function runService({
         .filter((t) => t.trigger.enabled)
         .map((t) => ({ name: t.name, body: (t.trigger.config.bodies ?? []).join('+') })),
     };
+
+    // Active target (M83) + the pulldown options: the always-available bodies
+    // plus every sky object that has an upcoming pass in the current plan, so
+    // the operator only picks what's actually catchable tonight.
+    state.activeTarget = activeTarget;
+    const planObjs = [];
+    const seenObj = new Set();
+    for (const r of skyTargetPlan) {
+      if (seenObj.has(r.targetId)) continue;
+      seenObj.add(r.targetId);
+      planObjs.push({ id: r.targetId, label: r.targetName, nextAtMs: r.atMs });
+    }
+    state.activeTargetOptions = [
+      { id: 'auto', label: 'Auto (Sun + Moon)' },
+      { id: 'Sun', label: '☀ Sun' },
+      { id: 'Moon', label: '🌙 Moon' },
+      ...planObjs,
+    ];
   }
 
   // If schedule augmentation is enabled, pull rows from schedule_observations

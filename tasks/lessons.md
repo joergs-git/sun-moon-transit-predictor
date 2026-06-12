@@ -74,3 +74,26 @@
   Quick-start commands must be copy-paste-complete — no remembered flags.
 - **Applies to:** bootstrap-pi5.sh, install scripts, any "default on or off"
   decision, README quick-start one-liners.
+
+## [2026-06-12] — Settings grouping + asking decisions concisely
+- **Mistake:** Put "Telescope & sensor" optics under the **General** settings
+  tab; user moved it to **Scopes**. Also asked a multi-option "how deep should
+  the feature go" question that the user found confusing ("Ich verstehe nicht
+  was du meinst").
+- **Root cause:** (1) Grouped by "it's basic config" instead of "it's part of
+  the telescope rig". (2) Framed a decision in abstract option-labels instead of
+  a concrete example of the end behaviour.
+- **Rule:** Telescope / optics / FOV settings belong with the **rig (Scopes)**,
+  not General. When asking the user to choose, lead with a concrete "if you pick
+  X then Y happens" example, not abstract scope tiers — and keep it short.
+- **Applies to:** Settings tab grouping, AskUserQuestion phrasing on this project.
+
+## [2026-06-12] — Don't touch the safety-critical capture path when extending it
+- **Mistake/Risk:** Generalising the SharpCap trigger to sky-targets could have
+  meant editing the tested `armForCandidate` arming logic.
+- **Rule:** Added a PARALLEL `armForSkyTarget` (separate dedup key namespace)
+  instead of refactoring the aircraft path, so the 28 existing trigger tests
+  still guarantee the Sun/Moon capture behaviour is byte-identical. When
+  extending a safety / money / hardware path, add alongside; don't refactor under
+  time pressure.
+- **Applies to:** sharpcap.js, capture trigger, any tested critical path.

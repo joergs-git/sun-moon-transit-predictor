@@ -16,7 +16,8 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 
 import {
-  observerEcef, targetEcefAzEl, bodyAzEl, angularSeparationDeg, isObservable,
+  observerEcef, targetEcefAzEl, bodyAzEl, targetAzEl, apparentDiameterDeg,
+  angularSeparationDeg, isObservable,
 } from './geometry.js';
 import { twoline2satrec, sgp4, temeToEcef, unixToJulian } from './sgp4.js';
 
@@ -166,14 +167,9 @@ export function predictIssTransits(observer, satrec, opts = {}) {
   const out = [];
 
   for (const body of bodies) {
-    // Walk a coarse grid, remembering the running minimum of a "visible"
-    // separation (∞ when the ISS or the body is not observable so dips
-    // only register on geometrically real approaches).
-    let prev2 = Infinity;
-    let prev1 = Infinity;
-    let prevT = fromMs;
-    let prev1T = fromMs;
-
+    // Separation of the ISS from this body, or ∞ when either is not observable
+    // (so dips only register on geometrically real approaches above the horizon
+    // gates).
     const sepAt = (tMs) => {
       const iss = issAzEl(satrec, obsEcef, obsLat, obsLon, tMs);
       if (!iss || iss.elevationDeg < ISS_MIN_ELEVATION_DEG) return Infinity;
@@ -181,26 +177,43 @@ export function predictIssTransits(observer, satrec, opts = {}) {
       if (!isObservable(b)) return Infinity;
       return angularSeparationDeg(iss, b);
     };
-
-    for (let t = fromMs; t <= fromMs + horizonMs; t += COARSE_STEP_MS) {
-      const s = sepAt(t);
-      // Local minimum bracketed by [prev2 @ prev1T-step, s @ t] around prev1.
-      if (prev1 < prev2 && prev1 <= s && prev1 < COARSE_GATE_DEG) {
-        const refined = refineMinimum(sepAt, prev1T - COARSE_STEP_MS, t);
-        if (refined && refined.sep <= looseThresholdDeg) {
-          out.push(buildIssCandidate(
-            observer, satrec, obsEcef, obsLat, obsLon, body,
-            refined.tMs, refined.sep, thresholdDeg, looseThresholdDeg, name,
-            tag, typeDesc,
-          ));
-        }
+    scanApproaches(sepAt, fromMs, horizonMs, COARSE_GATE_DEG, (refined) => {
+      if (refined.sep <= looseThresholdDeg) {
+        out.push(buildIssCandidate(
+          observer, satrec, obsEcef, obsLat, obsLon, body,
+          refined.tMs, refined.sep, thresholdDeg, looseThresholdDeg, name,
+          tag, typeDesc,
+        ));
       }
-      prev2 = prev1; prev1 = s; prev1T = prevT; prevT = t;
-    }
+    });
   }
 
   out.sort((a, b) => a.closestApproachAtMs - b.closestApproachAtMs);
   return out;
+}
+
+/**
+ * Coarse-scan a separation function sep(t) over [fromMs, fromMs+horizonMs],
+ * find every local minimum tighter than gateDeg, refine it to ms precision and
+ * hand {tMs, sep} to onMinimum. The (subtle) running-minimum bracketing lives
+ * here in ONE place, shared by the Sun/Moon predictor above and the generalised
+ * sky-target predictor below. A 2 s coarse step never strides past an approach
+ * (the curve still shows a clear local minimum); refineMinimum resolves the time.
+ */
+function scanApproaches(sepAt, fromMs, horizonMs, gateDeg, onMinimum) {
+  let prev2 = Infinity;
+  let prev1 = Infinity;
+  let prevT = fromMs;
+  let prev1T = fromMs;
+  for (let t = fromMs; t <= fromMs + horizonMs; t += COARSE_STEP_MS) {
+    const s = sepAt(t);
+    // Local minimum bracketed by [prev2 @ prev1T-step, s @ t] around prev1.
+    if (prev1 < prev2 && prev1 <= s && prev1 < gateDeg) {
+      const refined = refineMinimum(sepAt, prev1T - COARSE_STEP_MS, t);
+      if (refined) onMinimum(refined);
+    }
+    prev2 = prev1; prev1 = s; prev1T = prevT; prevT = t;
+  }
 }
 
 /** Golden-section minimisation of sep(t) on [aMs,bMs] → {tMs, sep}. */
@@ -298,6 +311,198 @@ function buildIssCandidate(
     },
     transitPath,
     route: null,
+  };
+}
+
+// ── Sky-target transits (M83) ───────────────────────────────────────────────
+// Generalises the satellite-vs-Sun/Moon predictor above to arbitrary sky
+// targets — planets, stars, deep-sky objects — for the "shoot the satellite
+// passing through/near a framed deep-sky field" workflow. Kept SEPARATE from
+// predictIssTransits on purpose: disc-transit semantics (silhouette on a bright
+// disc, threshold-keyed) and field-pass semantics (track crosses a framed FOV,
+// miss-distance-keyed) differ enough that one function + one return shape would
+// muddy the well-tested Sun/Moon path. Both share scanApproaches/refineMinimum.
+
+/**
+ * Effective "field radius" (deg) for a sky-target descriptor — how close the
+ * satellite track's centre must come to count as crossing the framed field:
+ *   - explicit `fovRadiusDeg` wins;
+ *   - else half the diagonal of the FOV box `0.5·√(w²+h²)` — the circle that
+ *     circumscribes the rectangle. We don't know the camera position angle, so
+ *     a rotation-agnostic circle is the safe primary test (design §15);
+ *   - else a small default so a bare target still yields something.
+ */
+function targetFieldRadiusDeg(target) {
+  if (Number.isFinite(target.fovRadiusDeg)) return target.fovRadiusDeg;
+  const w = Number(target.fovWidthDeg);
+  const h = Number(target.fovHeightDeg);
+  if (Number.isFinite(w) && Number.isFinite(h)) return 0.5 * Math.hypot(w, h);
+  return 0.5;
+}
+
+/**
+ * Predict passes of a satellite (ISS/HST/CSS) through/near the framed field of
+ * each sky target over [fromMs, fromMs+horizonMs].
+ *
+ * @param {import('./geometry.js').Observer} observer
+ * @param {object} satrec
+ * @param {{
+ *   fromMs?: number, horizonMs?: number,
+ *   targets?: Array<{id?:string,name?:string,body?:string,raHours?:number,
+ *     decDeg?:number,distLy?:number,diameterDeg?:number,fovWidthDeg?:number,
+ *     fovHeightDeg?:number,fovRadiusDeg?:number,enabled?:boolean}>,
+ *   tag?: string, name?: string, typeDesc?: string,
+ *   minElevationDeg?: number, requireSunlit?: boolean, requireDarkSky?: boolean,
+ *   sunBelowDeg?: number,
+ * }} [opts]
+ * @returns {Array<object>}
+ */
+export function predictSkyTargetTransits(observer, satrec, opts = {}) {
+  const {
+    fromMs = Date.now(),
+    horizonMs = 14 * 24 * 3600_000,
+    targets = [],
+    tag = 'ISS',
+    name = 'ISS',
+    typeDesc = 'International Space Station',
+    minElevationDeg = ISS_MIN_ELEVATION_DEG,
+    requireSunlit = true,
+    requireDarkSky = true,
+    sunBelowDeg = -6,
+  } = opts;
+
+  const obsEcef = observerEcef(observer);
+  const obsLat = observer.latitudeDeg;
+  const obsLon = observer.longitudeDeg;
+  const out = [];
+
+  // The satellite's Az/El and the night-visibility verdict at a given time are
+  // identical for every target, so compute them ONCE per time and reuse across
+  // all targets (the doc's "scan each satellite once, targets reuse"). All
+  // targets share the same coarse grid, so the hit rate is ~100%; the cache is
+  // per-call and freed on return (bounded by horizon/COARSE_STEP). `null` =
+  // the satellite is not a usable visible point at that time.
+  const satStateCache = new Map();
+  const satStateAt = (tMs) => {
+    if (satStateCache.has(tMs)) return satStateCache.get(tMs);
+    let state = null;
+    const sat = issAzEl(satrec, obsEcef, obsLat, obsLon, tMs);
+    if (sat && sat.elevationDeg >= minElevationDeg) {
+      let visible = true;
+      if (requireDarkSky || requireSunlit) {
+        const sun = bodyAzEl(observer, 'Sun', new Date(tMs));
+        if (requireDarkSky && sun.elevationDeg > sunBelowDeg) visible = false;
+        if (visible && requireSunlit && !issSunlit(sat.ecef, sunUnitEcef(observer, tMs))) visible = false;
+      }
+      if (visible) state = sat;
+    }
+    satStateCache.set(tMs, state);
+    return state;
+  };
+
+  for (const target of targets) {
+    if (target?.enabled === false) continue;
+    const fieldRadiusDeg = targetFieldRadiusDeg(target);
+    // Refine any minimum that could land inside the field (+0.5° margin), never
+    // below the global coarse gate.
+    const gate = Math.max(COARSE_GATE_DEG, fieldRadiusDeg + 0.5);
+
+    const sepAt = (tMs) => {
+      const sat = satStateAt(tMs);
+      if (!sat) return Infinity;
+      const tgt = targetAzEl(observer, target, new Date(tMs));
+      if (!isObservable(tgt)) return Infinity;
+      return angularSeparationDeg(sat, tgt);
+    };
+
+    scanApproaches(sepAt, fromMs, horizonMs, gate, (refined) => {
+      if (refined.sep <= fieldRadiusDeg) {
+        out.push(buildSkyTargetCandidate(
+          observer, satrec, obsEcef, obsLat, obsLon, target,
+          refined.tMs, refined.sep, fieldRadiusDeg, sepAt,
+          { tag, name, typeDesc },
+        ));
+      }
+    });
+  }
+
+  out.sort((a, b) => a.closestApproachAtMs - b.closestApproachAtMs);
+  return out;
+}
+
+/** Assemble a sky-target candidate for one satellite field-pass / transit. */
+function buildSkyTargetCandidate(
+  observer, satrec, obsEcef, obsLat, obsLon, target,
+  closestMs, missDeg, fieldRadiusDeg, sepAt, meta,
+) {
+  const satAt = issAzEl(satrec, obsEcef, obsLat, obsLon, closestMs);
+  const tgtAt = targetAzEl(observer, target, new Date(closestMs));
+  const objectDiameterDeg = apparentDiameterDeg(target, new Date(closestMs));
+  const throughObject = missDeg <= objectDiameterDeg / 2;
+
+  // Apparent angular rate from a ±0.5 s finite difference.
+  const aBefore = issAzEl(satrec, obsEcef, obsLat, obsLon, closestMs - 500);
+  const cAfter = issAzEl(satrec, obsEcef, obsLat, obsLon, closestMs + 500);
+  const omegaDegPerSec = (aBefore && cAfter) ? angularSeparationDeg(aBefore, cAfter) : 0;
+
+  // Time in field: walk out from the closest approach (using the SAME gated
+  // sepAt, so a satellite slipping into Earth's shadow ends the window) until
+  // the separation leaves the field on each side.
+  let enterMs = closestMs;
+  let leaveMs = closestMs;
+  for (let dt = 100; dt <= 12000; dt += 100) { if (sepAt(closestMs - dt) > fieldRadiusDeg) break; enterMs = closestMs - dt; }
+  for (let dt = 100; dt <= 12000; dt += 100) { if (sepAt(closestMs + dt) > fieldRadiusDeg) break; leaveMs = closestMs + dt; }
+  const timeInFieldMs = leaveMs - enterMs;
+
+  const sunlit = satAt ? issSunlit(satAt.ecef, sunUnitEcef(observer, closestMs)) : false;
+
+  // Object-centred path for the UI: offsets in arcmin from the target centre,
+  // azimuth scaled by cos(el) so the sketch is locally square. Spans the field
+  // crossing plus a little lead-in/out.
+  const elRad = tgtAt.elevationDeg * Math.PI / 180;
+  const span = Math.min(4000, timeInFieldMs / 2 + 1500);
+  const transitPath = [];
+  for (let dt = -span; dt <= span; dt += 100) {
+    const s = issAzEl(satrec, obsEcef, obsLat, obsLon, closestMs + dt);
+    const g = targetAzEl(observer, target, new Date(closestMs + dt));
+    if (!s) continue;
+    transitPath.push({
+      tOffsetMs: dt,
+      satAz: s.azimuthDeg, satEl: s.elevationDeg,
+      targetAz: g.azimuthDeg, targetEl: g.elevationDeg,
+      dAzArcmin: (s.azimuthDeg - g.azimuthDeg) * Math.cos(elRad) * 60,
+      dElArcmin: (s.elevationDeg - g.elevationDeg) * 60,
+    });
+  }
+
+  return {
+    // Which satellite, which sky object.
+    satTag: meta.tag,
+    satName: meta.name,
+    satTypeDesc: meta.typeDesc,
+    isISS: true,                 // generic "orbiting satellite" flag (shared)
+    source: 'skyTarget',
+    targetId: target.id ?? target.name ?? null,
+    targetName: target.name ?? target.id ?? '?',
+    body: target.name ?? target.id ?? null,   // label slot the existing UI reads
+    // Classification + geometry.
+    kind: throughObject ? 'transit' : 'field',   // through the object/disc vs within the framed field
+    closestApproachAtMs: closestMs,
+    closestApproachSepDeg: missDeg,
+    missArcmin: missDeg * 60,
+    fieldRadiusDeg,
+    objectDiameterDeg,
+    throughObject,
+    entersFieldAtMs: enterMs,
+    leavesFieldAtMs: leaveMs,
+    timeInFieldMs,
+    angularRateDegPerSec: omegaDegPerSec,
+    sunlit,
+    satAtClosest: satAt
+      ? { azimuthDeg: satAt.azimuthDeg, elevationDeg: satAt.elevationDeg, rangeM: satAt.rangeM ?? null }
+      : null,
+    targetAtClosest: { azimuthDeg: tgtAt.azimuthDeg, elevationDeg: tgtAt.elevationDeg },
+    transitPath,
   };
 }
 

@@ -1,8 +1,8 @@
 # Design — Settings-Fenster auf Tabs umbauen
 
-Branch: `claude/astrophotography-telescope-objects-t2nygw`
-Status: **DESIGN / zur Abstimmung** — noch kein Code.
-Milestone-Vorschlag: M83.
+Branch: `main`
+Status: **IMPLEMENTED** (v0.33.0) — reiner View-Umbau, kein Schema-Change.
+Milestone: **M82** (shipped before the larger DSO feature, which becomes M83).
 
 ---
 
@@ -28,8 +28,8 @@ kein seitenlanges Scrollen mehr.
 
 | Tab | Enthält (heutige Fieldsets) |
 |---|---|
-| **General** | Observer · Telescope &amp; sensor (FOV-Optik) · Tracker |
-| **Scopes** | SharpCap capture trigger (Global defaults · Main rig · Capture rigs) |
+| **General** | Observer · Tracker |
+| **Scopes** | Telescope &amp; sensor (FOV-Optik) · SharpCap capture trigger (Global defaults · Main rig · Capture rigs) |
 | **Pushover** | Pushover |
 | **Sounds** | Audio / Buzzer (alle Signal-Gruppen) |
 | **E-paper** | E-paper display |
@@ -101,16 +101,23 @@ solange jeder Input
 
 ## 7. Plan (nach Freigabe)
 
-- [ ] `index.html`: Tablist + Tabpanels in `#settings-form`; Fieldsets in die
-      passenden Panels umhängen (Inhalt/`name` unverändert).
-- [ ] `app.js`: Tab-Switcher (Maus + Tastatur, ARIA); Default = General;
-      Feld→Tab-Mapping; bei Validierungsfehler Tab aktivieren + fokussieren.
-- [ ] `style.css`: `.settings-tablist`, `.settings-tabpanel`, je-Panel-Grid;
-      Dialogbreite.
-- [ ] Smoke-Test: jedes Feld lädt/speichert wie zuvor (name-basiert); Buzzer-/
-      SharpCap-Test + „+ Add rig" funktionieren; Validierungsfehler springt auf
-      den richtigen Tab.
-- [ ] MILESTONES: M83 (Settings-Tabs, reiner View-Umbau, kein Schema-Change).
+- [x] `index.html`: Tablist + `data-tab`-Fieldsets in `#settings-form`; statt die
+      Fieldsets physisch umzuhängen, trägt jedes ein `data-tab` und der Switcher
+      blendet pro Tab ein/aus (Inhalt/`name` 1:1 unverändert, geringeres Risiko).
+- [x] `app.js`: Tab-Switcher (Maus + Tastatur ←/→/Home/End, ARIA roving-tabindex);
+      Default = General mit `localStorage`-Persistenz; `settingsFieldForError()`
+      springt bei Validierungsfehler auf den Tab des Feldes + fokussiert es.
+- [x] `style.css`: `.settings-tablist` (sticky), `.settings-tab`; `auto-fit`-Grid
+      blendet versteckte Fieldsets aus und füllt Einzel-Tab voll, General 2-spaltig.
+- [x] Smoke-Test: HTML serviert mit 6 Tabs + 8 zugeordneten Fieldsets (general=2:
+      Observer+Tracker, scopes=2: Telescope+SharpCap, Rest je 1), keine
+      `settings-col`-Reste; name-basiertes Save/Load unverändert;
+      Buzzer-/SharpCap-Test + „+ Add rig" hängen an IDs (unberührt).
+- [x] MILESTONES: M82 (Settings-Tabs, reiner View-Umbau, kein Schema-Change).
+
+**Umsetzungs-Notiz:** Statt „Tabpanels mit umgehängten Fieldsets" (Design §5) wurde
+der risikoärmere `data-tab`-Ansatz gewählt — kein Fieldset bewegt sich im DOM, nur
+ein Attribut pro Block + Show/Hide. Ergebnis identisch, Diff minimal.
 
 ## 8. Nicht-Ziele
 

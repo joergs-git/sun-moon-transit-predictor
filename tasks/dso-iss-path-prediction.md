@@ -1,8 +1,33 @@
 # Design — ISS-Bahn durch/neben beliebige Zielobjekte (Sterne · Planeten · DSO)
 
-Branch: `claude/astrophotography-telescope-objects-t2nygw`
-Status: **DESIGN / zur Abstimmung** — noch kein Code.
-Milestone-Vorschlag: M82.
+Branch: `main`
+Status: **IMPLEMENTED** (v0.34.0) — Phasen 1–4 gebaut & gepusht; nur die
+Pushover-Plan-Alerts (§12) stehen noch aus.
+Milestone: **M83** (M82 ging an die Settings-Tabs, die zuerst landeten).
+
+**Umsetzungs-Stand (2026-06-12):**
+- ✅ Geometrie (`geometry.js`): Planeten, RA/Dec via DefineStar, `apparentDiameterDeg`.
+- ✅ Predictor (`iss.js` `predictSkyTargetTransits`): FOV-Treffer als **Kreis**
+  (Miss ≤ Feldradius, rotationsagnostisch — die offene PA-Frage so gelöst),
+  transit/field-Klassifikation, Nacht-Gates, objektzentrierte `transitPath`,
+  Sat-State-Memoization für Performance.
+- ✅ Service (`service.js`): `iss.skyTargets`-Config, Predictor über alle
+  Satelliten × Ziele, `state.skyTargetPlan` (`skyplan.js` merge + Konfidenz +
+  Konflikt), Settings-Tab „Sky targets" (Enable + Gates, validiert/persistiert).
+- ✅ Katalog (`skycatalog.js`): ~44 Objekte, hellste Sterne + größte/hellste
+  DSO Nord+Süd + Planeten. **Kuratiert mitgeliefert** (offene Frage so gelöst).
+- ✅ Timeline-Panel oben im Haupt-View (🟢🟡🟠🔴, Konflikt-⚠, Schatten-🌑).
+- ✅ Active-Target: „🔭 Scope target"-Pulldown oben → treibt den SharpCap-Trigger
+  (`armForSkyTarget`, separater Pfad; Aircraft-Pfad unangetastet). Operator-State
+  persistiert via `/api/active-target`. **Vorerst ein globales Active-Target**
+  (nicht per-Rig) — deckt den Haupt-/Single-Rig-Fall; per-Rig = spätere Option.
+- ✅ **Pushover-Plan-Alerts (§12, v0.35.0):** edge-getriggert (einmal pro Event,
+  +1 bei amber→green-Upgrade), neustart-fester Fuzzy-Dedup (`sky_plan_alerts`-
+  Tabelle, Match auf `(satTag,objectId)` ±5 min). Config `iss.skyTargets.
+  planAlerts` + Settings-Felder im „Sky targets"-Tab.
+- ⏳ **Offen (kleinere Follow-ups):** UI-Katalog-Editor (aktuell via
+  `service.json`), per-Rig-Active-Target (aktuell ein globales), „Plan geändert"-
+  Push wenn ein grün gemeldetes Event wieder wegfällt (offene Frage §12).
 
 ---
 
@@ -369,7 +394,7 @@ Vorplanung, nicht das Live-Geblinke — oder umgekehrt; beide laufen parallel.
 - [ ] **Pushover-Plan-Alerts:** edge-getriggerte Push bei Erreichen der
       Konfidenz-Schwelle; Fuzzy-Dedup-State in DB (neustart-fest); Konfig
       `iss.skyTargets.planAlerts`; Settings-Feld im Tab „Pushover".
-- [ ] README/MILESTONES: M82; Workflow-Trennung (DSO-Stack + ISS-Lucky-Frame);
+- [ ] README/MILESTONES: M83; Workflow-Trennung (DSO-Stack + ISS-Lucky-Frame);
       Drehbuch/Active-Target; Plan-Alerts.
 
 ## 15. Offene Fragen

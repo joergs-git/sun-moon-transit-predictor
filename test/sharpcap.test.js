@@ -412,3 +412,61 @@ describe('SharpCapTrigger', () => {
     });
   });
 });
+
+// ── Sky-target arming (M83) ────────────────────────────────────────────────
+function makeSkyCandidate({ satTag = 'ISS', targetId = 'm42', closestInMs = 10_000,
+                           elevationDeg = 45 } = {}) {
+  const NOW = 1_700_000_000_000;
+  return {
+    satTag, satName: 'ISS', targetId, targetName: 'M42 Orion Nebula', kind: 'field',
+    closestApproachAtMs: NOW + closestInMs,
+    closestApproachSepDeg: 0.1,
+    satAtClosest: { azimuthDeg: 120, elevationDeg, rangeM: 500_000 },
+  };
+}
+
+describe('SharpCapTrigger.armForSkyTarget', () => {
+  const NOW = 1_700_000_000_000;
+
+  it('arms a sky-target pass and labels it in the satTag|sky:targetId namespace', async () => {
+    const { netImpl, created } = makeFakeNet({ replyLine: '{"ok":true,"captureId":"sky-1"}\n' });
+    const t = new SharpCapTrigger(
+      { enabled: true, host: 'pc', preBufferS: 5, postBufferS: 15 },
+      { netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+    );
+    const res = await t.armForSkyTarget(makeSkyCandidate({ closestInMs: 10_000 }), NOW);
+    expect(res.sent).toBe(true);
+    const sent = JSON.parse(created[0].writes[0]);
+    expect(sent.label).toBe('ISS|sky:m42');
+    expect(sent.meta.body).toBe('M42 Orion Nebula');
+    expect(sent.meta.icao).toBe('ISS');
+    expect(sent.meta.kind).toBe('field');
+  });
+
+  it('skips when the satellite is below the rig minimum elevation', async () => {
+    const { netImpl } = makeFakeNet({ replyLine: '{"ok":true}\n' });
+    const t = new SharpCapTrigger({ enabled: true, host: 'pc', minElevationDeg: 30 }, { netImpl });
+    const res = await t.armForSkyTarget(makeSkyCandidate({ elevationDeg: 12 }), NOW);
+    expect(res).toEqual({ sent: false, reason: 'too-low' });
+  });
+
+  it('dedups a second arm of the same satellite×target within dedupMs', async () => {
+    const { netImpl } = makeFakeNet({ replyLine: '{"ok":true}\n' });
+    const t = new SharpCapTrigger({ enabled: true, host: 'pc', dedupMs: 60_000 }, { netImpl });
+    const r1 = await t.armForSkyTarget(makeSkyCandidate(), NOW);
+    const r2 = await t.armForSkyTarget(makeSkyCandidate(), NOW + 5_000);
+    expect(r1.sent).toBe(true);
+    expect(r2).toEqual({ sent: false, reason: 'deduped' });
+  });
+
+  it('does NOT collide with an aircraft capture of the same body name', async () => {
+    const { netImpl } = makeFakeNet({ replyLine: '{"ok":true}\n' });
+    const t = new SharpCapTrigger({ enabled: true, host: 'pc', dedupMs: 60_000 }, { netImpl });
+    // Aircraft over the Moon, then a satellite through a "Moon" sky-target —
+    // different key namespaces, so both arm.
+    const air = await t.armForCandidate(makeCandidate({ body: 'Moon', closestInMs: 8_000 }), NOW);
+    const sky = await t.armForSkyTarget(makeSkyCandidate({ targetId: 'moon', closestInMs: 8_000 }), NOW);
+    expect(air.sent).toBe(true);
+    expect(sky.sent).toBe(true);
+  });
+});

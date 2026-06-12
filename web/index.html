@@ -29,6 +29,14 @@
         <a href="https://www.airnavradar.com/stations/country/germany" target="_blank" rel="noopener noreferrer" title="AirNav Radar — ADS-B receiving stations in Germany (opens in a new tab).">AirNav ↗</a>
       </div>
       <div class="header-controls">
+        <!-- Active-target (M83): what the scope is pointed at — drives the
+             SharpCap capture. Compact, in the header to save a full-width bar;
+             shown only when the trigger is enabled. -->
+        <div id="active-target-bar" class="active-target-bar" hidden>
+          <label for="active-target-select">🔭</label>
+          <select id="active-target-select" title="What your telescope is pointed at. Auto / Sun / Moon = the usual aircraft & ISS disc-transit capture. Pick a sky object (only those with an upcoming pass appear) to arm the capture on that object's satellite crossing instead."></select>
+          <span id="active-target-next" class="active-target-next"></span>
+        </div>
         <time id="clock" class="clock" title="Local wall-clock time, ticking once per second.">--:--:--</time>
         <div id="sharpcap-status" class="sc-status" hidden title="SharpCap capture trigger: armed body and how many captures it has armed this session (resets on service restart)."></div>
         <div id="status" class="status" title="Service liveness. Shows seconds since the last successful tick and the number of aircraft currently tracked by dump1090.">connecting…</div>
@@ -79,6 +87,38 @@
     </table>
   </section>
 
+  <!-- Sky-target observation plan (M83) — the "Drehbuch": every satellite ×
+       sky-target pass over the next planHorizonDays, time-sorted, with a
+       confidence rating. Hidden until iss.skyTargets is enabled AND has rows. -->
+  <section id="skyplan-section" class="skyplan-section" hidden>
+    <h2>🛰 Sky-target plan <span class="skyplan-sub" id="skyplan-sub"></span>
+      <label class="skyplan-toggle" title="Horizon = every pass in the next planHorizonDays. Next opportunity = the SOONEST pass per object×satellite across the full scan horizon, so a chance that's still weeks out shows up too.">
+        <input type="checkbox" id="skyplan-nextever"> next opportunity
+      </label>
+    </h2>
+    <p class="hint">
+      Predicted satellite (ISS / HST / Tiangong) passes through your framed
+      deep-sky / star / planet fields — for the "shoot the satellite, composite
+      with a separate background stack" workflow. Each row's confidence sharpens
+      as the event nears and the TLE refreshes; far-out rows are placeholders.
+    </p>
+    <table id="skyplan" class="skyplan-table">
+      <thead>
+        <tr>
+          <th title="Predicted closest-approach time. Shows the weekday + date when it's not today.">When</th>
+          <th title="The framed sky target the satellite crosses.">Object</th>
+          <th title="Which satellite — ISS, Hubble (HST) or Tiangong (CSS).">Sat</th>
+          <th title="transit = the satellite passes through the object/disc itself; field = it crosses the framed FOV near the object.">Type</th>
+          <th title="Satellite elevation above the horizon at closest approach.">El</th>
+          <th title="Closest approach to the field centre (arcminutes, or degrees if wide).">Miss</th>
+          <th title="How long the satellite stays inside the framed field.">In&nbsp;field</th>
+          <th title="Prediction confidence from the TLE age at the event: 🟢 sicher (&lt;1 d) · 🟡 mittel (1–3 d) · 🟠 grob (3–6 d) · 🔴 unsicher (&gt;6 d). The ISS is capped at 🟡 beyond ~2 d (reboost risk).">Conf.</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
   <div class="top-row">
     <div class="top-left">
       <!-- LEFT column (v0.30.41): Sky now reads first, then the FOV
@@ -97,9 +137,10 @@
           </thead>
           <tbody></tbody>
         </table>
-        <!-- Next naked-eye ISS pass (el > 20°, after dusk, station sunlit).
-             Computed offline from the TLE; hidden until one is predicted. -->
-        <p class="iss-pass" id="iss-pass" hidden></p>
+        <!-- Per-satellite next-pass table (ISS / Tiangong / HST): next naked-eye
+             visible pass + next Sun/Moon disc transit. Offline SGP4 from the
+             TLEs; hidden until at least one satellite is active. -->
+        <div id="sat-passes" class="sat-passes" hidden></div>
       </section>
       <section id="fov-section">
         <h2>
@@ -523,9 +564,22 @@
            look-ahead step=30/min=10 bug) — leave correctness to the server. -->
       <form id="settings-form" novalidate>
         <div class="settings-fields">
-        <!-- Left column: observation & optical hardware + Pushover -->
-        <div class="settings-col">
-        <fieldset>
+        <!-- Tab bar — purely a VIEW grouping. Every field keeps its name= and
+             stays inside this one #settings-form, so /api/config save, server
+             validation and hot-reload are completely unchanged (see
+             tasks/settings-tabs-ui.md). Each fieldset carries a data-tab; the
+             switcher in app.js shows only the active tab's fieldsets. -->
+        <div class="settings-tablist" role="tablist" aria-label="Settings sections">
+          <button type="button" class="settings-tab" role="tab" data-tab="general" aria-selected="true">General</button>
+          <button type="button" class="settings-tab" role="tab" data-tab="scopes" aria-selected="false" tabindex="-1">Scopes</button>
+          <button type="button" class="settings-tab" role="tab" data-tab="pushover" aria-selected="false" tabindex="-1">Pushover</button>
+          <button type="button" class="settings-tab" role="tab" data-tab="sounds" aria-selected="false" tabindex="-1">Sounds</button>
+          <button type="button" class="settings-tab" role="tab" data-tab="epaper" aria-selected="false" tabindex="-1">E-paper</button>
+          <button type="button" class="settings-tab" role="tab" data-tab="data" aria-selected="false" tabindex="-1">Data</button>
+          <button type="button" class="settings-tab" role="tab" data-tab="sky" aria-selected="false" tabindex="-1">Sky targets</button>
+          <button type="button" class="settings-tab" role="tab" data-tab="catalog" aria-selected="false" tabindex="-1">Catalog</button>
+        </div>
+        <fieldset data-tab="general">
           <legend>Observer</legend>
           <label>Name <input name="observer.name" type="text" placeholder="Rheine">
             <small class="field-hint">Display label only — shown in the header and logs.</small></label>
@@ -541,7 +595,7 @@
             <small class="field-hint">Optional, refraction model only. Blank = 1010.</small></label>
         </fieldset>
 
-        <fieldset>
+        <fieldset data-tab="scopes">
           <legend>Telescope &amp; sensor (FOV sketch)</legend>
           <label>Focal length (mm)<input name="optics.telescopeFocalMm" type="number" step="any" min="1" required>
             <small class="field-hint">Telescope effective focal length — sets the FOV-sketch scale (your reducer/Barlow included).</small></label>
@@ -557,7 +611,7 @@
             <small class="field-hint">Vertical resolution — informational only.</small></label>
         </fieldset>
 
-        <fieldset>
+        <fieldset data-tab="pushover">
           <legend>Pushover</legend>
           <label class="checkbox-row">
             <input name="pushover.enabled" type="checkbox"> Enabled
@@ -586,7 +640,7 @@
             <small class="field-hint">The clickable URL Pushover shows on the alert (tap → opens this predictor's web UI). Blank = auto-detected LAN IP on the app's port (e.g. http://&lt;lan-ip&gt;:8081/).</small></label>
         </fieldset>
 
-        <fieldset>
+        <fieldset data-tab="sounds">
           <legend>Audio / buzzer</legend>
           <small class="field-hint">Piezo buzzer on the Pi (a GPIO pin ↔ GND), driven by <code>display/buzzer.py</code>. Beeps a transit countdown so you don't have to watch the screen. Durations are milliseconds; values below are the defaults. Each signal can <b>fade out</b> (the % of the beep whose volume ramps down — softer, less penetrant) .</small>
           <label class="checkbox-row">
@@ -653,11 +707,7 @@
           </div>
         </fieldset>
 
-        </div><!-- /.settings-col -->
-        <!-- Right column: tracker + ADS-B integrations + capture trigger -->
-        <div class="settings-col">
-
-        <fieldset>
+        <fieldset data-tab="general">
           <legend>Tracker</legend>
           <label>
             Look-ahead (s)<input name="tracker.horizonS" type="number" step="1" min="10" max="1800">
@@ -673,7 +723,7 @@
             <small class="field-hint">Only consider aircraft <b>at or above</b> this altitude (m MSL). <b>0 = off</b>. E.g. <b>2000</b> drops helicopters, GA, drones and keeps airliner traffic. Applies to the whole pipeline — candidates, alerts, History, SharpCap arming.</small></label>
         </fieldset>
 
-        <fieldset>
+        <fieldset data-tab="data">
           <legend>AirNav Radar API</legend>
           <label class="checkbox-row">
             <input name="airnav.enabled" type="checkbox"> Enabled
@@ -684,7 +734,7 @@
             <small class="field-hint">On-Demand API v2 base. Change only if AirNav moves the host.</small></label>
         </fieldset>
 
-        <fieldset>
+        <fieldset data-tab="scopes">
           <legend>SharpCap capture trigger</legend>
           <!-- ── On/off toggles ─────────────────────────────────────── -->
           <label class="checkbox-row">
@@ -745,7 +795,7 @@
           </div>
         </fieldset>
 
-        <fieldset>
+        <fieldset data-tab="epaper">
           <legend>E-paper display</legend>
           <small class="field-hint">Drives a standalone Waveshare 4.2" e-paper panel (400×300) via the Python client in <code>display/</code> on the Pi — a browserless readout of clock, location, live count and the soonest Real candidates. The client polls these settings live, so changes here take effect within a few seconds without restarting it. See <code>display/README.md</code> for wiring + install.</small>
           <label class="checkbox-row">
@@ -759,7 +809,56 @@
             <small class="field-hint">Full-refresh cadence — the periodic brief flash that clears e-paper ghosting. <b>Default 60 s.</b> Must be ≥ Quick refresh.</small></label>
         </fieldset>
 
-        </div><!-- /.settings-col (right) -->
+        <fieldset data-tab="sky">
+          <legend>Sky targets (satellite × DSO passes)</legend>
+          <small class="field-hint">Predict when a satellite (ISS / Hubble / Tiangong) crosses the framed field of a deep-sky object, star or planet — shown in the <b>Sky-target plan</b> panel at the top of the page. For the "shoot the satellite, composite with a separate background stack" workflow. The <b>object catalogue</b> lives in <code>config/service.json</code> under <code>iss.skyTargets.objects</code> (bright stars, a few Messier, the bright planets by default; add your own by J2000 RA/Dec or a planet name). These controls tune the scan.</small>
+          <label class="checkbox-row">
+            <input name="skyTargets.enabled" type="checkbox"> Enabled
+            <small class="field-hint">Master switch. Off → no scan and the plan panel is hidden. It is a niche advanced feature, so it ships off.</small></label>
+          <label>Plan horizon (days)<input name="skyTargets.planHorizonDays" type="number" step="1" min="1" max="14" placeholder="7">
+            <small class="field-hint">How many days ahead the plan looks. 1–14 (default 7). Far-out rows are placeholders that sharpen as the TLE refreshes.</small></label>
+          <label>Min elevation °<input name="skyTargets.minElevationDeg" type="number" step="1" min="0" max="90" placeholder="20">
+            <small class="field-hint">Ignore passes lower than this — poor seeing / horizon obstructions. Default 20°.</small></label>
+          <label class="checkbox-row">
+            <input name="skyTargets.requireSunlit" type="checkbox"> Require sunlit satellite
+            <small class="field-hint">Only count passes where the satellite is lit (not in Earth's shadow) — otherwise it's an invisible dot. Leave on.</small></label>
+          <label class="checkbox-row">
+            <input name="skyTargets.requireDarkSky" type="checkbox"> Require dark sky
+            <small class="field-hint">Only after dusk (Sun below the angle set below). With both gates on, these events naturally cluster in twilight.</small></label>
+          <label>Sun below °<input name="skyTargets.sunBelowDeg" type="number" step="1" min="-18" max="10" placeholder="-6">
+            <small class="field-hint">"Dark enough" threshold for the dark-sky gate. −6 = civil dusk (default); −12 = nautical, −18 = astronomical.</small></label>
+          <label>Re-slew gap (min)<input name="skyTargets.reslewMinGapMin" type="number" step="1" min="0" max="120" placeholder="5">
+            <small class="field-hint">Two events closer together than this can't both be caught by one telescope → flagged ⚠ in the plan. Default 5 min.</small></label>
+          <div class="field-group-label">Plan alerts (Pushover)</div>
+          <small class="field-hint">A heads-up the first time a planned pass reaches the confidence below — "this transit is firming up". Separate from the live transit alerts, opt-in, and fires <b>once</b> per event (restart-safe). Needs Pushover configured on the Pushover tab.</small>
+          <label class="checkbox-row">
+            <input name="skyTargets.planAlerts.enabled" type="checkbox"> Enabled
+            <small class="field-hint">Master switch for the plan heads-up pushes.</small></label>
+          <label>Min confidence
+            <select name="skyTargets.planAlerts.minConfidence">
+              <option value="green">🟢 green — only firm events</option>
+              <option value="amber">🟡 amber — earlier, more tentative</option>
+            </select>
+            <small class="field-hint">Alert once an event reaches this confidence (from the TLE age at the event). green pushes only when it's reliable; amber pushes earlier.</small></label>
+          <label>Alert lead (max days)<input name="skyTargets.planAlerts.leadMaxDays" type="number" step="1" min="1" max="14" placeholder="7">
+            <small class="field-hint">Only alert events within this many days. 1–14 (default 7).</small></label>
+          <label>Min elevation °<input name="skyTargets.planAlerts.minElevationDeg" type="number" step="1" min="0" max="90" placeholder="20">
+            <small class="field-hint">Don't alert passes lower than this. Default 20°.</small></label>
+        </fieldset>
+
+        <fieldset data-tab="catalog">
+          <legend>Sky-target catalogue</legend>
+          <small class="field-hint">The objects scanned for satellite passes (what appears in the Sky-target plan). Each is a <b>star / DSO</b> by <b>J2000</b> RA (hours) + Dec (degrees), or a <b>planet</b> by name (RA/Dec then ignored, the disc comes from its ephemeris). <b>Ø</b> = apparent size in degrees for an extended object (optional). Uncheck to skip one without deleting it. Saved with the rest of Settings.</small>
+          <div class="catalog-editor">
+            <div class="catalog-head">
+              <span title="Include in the scan">✓</span>
+              <span>ID</span><span>Name</span><span>RA h</span><span>Dec °</span><span>Ø °</span><span>Planet</span><span></span>
+            </div>
+            <div id="catalog-rows"></div>
+            <button type="button" id="catalog-add" class="btn">+ Add object</button>
+          </div>
+        </fieldset>
+
         </div><!-- /.settings-fields -->
 
         <div class="settings-actions">
