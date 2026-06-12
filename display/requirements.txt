@@ -14,6 +14,10 @@
 # Image rendering for the 1-bit framebuffer.
 Pillow>=10.0.0
 
+# Tiny QR code (data-source URL) in the panel corner. Optional — the renderer
+# skips the QR if this is missing, so it never breaks the panel.
+qrcode>=7.0
+
 # Pi 5 GPIO/SPI backends. RPi.GPIO does NOT work on the Pi 5 — gpiozero with the
 # lgpio factory is required; rpi-lgpio provides the RPi.GPIO API on top of lgpio
 # for driver code that still imports it.

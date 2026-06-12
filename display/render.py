@@ -1,6 +1,6 @@
 """
 Pillow renderer for the 4.2" e-paper panel (400×300, 1-bit black/white).
-v0.31.12
+v0.31.18
 
 render_state() turns an /api/state snapshot into a PIL Image. The layout is
 deliberately monospace so columns self-align, and fixed into three paragraphs.
@@ -34,6 +34,15 @@ import time
 from PIL import Image, ImageDraw, ImageFont
 
 import fov
+
+# Optional: a tiny QR code (data source URL) in the bottom-right corner. If the
+# `qrcode` library isn't installed the panel simply omits it — never an error.
+try:
+    import qrcode
+    _HAVE_QR = True
+except Exception:
+    qrcode = None
+    _HAVE_QR = False
 
 # Panel geometry (landscape).
 WIDTH = 400
@@ -588,7 +597,41 @@ def _sky_and_list(draw, state, pool):
         ry += 24
 
 
-def render_state(state, display_cfg=None):
+def _draw_qr(draw, url):
+    """Draw a tiny QR of `url` (the data source) in the very bottom-right corner.
+
+    As small as the data allows — one panel pixel per QR module (a ~24-char
+    `http://ip:port` URL is a 25×25-module code → ~25 px). A white quiet zone is
+    painted behind it so a phone can read it off the e-paper. No-op if the URL is
+    empty/loopback or the qrcode lib is missing."""
+    if not _HAVE_QR or not url:
+        return
+    low = url.lower()
+    if "127.0.0.1" in low or "localhost" in low:
+        return  # a loopback URL is useless from a phone — skip it
+    try:
+        qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L,
+                           box_size=1, border=0)
+        qr.add_data(url)
+        qr.make(fit=True)
+        m = qr.get_matrix()
+    except Exception:
+        return
+    n = len(m)
+    if not n:
+        return
+    quiet = 3                       # white quiet-zone pixels around the code
+    x1, y1 = WIDTH - 2, HEIGHT - 2  # bottom-right anchor
+    x0, y0 = x1 - n, y1 - n         # 1 px / module
+    draw.rectangle((x0 - quiet, y0 - quiet, x1 + quiet, y1 + quiet), fill=WHITE)
+    for r in range(n):
+        row = m[r]
+        for c in range(n):
+            if row[c]:
+                draw.point((x0 + c, y0 + r), fill=BLACK)
+
+
+def render_state(state, display_cfg=None, source_url=None):
     """Render a full /api/state snapshot to a 1-bit PIL Image.
 
     Fixed three-paragraph grid (not configurable — `display_cfg` is accepted for
@@ -596,8 +639,8 @@ def render_state(state, display_cfg=None):
       1) header line   — big clock · date · place · GPS / LIVE · CAND
       2) primary block — the nearest tracked plane in detail (ETA/SEP big) + FOV
       3) bottom block  — Sky-now + the next tracked planes
-    The planes come from the unified `lifecycle` list (real candidates float to
-    the top), so the panel shows traffic even when nothing is a Real candidate.
+    `source_url` (the host this panel polls) is encoded as a tiny QR in the
+    bottom-right corner so you can open that web UI on a phone.
     """
     img = Image.new("1", (WIDTH, HEIGHT), WHITE)
     draw = ImageDraw.Draw(img)
@@ -607,6 +650,7 @@ def render_state(state, display_cfg=None):
     _header(draw, state)
     _primary(draw, state, pool[0] if pool else None)
     _sky_and_list(draw, state, pool)
+    _draw_qr(draw, source_url)
     return img
 
 

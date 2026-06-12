@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 E-paper display client for the Sun-Moon Transit Predictor.
-v0.31.14
+v0.31.18
 
 A standalone, decoupled HTTP poller + renderer for a Waveshare 4.2" B/W SPI
 panel (400×300) on a Raspberry Pi 5. It carries NO business logic: it reads its
@@ -197,7 +197,8 @@ def run(panel, once=False):
             if conn_ok != last_conn_ok:
                 _log("connected to %s" % source_url if conn_ok else "offline: %s (%s)" % (source_url, reason))
                 last_conn_ok = conn_ok
-            img = render.render_state(state, display_cfg) if conn_ok else render.render_offline(source_url, reason)
+            img = (render.render_state(state, display_cfg, source_url=source_url)
+                   if conn_ok else render.render_offline(source_url, reason))
             need_full = (last_full == 0.0) or (now - last_full >= long_s) or recovered
             if need_full:
                 panel.show_full(img)

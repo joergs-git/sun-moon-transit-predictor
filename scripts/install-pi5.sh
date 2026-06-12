@@ -287,7 +287,7 @@ if [ "$WITH_DISPLAY" -eq 1 ]; then
   # doesn't work, this shim does).
   sudo_run apt-get update
   sudo_run apt-get install -y git python3-pip python3-pil python3-spidev \
-    python3-lgpio python3-gpiozero python3-rpi-lgpio \
+    python3-lgpio python3-gpiozero python3-rpi-lgpio python3-qrcode \
     || log "WARN: some apt packages were unavailable — check the names for your OS."
 
   # Waveshare driver. There is no reliable PyPI package, so install the official

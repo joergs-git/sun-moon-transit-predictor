@@ -33,6 +33,10 @@ nearby traffic even when nothing currently qualifies as a Real candidate.
 - **Sun / Moon glyphs** — a rayed disc / a crescent instead of `S` / `M`.
 - **`! STALE Ns`** — a contact that has lost its live ADS-B fix (data is N s old);
   list rows get a leading `!`.
+- **Mini QR (bottom-right)** — encodes the **data-source URL** this panel polls
+  (e.g. the remote predictor's `http://192.168.1.50:8081`), so you can scan it
+  and open that web UI on a phone. As small as the URL allows (1 px/module).
+  Skipped for loopback URLs, and omitted entirely if the `qrcode` lib is absent.
 
 The client carries no business logic — it polls the predictor's HTTP API and
 renders. So the data can come from **the same Pi** or a **remote Pi on the LAN**

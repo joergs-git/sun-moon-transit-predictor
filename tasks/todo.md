@@ -738,3 +738,18 @@ linking in; the table of contents matters most; not a dozen subpages.
 - [x] README slimmed 2015 → ~75 lines: title, hero, ASCII pipeline, quick-start
       one-liner, and a Documentation TOC linking into the wiki + in-repo docs.
 Wiki lives in the separate sun-moon-transit-predictor.wiki repo (pushed).
+
+---
+
+# E-paper: mini QR of the data-source URL (v0.31.18)
+
+User: a tiny QR encoding the URL of the underlying antenna system the display
+polls, bottom-right corner, as small as possible.
+- [x] render._draw_qr(): qrcode lib → module matrix → 1 px/module in the very
+      bottom-right corner with a white quiet zone. Encodes the resolved
+      source_url (passed from the client). Skips loopback URLs; optional import
+      (no qrcode → silently omitted, never an error).
+- [x] requirements.txt + install-pi5.sh (--with-display) add qrcode/python3-qrcode.
+- [x] Verified visually (25×25 px QR, no overlap with the AIRCRAFT list); 205
+      node tests + scheduler harness pass.
+Note: 1 px/module is the smallest; if a phone can't read it we can bump the scale.
