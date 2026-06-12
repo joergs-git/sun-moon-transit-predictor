@@ -160,50 +160,12 @@
       <!-- Plan view + side view moved under FOV preview (left column, v0.30.41). -->
       <div id="fov-map" class="fov-aux-cell" hidden></div>
       <div id="fov-side" class="fov-aux-cell" hidden></div>
-    </div>
-    <aside class="top-right">
-      <!-- RIGHT column (v0.30.28 layout):
-             1. #total-live-section -- ALWAYS visible at top, max 20 rows
-                before the table itself scrolls internally. With the FOV
-                auto-pick now expanding to 2°, the live list would
-                otherwise hide behind a perma-active FOV; pinning it on
-                top keeps the "what's in the sky right now" overview
-                always reachable.
-             2. #detect-section (Detection funnel) -- always visible
-                under the live list.
-             3. airframe info card -- self-hides when empty (so an idle
-                right column collapses to live list + funnel). -->
-      <section id="total-live-section" class="total-live-section">
-        <h2>
-          Total live trackings
-          <span class="th-sub">all in range · sorted by SEP</span>
-        </h2>
-        <p class="hint">Everything dump1090 currently sees, with each contact's current angular distance to the nearest body. Scrollable when more than ~20 aircraft are in view.</p>
-        <div class="table-scroll">
-          <table id="total-live-table" class="total-live-table">
-            <thead>
-              <tr>
-                <th title="Current angular separation between this aircraft and the nearest observable body (Sun or Moon).">SEP</th>
-                <th>Flight</th>
-                <th>ICAO</th>
-                <th title="Origin → destination from the routes database (when available).">Route</th>
-                <th title="Slant range from observer to aircraft.">Dist</th>
-                <th title="Altitude MSL.">Alt</th>
-                <th title="Ground speed.">km/h</th>
-                <th title="Aircraft ground-track bearing (compass heading).">Brg</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </section>
+      <!-- Detection funnel lives in the LEFT column under the FOV (v0.39.1) —
+           more vertical room here than under Total live trackings on the right. -->
       <section id="detect-section">
-        <!-- Detection funnel (moved out of Alert learning in v0.27.0 so it
-             sits next to Sky now where users actually look for live signal.) -->
-        <!-- Detection funnel (v0.8.0). Three horizontal bars: every unique
-             airframe the receiver saw this session, how many ever projected
-             inside the panel band, and how many ever skimmed < 0.5°. Bars are
-             pure CSS (no chart library — keeps the zero-dependency frontend). -->
+        <!-- Three CSS bars (every airframe seen this session, how many ever
+             projected inside the panel band, how many skimmed < 0.5°) + a
+             lifetime persistent block. -->
         <div class="detect-funnel" id="detect-funnel" title="Cumulative since the service started (resets on restart). 'Detected' counts every distinct aircraft with a usable position, regardless of how far it was from the Sun/Moon line.">
           <div class="funnel-title">Detection funnel <span class="funnel-sub" id="funnel-sub">since start</span></div>
           <div class="funnel-row">
@@ -263,6 +225,43 @@
             </div>
             <div class="funnel-foot">Each cell: <b>N</b> <span class="funnel-foot-frac">(% of all / % of ≥30°)</span></div>
           </div>
+        </div>
+      </section>
+    </div>
+    <aside class="top-right">
+      <!-- RIGHT column (v0.30.28 layout):
+             1. #total-live-section -- ALWAYS visible at top, max 20 rows
+                before the table itself scrolls internally. With the FOV
+                auto-pick now expanding to 2°, the live list would
+                otherwise hide behind a perma-active FOV; pinning it on
+                top keeps the "what's in the sky right now" overview
+                always reachable.
+             2. #detect-section (Detection funnel) -- always visible
+                under the live list.
+             3. airframe info card -- self-hides when empty (so an idle
+                right column collapses to live list + funnel). -->
+      <section id="total-live-section" class="total-live-section">
+        <h2>
+          Total live trackings
+          <span class="th-sub">all in range · sorted by SEP</span>
+        </h2>
+        <p class="hint">Everything dump1090 currently sees, with each contact's current angular distance to the nearest body. Scrollable when more than ~20 aircraft are in view.</p>
+        <div class="table-scroll">
+          <table id="total-live-table" class="total-live-table">
+            <thead>
+              <tr>
+                <th title="Current angular separation between this aircraft and the nearest observable body (Sun or Moon).">SEP</th>
+                <th>Flight</th>
+                <th>ICAO</th>
+                <th title="Origin → destination from the routes database (when available).">Route</th>
+                <th title="Slant range from observer to aircraft.">Dist</th>
+                <th title="Altitude MSL.">Alt</th>
+                <th title="Ground speed.">km/h</th>
+                <th title="Aircraft ground-track bearing (compass heading).">Brg</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
         </div>
       </section>
       <div id="fov-acinfo" class="fov-aux-right" hidden></div>
