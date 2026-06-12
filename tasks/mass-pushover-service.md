@@ -120,14 +120,68 @@ TLE-Refreshes wandert.
 
 ## 7. An-/Abmeldung
 
-- **Anmeldung:** statische Seite (GitHub Pages reicht) + Supabase Edge
-  Function: Pushover-Key, Standort (Karten-Picker oder lat/lon-Felder),
-  optional min. Elevation. Key-Validierung sofort. Optionales Double-Opt-in
-  (erste Push „Bestätige mit Klick") verhindert Eintragen fremder Keys —
-  empfohlen, da fremde Keys sonst Spam an Unbeteiligte bedeuten.
-- **Abmeldung:** Link in **jeder** Nachricht:
-  `GET /unsubscribe?token=HMAC(user_id, secret)` → Edge Function löscht die
-  Zeile. Kein Login, ein Klick, fertig.
+### 7.1 Warum Links auf Edge Functions zeigen — nicht auf GitHub Actions
+
+GitHub Actions sind **per Link-Klick nicht sinnvoll triggerbar**: die API-
+Trigger (`workflow_dispatch`/`repository_dispatch`) verlangen einen **POST mit
+Auth-Token im Header** — ein `<a href>`-Klick ist ein GET ohne Header; den
+Token in die URL zu legen hieße, jedem Empfänger Workflow-Start-Rechte zu
+geben. Dazu Runner-Anlaufzeit (Sekunden–Minuten → keine Bestätigungsseite).
+Rollenteilung daher:
+
+| Komponente | Aufruf | Aufgabe |
+|---|---|---|
+| GitHub Action | nur Cron (6–12 h) | rechnen + Nachrichten senden |
+| Supabase Edge Functions | User-Klicks (GET/POST) | an-/abmelden, sofortiges Feedback |
+| GitHub Pages | Browser | statische Anmeldeseite |
+
+Edge-Function-Detail: Default verlangt Supabase einen `Authorization`-Header
+(anon key) → öffentliche Klick-Endpoints mit `--no-verify-jwt` deployen; die
+Absicherung übernimmt allein der HMAC-Token in der URL.
+
+### 7.2 Anmeldeseite — wo und wie Nutzer ihre Daten eingeben
+
+**Wo:** statische Seite per **GitHub Pages aus diesem Repo** (z. B.
+`https://joergs-git.github.io/sun-moon-transit-predictor/alerts/`) — gratis,
+kein Server, und der Werbelink in den Nachrichten führt ohnehin zum Repo, d. h.
+Anmeldung und Projekt wohnen unter einem Dach. Die Seite ist reines
+HTML/JS-Formular; abgeschickt wird per `fetch` POST an die Edge Function
+`/subscribe`.
+
+**Formularfelder:**
+
+1. **Pushover User Key** — Textfeld mit Kurzanleitung („App installieren →
+   pushover.net einloggen → der 30-Zeichen-Key oben auf der Startseite") und
+   Direktlink. Die Edge Function validiert ihn sofort serverseitig via
+   `users/validate.json` → Tippfehler scheitern mit klarer Meldung, bevor
+   irgendetwas gespeichert wird. (App-Token bleibt serverseitig — der Key des
+   Nutzers allein genügt zum Empfangen.)
+2. **Standort** — drei Wege, alle befüllen dieselben lat/lon-Felder:
+   - 📍 **„Meinen Standort verwenden"**-Button → Browser-Geolocation-API.
+     Der wichtigste Weg: Pushover-Nutzer melden sich vom **Handy** an, ein
+     Tap genügt, GPS-genau.
+   - **Karten-Picker** — Leaflet + OpenStreetMap (kein API-Key, keine Kosten):
+     Pin ziehen, lat/lon übernehmen. Für Desktop-Nutzer und „mein Garten,
+     nicht meine IP".
+   - **Manuelle lat/lon-Felder** — für Leute, die ihre Koordinaten kennen
+     (dieselbe Zielgruppe betreibt oft schon ADS-B/Astro-Setups).
+   Höhe (`elev_m`) optional; Default 0 bzw. aus einem Open-Elevation-Lookup —
+   für die Korridor-Frage ist sie zweitrangig (≪ Korridorbreite).
+3. **Optionen** (sparsam): Sonne/Mond-Checkboxen, min. Elevation
+   (Default 10–15°). Mehr nicht — jede weitere Einstellung kostet Anmeldungen.
+
+**Ablauf:** Formular → `POST /subscribe` → Key-Validierung → Zeile mit
+`confirmed=false` → sofort eine Bestätigungs-Push („Klick hier zum
+Aktivieren", Link = `GET /confirm?token=HMAC(user_id)`) → erst nach Klick
+`confirmed=true`, der Worker beachtet nur bestätigte Zeilen. Das ist das
+Double-Opt-in aus §10 — es beweist nebenbei, dass die Push-Strecke
+funktioniert, und verhindert das Eintragen fremder Keys.
+
+### 7.3 Abmeldung
+
+Link in **jeder** Nachricht: `GET /unsubscribe?token=HMAC(user_id, secret)` →
+Edge Function prüft den HMAC, löscht die Zeile, liefert eine kleine
+HTML-Bestätigung („Abgemeldet — [wieder anmelden]"). Kein Login, ein Klick.
 
 ## 8. Abgrenzung zum Haupt-Repo
 
@@ -155,7 +209,9 @@ TLE-Refreshes wandert.
 - Eigenes Repo oder Unterordner hier? (Actions-Minuten sind nur auf
   öffentlichen Repos gratis; Worker braucht den Rechenkern als Import —
   einfachster Start: gleiches Repo, eigener Workflow.)
-- Double-Opt-in ja/nein (empfohlen wegen Fremd-Key-Missbrauch).
 - Nachricht ein- oder zweistufig (nur 24–48 h vorher, oder zusätzlich eine
   Erinnerung ~1 h vorher — kostet Kontingent, Cron-Jitter beachten).
-- Karten-Picker vs. nur lat/lon-Felder auf der Anmeldeseite.
+
+Geklärt (2026-06-12): Links zeigen auf Edge Functions, nie auf Actions (§7.1);
+Anmeldung per GitHub-Pages-Formular mit Geolocation-Button + Leaflet-Karten-
+Picker + manuellen Feldern (§7.2); Double-Opt-in ist Teil des Anmelde-Flows.
