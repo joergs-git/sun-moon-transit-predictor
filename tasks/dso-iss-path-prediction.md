@@ -184,7 +184,66 @@ der die mm/s @ FL schon kennt.
 - History/Disc-xing-Spalte: für Punkt-Ziele „Miss-Distance + Zeit im Feld"
   statt Scheibendurchgang.
 
-## 10. Nicht-Ziele / spätere Features
+## 10. Active-Target — welches Objekt liegt gerade am Teleskop an
+
+Bis dato war das Beobachtungsobjekt **hartkodiert** (Sonne tags / Mond nachts,
+pro Rig per `sharpcap.body` als `Sun|Moon`). Mit mehreren Nacht-Zielen muss in
+der **Haupt-UI** (nicht in den Settings) auswählbar sein, **worauf das
+Teleskop gerade gerichtet ist**.
+
+- **Auswahl-Widget** (Pull-down / Chip-Leiste) in der Haupt-UI, gefüllt
+  **nicht** mit einem statischen All-Sky-Katalog, sondern mit den **Zielen,
+  die heute Nacht real einen Treffer haben** (= die sortierten Kandidaten aus
+  dem Predictor). Das ist der springende Punkt: man wählt nur aus, wofür es
+  überhaupt etwas zu sehen gibt.
+- Das gewählte Ziel wird das **„scharfe"** Objekt: Capture-Trigger, Pushover/
+  Buzzer-Countdown und FOV-Skizze keyen darauf. Generalisiert den heutigen
+  `sharpcap.body`-Wert von `{Sun,Moon}` auf „aktuelles Active-Target".
+- **Ein Scope = ein Ziel** zur Zeit (spiegelt die bestehende „Sun *oder* Moon"-
+  Regel). Bei Multi-Rig (SharpCap-Rig-Liste existiert schon) hat **jedes Rig
+  sein eigenes** Active-Target → zwei dicht aufeinanderfolgende Events können
+  auf zwei Teleskope verteilt werden.
+- **Persistenz:** Runtime-/Betreiber-Zustand (welches Objekt angefahren ist),
+  überlebt Reload; gehört nicht ins Config-Schema der Ziel-*Definitionen*,
+  sondern ist Sitzungs-/Laufzeitzustand.
+
+## 11. Beobachtungsplan / „Drehbuch" — die Nacht-Timeline
+
+Der eigentlich wertvolle Teil (Idee des Users): Die App **schlägt** auf Basis
+des **eigenen Standorts** vor, welche Objekte in der kommenden Nacht ISS-Treffer
+haben, **in zeitlicher Reihenfolge** — wie ein Drehbuch:
+
+```
+21:48  🌙 Mond      — ISS-Transit,  El 41°,  Sep 0,1°
+22:30  M42 (Orion)  — ISS durch FOV, El 28°, Miss 6′
+23:15  ♃ Jupiter    — ISS-Transit,  El 35°,  Miss 12″   ⚠ nur 8 min nach M42
+00:50  Vega         — Appulse,       El 60°,  Miss 9′
+```
+
+Damit weiß der Betreiber **wann er wohin schauen** muss, hakt das laufende
+Objekt ab und stellt das nächste als Active-Target ein.
+
+- **Datenquelle:** Aggregation der bereits sortierten Predictor-Kandidaten
+  über **alle** aktivierten Ziele **inkl. Sonne/Mond**, gemerged und nach Zeit
+  sortiert. Read-Model, kein neuer Rechenkern.
+- **Pro Eintrag:** Objekt · Uhrzeit (closest approach) · Typ (Scheiben-Transit /
+  Bahn-durch-Feld / Appulse) · Elevation · Sep/Miss · ISS sonnenbeschienen?
+  · TLE-Frische-/Konfidenz-Hinweis.
+- **Konflikt-Erkennung:** Zwei Events innerhalb einer **Umschwenk-+Refokus-
+  Zeit** (Minuten, konfigurierbar, z. B. `reslewMinGapMin`) sind mit **einem**
+  Teleskop nicht beide machbar → als Konflikt markieren („⚠ nur 8 min nach
+  M42"). Bei mehreren Rigs: Vorschlag, das Event dem freien Rig zuzuweisen.
+- **„Up next":** Der nächste fällige Eintrag wird hervorgehoben; optional
+  Vorschlag „Jetzt M42 als Active-Target setzen?". **Manuell bestätigen**, nicht
+  automatisch umschalten — der Betreiber kennt die Realität (Wolken, Mount).
+- **UI-Ort:** eigene Panel-Sektion in der Haupt-UI (neben/über der Live-Tracking-
+  Liste), nicht in den Settings. Die Settings (Tab „Sky targets") definieren nur
+  **welche Objekte im Katalog** sind; der Plan ist die Laufzeit-Ansicht daraus.
+- **Horizont:** „heute Nacht" = von Einbruch der Nacht bis Morgendämmerung am
+  Standort (Sonne unter `sunBelowDeg`); tagsüber bleibt es der Sonnen-Transit-
+  Fall.
+
+## 12. Nicht-Ziele / spätere Features
 
 - **Zentrallinien-/Bodenspur-Export** (für Planeten-Scheiben-Transits, deren
   Zentrallinie nur zig Meter breit ist → „hinfahren"-Workflow): eigenes,
@@ -194,7 +253,7 @@ der die mm/s @ FL schon kennt.
 
 ---
 
-## 11. Plan (nach Freigabe dieses Docs)
+## 13. Plan (nach Freigabe dieses Docs)
 
 - [ ] `geometry.js`: `bodyEnumOf` Planeten; RA/Dec-Pfad (`DefineStar`);
       `apparentDiameterDeg()`.
@@ -204,13 +263,21 @@ der die mm/s @ FL schon kennt.
 - [ ] `service.js`: `iss.skyTargets`-Config validieren (transaktional, vgl.
       lessons.md 2026-06-08); TLE-Frische-Gate; in den Recompute-Zyklus hängen.
 - [ ] TLE-Frische am Kandidaten führen + anzeigen; Warnung bei Überalterung.
+- [ ] **Active-Target-Zustand** (pro Rig): generalisiert `sharpcap.body`;
+      Trigger/Alerts/FOV keyen darauf; Laufzeit-persistent.
+- [ ] **Auswahl-Widget** in der Haupt-UI, gefüllt aus den Tonight-Kandidaten.
+- [ ] **Beobachtungsplan-Panel:** gemergte, zeitsortierte Timeline aller
+      aktivierten Ziele inkl. Sonne/Mond; Konflikt-Markierung (`reslewMinGapMin`);
+      „Up next" + manueller „als Active-Target setzen"-Vorschlag.
 - [ ] Trigger nur ISS-Burst; Body-Label = Objektname; Disc-xing-Spalte für
       Punkt-Ziele.
 - [ ] Tests: Planet-Az/El, RA/Dec-Stern-Az/El, FOV-Box-Treffer (durch vs.
-      daneben), Illuminations-Gate, apparentDiameter.
-- [ ] README/MILESTONES: M82; Workflow-Trennung (DSO-Stack + ISS-Lucky-Frame).
+      daneben), Illuminations-Gate, apparentDiameter, Timeline-Merge+Sort,
+      Konflikt-Erkennung.
+- [ ] README/MILESTONES: M82; Workflow-Trennung (DSO-Stack + ISS-Lucky-Frame);
+      Drehbuch/Active-Target.
 
-## 12. Offene Fragen
+## 14. Offene Fragen
 
 - FOV-Box **achsenausgerichtet** (Az/El) ausreichend, oder muss die
   **Kamerarotation** (PA des Sensors) berücksichtigt werden?
@@ -219,3 +286,9 @@ der die mm/s @ FL schon kennt.
   die Engine.)
 - Objektliste **kuratiert mitgeliefert** (helle Sterne/Messier) oder rein
   benutzerdefiniert? (vgl. lessons.md: keine Knöpfe ohne echten Mehrwert.)
+- Active-Target **rein manuell** umschalten, oder „Up next" mit **Bestätigung**
+  (kein stilles Auto-Advance — Betreiber kennt Wolken/Mount)?
+- Konflikt-Schwelle `reslewMinGapMin` **fester Default** (z. B. 5 min) oder pro
+  Standort/Rig konfigurierbar (langsame vs. schnelle Montierung)?
+- Drehbuch-Panel als **eigene Haupt-UI-Sektion** oder als Tab/Akkordeon neben
+  der Live-Tracking-Liste — Platzbudget der Hauptseite?
