@@ -917,6 +917,7 @@ export async function runService({
   // Sky-target plan cache (M83): the merged satellite × sky-target timeline,
   // recomputed on its own slow cadence (config.iss.skyTargets.recomputeMs).
   let skyTargetPlan = [];
+  let skyTargetNextEver = [];   // soonest pass per object×satellite over the full scan horizon
   let lastSkyComputeMs = 0;
   // Active target (M83): which sky object the scope is pointed at. 'auto' = the
   // legacy behaviour (arm capture on any Sun/Moon transit); 'Sun'/'Moon' narrow
@@ -2272,7 +2273,10 @@ export async function runService({
         if (entry?.tle) sats.push({ tag: satCfg.tag, name: satCfg.name, satrec: entry.tle.satrec });
       }
       const planHorizonDays = skyCfg.planHorizonDays ?? 7;
-      const horizonMs = Math.min(config.iss.horizonMs, planHorizonDays * 86400000);
+      // Scan the FULL horizon (not just planHorizonDays) so the "next
+      // opportunity" view can show a combo's soonest pass even weeks out; the
+      // normal plan still filters down to planHorizonDays below.
+      const horizonMs = config.iss.horizonMs;
       const candidates = [];
       const tleEpochMsByTag = {};
       for (const s of sats) {
@@ -2295,19 +2299,27 @@ export async function runService({
           logger.warn?.(`sky-target prediction failed for ${s.tag}:`, e?.message ?? e);
         }
       }
-      skyTargetPlan = buildSkyTargetPlan(candidates, {
+      const planOpts = {
         nowMs,
         tleEpochMsByTag,
-        planHorizonDays,
         minElevationDeg: skyCfg.minElevationDeg ?? 0,
         reslewMinGapMin: skyCfg.reslewMinGapMin ?? 5,
+      };
+      skyTargetPlan = buildSkyTargetPlan(candidates, { ...planOpts, planHorizonDays });
+      // "Next opportunity" view: soonest pass per object×satellite across the
+      // full scan horizon (so far-out combos still show up).
+      skyTargetNextEver = buildSkyTargetPlan(candidates, {
+        ...planOpts,
+        planHorizonDays: Math.ceil(config.iss.horizonMs / 86400000),
+        firstPerCombo: true,
       });
       // Edge-triggered Pushover plan-alerts off the fresh plan (no-op unless
       // skyTargets.planAlerts.enabled + Pushover configured).
       runPlanAlerts(skyTargetPlan, nowMs);
       lastSkyComputeMs = nowMs;
-    } else if (!skyCfg?.enabled && skyTargetPlan.length) {
+    } else if (!skyCfg?.enabled && (skyTargetPlan.length || skyTargetNextEver.length)) {
       skyTargetPlan = [];   // feature turned off → clear the stale plan
+      skyTargetNextEver = [];
     }
 
     // Drop a visible pass once it is over so the Sky-now line never shows a
@@ -2376,12 +2388,15 @@ export async function runService({
     // rated timeline of every satellite × sky-target pass (the "Drehbuch").
     // Persists between its slow recomputes; empty when the feature is off.
     state.skyTargetPlan = skyTargetPlan;
+    state.skyTargetNextEver = skyTargetNextEver;
     state.skyTargets = {
       enabled: Boolean(skyCfg?.enabled),
       objectCount: (skyCfg?.objects ?? []).filter((o) => o?.enabled !== false).length,
       planCount: skyTargetPlan.length,
+      nextEverCount: skyTargetNextEver.length,
       nextAtMs: skyTargetPlan[0]?.atMs ?? null,
       planHorizonDays: skyCfg?.planHorizonDays ?? 7,
+      scanHorizonDays: Math.ceil((config.iss?.horizonMs ?? 0) / 86400000),
     };
 
     // Feed the lifecycle + notifier only the ISS transits that are close

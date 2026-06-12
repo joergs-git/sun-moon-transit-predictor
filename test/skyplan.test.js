@@ -60,6 +60,19 @@ describe('buildSkyTargetPlan', () => {
     expect(rows[0].elevationDeg).toBe(45);
   });
 
+  it('firstPerCombo keeps only the soonest pass per satellite×object', () => {
+    const rows = buildSkyTargetPlan([
+      cand({ closestApproachAtMs: now + 3 * DAY, satTag: 'ISS', targetId: 'm42' }),
+      cand({ closestApproachAtMs: now + 1 * DAY, satTag: 'ISS', targetId: 'm42' }),   // sooner ISS×m42
+      cand({ closestApproachAtMs: now + 2 * DAY, satTag: 'HST', targetId: 'm42' }),   // different sat
+      cand({ closestApproachAtMs: now + 4 * DAY, satTag: 'ISS', targetId: 'vega' }),  // different object
+    ], { nowMs: now, planHorizonDays: 30, firstPerCombo: true });
+    // One row per (sat, object): ISS×m42 (soonest = +1 d), HST×m42, ISS×vega.
+    expect(rows.length).toBe(3);
+    const issM42 = rows.find((r) => r.satTag === 'ISS' && r.targetId === 'm42');
+    expect(issM42.atMs).toBe(now + 1 * DAY);
+  });
+
   it('derives confidence from TLE epoch and flags single-scope conflicts', () => {
     const epoch = now - 0.2 * DAY;   // fresh TLE
     const rows = buildSkyTargetPlan([

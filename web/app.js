@@ -348,22 +348,38 @@ async function setActiveTarget(target) {
 }
 
 $('#active-target-select')?.addEventListener('change', (ev) => setActiveTarget(ev.target.value));
+// Sky-plan view toggle (horizon ↔ next-opportunity) — re-render from cached state.
+$('#skyplan-nextever')?.addEventListener('change', () => { if (lastSkyState) renderSkyPlan(lastSkyState); });
 
 // Render the sky-target observation plan ("Drehbuch"). Hidden unless the
 // feature is on AND there is at least one upcoming pass.
+let lastSkyState = null;   // cached so the view toggle can re-render without a refetch
 function renderSkyPlan(state) {
+  lastSkyState = state;
   const section = $('#skyplan-section');
   if (!section) return;
-  const plan = Array.isArray(state.skyTargetPlan) ? state.skyTargetPlan : [];
   const meta = state.skyTargets;
-  if (!meta?.enabled || plan.length === 0) { section.hidden = true; return; }
+  const nextEver = $('#skyplan-nextever')?.checked;
+  const plan = nextEver
+    ? (Array.isArray(state.skyTargetNextEver) ? state.skyTargetNextEver : [])
+    : (Array.isArray(state.skyTargetPlan) ? state.skyTargetPlan : []);
+  // Show the panel if EITHER view has data, so the toggle is reachable even when
+  // the horizon view is empty but a far-out opportunity exists.
+  const anyData = (state.skyTargetPlan?.length || state.skyTargetNextEver?.length);
+  if (!meta?.enabled || !anyData) { section.hidden = true; return; }
   section.hidden = false;
   const sub = $('#skyplan-sub');
   if (sub) {
-    sub.textContent = `${plan.length} pass${plan.length === 1 ? '' : 'es'} · next ${meta.planHorizonDays ?? 7} d · ${meta.objectCount ?? 0} targets`;
+    sub.textContent = nextEver
+      ? `soonest per object · scan ${meta.scanHorizonDays ?? 14} d · ${plan.length} combo${plan.length === 1 ? '' : 's'}`
+      : `${plan.length} pass${plan.length === 1 ? '' : 'es'} · next ${meta.planHorizonDays ?? 7} d · ${meta.objectCount ?? 0} targets`;
   }
   const tbody = $('#skyplan tbody');
   tbody.innerHTML = '';
+  if (!plan.length) {
+    tbody.innerHTML = `<tr class="empty"><td colspan="8">No passes in the next ${meta.planHorizonDays ?? 7} days — switch on “next opportunity” to see when each object's chance first comes.</td></tr>`;
+    return;
+  }
   for (const r of plan) {
     const c = CONFIDENCE_BADGE[r.confidence] ?? { dot: '⚪', label: '—', tip: 'Confidence unknown (no TLE epoch).' };
     const typeLabel = r.kind === 'transit' ? 'transit' : 'field';

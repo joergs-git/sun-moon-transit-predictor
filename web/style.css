@@ -1297,3 +1297,16 @@ a.acstats-label.hex-link:hover { text-decoration: underline; }
 .sat-pass-table .sat-row-label { color: var(--muted); white-space: nowrap; cursor: help; font-weight: 500; }
 .sat-pass-table .sat-sub { color: var(--muted); font-size: 10.5px; }
 .sat-pass-table .sat-none { color: var(--muted); opacity: 0.6; }
+
+/* Sky-plan view toggle (horizon ↔ next-opportunity) */
+.skyplan-toggle {
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  margin-left: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.skyplan-toggle input { vertical-align: middle; margin-right: 3px; }

@@ -61,6 +61,7 @@ export function buildSkyTargetPlan(candidates, opts = {}) {
     planHorizonDays = 7,
     minElevationDeg = 0,
     reslewMinGapMin = 5,
+    firstPerCombo = false,        // keep only the SOONEST pass per satellite×object
   } = opts;
   const horizonMs = planHorizonDays * MS_PER_DAY;
 
@@ -96,14 +97,28 @@ export function buildSkyTargetPlan(candidates, opts = {}) {
 
   rows.sort((a, b) => a.atMs - b.atMs);
 
+  // "Next opportunity" view: keep only the soonest pass per satellite×object,
+  // so you can see when each combo first comes into reach even if it is weeks
+  // out (rows are sorted, so the first seen per key is the soonest).
+  let out = rows;
+  if (firstPerCombo) {
+    const seen = new Set();
+    out = rows.filter((r) => {
+      const k = `${r.satTag}|${r.targetId}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }
+
   // Single-scope conflict: an event that starts within the re-slew + refocus
   // window of the previous one can't also be caught by the same telescope.
   const gapMs = reslewMinGapMin * 60_000;
-  for (let i = 1; i < rows.length; i += 1) {
-    if (rows[i].atMs - rows[i - 1].atMs < gapMs) {
-      rows[i].conflictWithPrev = true;
-      rows[i].conflictGapMs = rows[i].atMs - rows[i - 1].atMs;
+  for (let i = 1; i < out.length; i += 1) {
+    if (out[i].atMs - out[i - 1].atMs < gapMs) {
+      out[i].conflictWithPrev = true;
+      out[i].conflictGapMs = out[i].atMs - out[i - 1].atMs;
     }
   }
-  return rows;
+  return out;
 }
