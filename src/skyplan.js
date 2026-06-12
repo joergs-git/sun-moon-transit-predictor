@@ -32,7 +32,7 @@ export function confidenceFor(tag, ageAtEventDays) {
   return level;
 }
 
-const CONFIDENCE_RANK = { green: 3, amber: 2, orange: 1, red: 0 };
+export const CONFIDENCE_RANK = { green: 3, amber: 2, orange: 1, red: 0 };
 
 /** True when `level` meets or exceeds `min` (e.g. atLeastConfidence('amber','green') === false). */
 export function atLeastConfidence(level, min) {

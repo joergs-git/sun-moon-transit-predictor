@@ -126,6 +126,23 @@ CREATE INDEX IF NOT EXISTS idx_postmortem_recorded
   ON transit_postmortem(recorded_at_ms DESC);
 CREATE INDEX IF NOT EXISTS idx_postmortem_body
   ON transit_postmortem(body, recorded_at_ms DESC);
+
+-- Sky-target plan-alert dedup state (M83). One row per physical predicted
+-- event (satellite × object × approximate time). Remembers the highest
+-- confidence already pushed, so an upgrade (amber→green) alerts once, repeated
+-- recomputes don't re-alert, and the state survives a restart. The event is
+-- matched fuzzily on the same (sat_tag, object_id) with |at_ms − ?| < tolerance
+-- so the daily TLE refresh nudging the time by seconds doesn't spawn a dup.
+CREATE TABLE IF NOT EXISTS sky_plan_alerts (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  sat_tag       TEXT NOT NULL,
+  object_id     TEXT NOT NULL,
+  at_ms         INTEGER NOT NULL,
+  confidence    TEXT NOT NULL,
+  alerted_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sky_alerts_match
+  ON sky_plan_alerts(sat_tag, object_id, at_ms);
 `;
 
 export class HistoryStore {
@@ -553,6 +570,48 @@ export class HistoryStore {
     return this.db
       .prepare('DELETE FROM schedule_observations WHERE timestamp_ms < ?')
       .run(cutoffMs).changes;
+  }
+
+  // ── Sky-target plan-alert dedup (M83) ─────────────────────────────────────
+
+  /**
+   * Find the dedup row for a predicted sky-target event, matched fuzzily on
+   * (sat_tag, object_id) with the closest at_ms within `toleranceMs`. Returns
+   * the already-alerted state so the caller can decide whether this is a fresh
+   * event or a confidence upgrade.
+   * @returns {{ id:number, confidence:string, atMs:number }|null}
+   */
+  findSkyPlanAlert(satTag, objectId, atMs, toleranceMs) {
+    const r = this.db.prepare(
+      `SELECT id, confidence, at_ms, alerted_at_ms FROM sky_plan_alerts
+       WHERE sat_tag = ? AND object_id = ? AND ABS(at_ms - ?) <= ?
+       ORDER BY ABS(at_ms - ?) ASC LIMIT 1`,
+    ).get(satTag, objectId, atMs, toleranceMs, atMs);
+    return r ? { id: r.id, confidence: r.confidence, atMs: r.at_ms, alertedAtMs: r.alerted_at_ms } : null;
+  }
+
+  /**
+   * Record (or upgrade) a plan-alert. With `id` it updates the matched row's
+   * time + confidence; without it inserts a new event row.
+   */
+  upsertSkyPlanAlert({ id, satTag, objectId, atMs, confidence, alertedAtMs }) {
+    if (id != null) {
+      this.db.prepare(
+        `UPDATE sky_plan_alerts SET at_ms = ?, confidence = ?, alerted_at_ms = ? WHERE id = ?`,
+      ).run(atMs, confidence, alertedAtMs, id);
+      return id;
+    }
+    return Number(this.db.prepare(
+      `INSERT INTO sky_plan_alerts (sat_tag, object_id, at_ms, confidence, alerted_at_ms)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(satTag, objectId, atMs, confidence, alertedAtMs).lastInsertRowid);
+  }
+
+  /** Drop dedup rows for events more than `beforeMs` in the past (housekeeping). */
+  pruneSkyPlanAlerts(beforeMs) {
+    return this.db
+      .prepare('DELETE FROM sky_plan_alerts WHERE at_ms < ?')
+      .run(beforeMs).changes;
   }
 
   /**

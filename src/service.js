@@ -39,7 +39,7 @@ import { extrapolate, findTransits } from './tracker.js';
 import {
   loadIssTle, predictIssTransits, predictSkyTargetTransits, nextIssVisiblePass,
 } from './iss.js';
-import { buildSkyTargetPlan } from './skyplan.js';
+import { buildSkyTargetPlan, CONFIDENCE_RANK } from './skyplan.js';
 import { DEFAULT_SKY_TARGETS } from './skycatalog.js';
 
 export const DEFAULT_CONFIG = {
@@ -308,6 +308,18 @@ export const DEFAULT_CONFIG = {
       requireDarkSky: true,       // …and the sky dark — so these cluster in twilight
       sunBelowDeg: -6,            // "dark enough": Sun below civil dusk
       reslewMinGapMin: 5,         // two events closer than this can't share one scope → conflict flag
+      // Pushover plan-alerts (M83 §12): a heads-up the moment a future pass
+      // FIRST reaches the confidence threshold ("a transit is firming up"),
+      // separate from the live radio→imminent transit alerts and edge-triggered
+      // (one push per event, restart-safe via the sky_plan_alerts dedup table).
+      planAlerts: {
+        enabled: false,
+        minConfidence: 'green',   // 'green' | 'amber' — fire once it reaches this
+        minElevationDeg: 20,      // ignore low passes
+        leadMaxDays: 7,           // only alert events within this many days
+        satellites: [],           // [] = all (else ['ISS','HST',…])
+        objects: [],              // [] = all (else ['m42','jupiter',…] object ids)
+      },
       // FOV box per target is taken from the rig optics (config.optics: focal
       // length + sensor) unless an object sets fovWidthDeg/fovHeightDeg. The
       // catalogue (brightest stars + largest/brightest DSO across BOTH
@@ -684,6 +696,76 @@ export async function runService({
     }
   }
 
+  // Pushover plan-alerts (M83 §12): an opt-in heads-up the moment a planned pass
+  // FIRST reaches the confidence threshold ("this transit is firming up") —
+  // separate from the live radio→imminent transit alerts. Edge-triggered + the
+  // sky_plan_alerts dedup table make it fire once per event, restart-safe, even
+  // as recomputes nudge the predicted time.
+  const PLAN_ALERT_TOL_MS = 5 * 60_000;   // fuzzy event-match window
+  async function sendPlanAlert(row) {
+    const dot = { green: '🟢', amber: '🟡', orange: '🟠', red: '🔴' }[row.confidence] ?? '';
+    const typeLabel = row.kind === 'transit' ? 'transit' : 'field pass';
+    const missTxt = row.missArcmin == null ? '?'
+      : (row.missArcmin >= 60 ? `${(row.missArcmin / 60).toFixed(2)}°` : `${Math.round(row.missArcmin)}′`);
+    const leadH = row.leadMs / 3600_000;
+    const leadTxt = leadH >= 48 ? `${(leadH / 24).toFixed(1)} d` : `${leadH.toFixed(1)} h`;
+    const when = new Date(row.atMs).toLocaleString();
+    const url = config.pushover?.url || undefined;
+    return pushover.send({
+      title: `🛰 ${row.satTag} ${typeLabel}: ${row.targetName}`,
+      message: `${dot} ${row.confidence} · ${when}\n`
+        + `Sat: ${row.satName ?? row.satTag} · Object: ${row.targetName}\n`
+        + `Miss ${missTxt} · El ${Math.round(row.elevationDeg ?? 0)}° · lead ${leadTxt}`,
+      url,
+      urlTitle: url ? 'Open predictor' : undefined,
+    });
+  }
+
+  function runPlanAlerts(plan, nowMs) {
+    const cfg = config.iss?.skyTargets?.planAlerts;
+    if (!cfg?.enabled || !pushover.enabled) return;
+    const minRank = CONFIDENCE_RANK[cfg.minConfidence] ?? CONFIDENCE_RANK.green;
+    const leadMaxMs = (cfg.leadMaxDays ?? 7) * 86400000;
+    const minEl = cfg.minElevationDeg ?? 0;
+    const satFilter = Array.isArray(cfg.satellites) && cfg.satellites.length ? new Set(cfg.satellites) : null;
+    const objFilter = Array.isArray(cfg.objects) && cfg.objects.length ? new Set(cfg.objects) : null;
+    for (const row of plan) {
+      if (row.leadMs < 0 || row.leadMs > leadMaxMs) continue;
+      if (minEl && Number.isFinite(row.elevationDeg) && row.elevationDeg < minEl) continue;
+      if (satFilter && !satFilter.has(row.satTag)) continue;
+      if (objFilter && !objFilter.has(row.targetId)) continue;
+      const rank = CONFIDENCE_RANK[row.confidence];
+      if (rank == null || rank < minRank) continue;
+
+      let existing = null;
+      try { existing = store.findSkyPlanAlert(row.satTag, row.targetId, row.atMs, PLAN_ALERT_TOL_MS); }
+      catch (e) { logger.warn?.('plan-alert lookup failed:', e?.message ?? e); continue; }
+      const prevRank = existing ? (CONFIDENCE_RANK[existing.confidence] ?? -1) : -1;
+      if (existing && prevRank >= rank) {
+        // Already alerted at ≥ this confidence — just re-anchor the stored time
+        // so the daily TLE drift keeps matching the SAME event (no re-alert).
+        try {
+          store.upsertSkyPlanAlert({
+            id: existing.id, satTag: row.satTag, objectId: row.targetId,
+            atMs: row.atMs, confidence: existing.confidence, alertedAtMs: existing.alertedAtMs ?? nowMs,
+          });
+        } catch { /* non-fatal */ }
+        continue;
+      }
+      // New event OR a confidence upgrade (amber→green) → push exactly once.
+      sendPlanAlert(row).then((r) => {
+        if (r?.sent) logger.info?.(`plan-alert: ${row.satTag} → ${row.targetName} ${row.confidence} (lead ${(row.leadMs / 3600000).toFixed(1)} h)`);
+      }).catch((e) => logger.warn?.('plan-alert push failed:', e?.message ?? e));
+      try {
+        store.upsertSkyPlanAlert({
+          id: existing?.id, satTag: row.satTag, objectId: row.targetId,
+          atMs: row.atMs, confidence: row.confidence, alertedAtMs: nowMs,
+        });
+      } catch (e) { logger.warn?.('plan-alert record failed:', e?.message ?? e); }
+    }
+    try { store.pruneSkyPlanAlerts(nowMs - 86400000); } catch { /* non-fatal */ }
+  }
+
   const notifier = new Notifier({
     pushover,
     routeLookup: (cs) => routeLookup.lookup(cs),
@@ -1053,6 +1135,12 @@ export async function runService({
         sunBelowDeg: config.iss?.skyTargets?.sunBelowDeg ?? -6,
         reslewMinGapMin: config.iss?.skyTargets?.reslewMinGapMin ?? 5,
         objectCount: (config.iss?.skyTargets?.objects ?? []).filter((o) => o?.enabled !== false).length,
+        planAlerts: {
+          enabled: Boolean(config.iss?.skyTargets?.planAlerts?.enabled),
+          minConfidence: config.iss?.skyTargets?.planAlerts?.minConfidence ?? 'green',
+          minElevationDeg: config.iss?.skyTargets?.planAlerts?.minElevationDeg ?? 20,
+          leadMaxDays: config.iss?.skyTargets?.planAlerts?.leadMaxDays ?? 7,
+        },
       },
       _servicePath: configPaths.service ?? null,
     };
@@ -1326,6 +1414,29 @@ export async function runService({
           }
           next[k] = v;
         }
+      }
+      // Nested plan-alert knobs (M83 §12) — validated into the same `next`.
+      if (d.planAlerts && typeof d.planAlerts === 'object') {
+        const pa = { ...(next.planAlerts ?? {}) };
+        const p = d.planAlerts;
+        if (typeof p.enabled === 'boolean') pa.enabled = p.enabled;
+        if ('minConfidence' in p) {
+          if (p.minConfidence !== 'green' && p.minConfidence !== 'amber') {
+            throw new Error("skyTargets.planAlerts.minConfidence must be 'green' or 'amber'");
+          }
+          pa.minConfidence = p.minConfidence;
+        }
+        if ('minElevationDeg' in p) {
+          const v = Number(p.minElevationDeg);
+          if (!Number.isFinite(v) || v < 0 || v > 90) throw new Error('skyTargets.planAlerts.minElevationDeg must be 0–90');
+          pa.minElevationDeg = v;
+        }
+        if ('leadMaxDays' in p) {
+          const v = Number(p.leadMaxDays);
+          if (!Number.isFinite(v) || v < 1 || v > 14) throw new Error('skyTargets.planAlerts.leadMaxDays must be 1–14');
+          pa.leadMaxDays = v;
+        }
+        next.planAlerts = pa;
       }
       if (!config.iss) config.iss = {};
       config.iss.skyTargets = next;          // objects array preserved (not in patch)
@@ -2179,6 +2290,9 @@ export async function runService({
         minElevationDeg: skyCfg.minElevationDeg ?? 0,
         reslewMinGapMin: skyCfg.reslewMinGapMin ?? 5,
       });
+      // Edge-triggered Pushover plan-alerts off the fresh plan (no-op unless
+      // skyTargets.planAlerts.enabled + Pushover configured).
+      runPlanAlerts(skyTargetPlan, nowMs);
       lastSkyComputeMs = nowMs;
     } else if (!skyCfg?.enabled && skyTargetPlan.length) {
       skyTargetPlan = [];   // feature turned off → clear the stale plan

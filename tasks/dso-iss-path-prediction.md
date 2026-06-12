@@ -21,8 +21,13 @@ Milestone: **M83** (M82 ging an die Settings-Tabs, die zuerst landeten).
   (`armForSkyTarget`, separater Pfad; Aircraft-Pfad unangetastet). Operator-State
   persistiert via `/api/active-target`. **Vorerst ein globales Active-Target**
   (nicht per-Rig) — deckt den Haupt-/Single-Rig-Fall; per-Rig = spätere Option.
-- ⏳ **Offen (Phase 5):** Pushover-Plan-Alerts (§12), UI-Katalog-Editor,
-  per-Rig-Active-Target.
+- ✅ **Pushover-Plan-Alerts (§12, v0.35.0):** edge-getriggert (einmal pro Event,
+  +1 bei amber→green-Upgrade), neustart-fester Fuzzy-Dedup (`sky_plan_alerts`-
+  Tabelle, Match auf `(satTag,objectId)` ±5 min). Config `iss.skyTargets.
+  planAlerts` + Settings-Felder im „Sky targets"-Tab.
+- ⏳ **Offen (kleinere Follow-ups):** UI-Katalog-Editor (aktuell via
+  `service.json`), per-Rig-Active-Target (aktuell ein globales), „Plan geändert"-
+  Push wenn ein grün gemeldetes Event wieder wegfällt (offene Frage §12).
 
 ---
 
