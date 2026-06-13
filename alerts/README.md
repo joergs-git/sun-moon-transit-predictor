@@ -61,6 +61,18 @@ can be deleted in the astroblink dashboard, they are inert without secrets).
    `ALERTS_HMAC_SECRET`: any long random string (`openssl rand -hex 32`).
    `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` are injected automatically.
 
+   **Optional admin heads-up:** set `ADMIN_PUSHOVER_USER` to your own Pushover
+   *user* key and the `confirm` function sends YOU one best-effort message on
+   each new confirmed signup — *"New registrant from Madrid, Spain ·
+   Europe/Madrid. Total now 98."* (region reverse-geocoded from the user's
+   coordinates, plus their timezone and the total confirmed-subscriber count).
+   Nothing changes for the user; leave it unset to disable.
+
+   ```bash
+   supabase secrets set ADMIN_PUSHOVER_USER=<your pushover user key>
+   supabase functions deploy confirm   # redeploy after adding the feature
+   ```
+
 ### 2. Pushover
 
 Create an **application** at pushover.net/apps → that's `PUSHOVER_APP_TOKEN`.
