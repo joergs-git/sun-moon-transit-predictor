@@ -72,6 +72,26 @@ Predictive 24 h watchlist · OpenSky schedule augmentation · SharpCap capture t
 
 ---
 
+## ❓ FAQ (quick)
+
+Full list → **[FAQ & Troubleshooting wiki](https://github.com/joergs-git/sun-moon-transit-predictor/wiki/FAQ)**. The most common beginner questions:
+
+**Is dump1090 running?** Two checks — the service, then whether it actually receives planes:
+```bash
+systemctl status dump1090-fa --no-pager                              # want: active (running)
+curl -s localhost:8080/data/aircraft.json | grep -o '"hex"' | wc -l  # planes seen right now (0 = empty sky/antenna)
+```
+
+**Web UI loads but no aircraft?** Almost always dump1090, not the app — run the count above. `0` is normal at night or with an indoor antenna; use a **USB-2** port and a window/outdoor antenna.
+
+**SDR "No supported devices found"?** The DVB-T driver grabbed the stick — `echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtl.conf && sudo reboot` (the installer does this for you).
+
+**See planes but never a transit?** Transits across the ~0.5° disc are genuinely rare — check your coordinates in ⚙ Settings and that the Sun/Moon is up (≥20° elevation). The 24 h watchlist previews upcoming geometry.
+
+**Is the predictor itself ok?** `systemctl status stp.service` · `journalctl -u stp.service -n 50` — a repeating `aircraft.json HTTP …` there means it can't reach dump1090.
+
+---
+
 ## At a glance
 
 - Single **Raspberry Pi 5**, ~5 W, browser-administered, runs unattended for months.
