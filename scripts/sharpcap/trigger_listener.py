@@ -412,8 +412,17 @@ def _robocopy_transfer(src, dest, move):
 
     Flags:
       /MT:4   -- 4 worker threads (Windows Explorer is single-threaded; this
-                alone usually beats shutil 2-3x over SMB).
-      /Z      -- restartable mode (resumes on a brief network glitch).
+                helps when SEVERAL .ser land at once -- robocopy parallelises
+                across files, not within one, so a single big file still uses
+                one thread).
+      /J      -- unbuffered I/O: bypasses the Windows cache manager. The single
+                biggest robocopy win for large (>~1 GB) captures over SMB, and
+                what Microsoft recommends for big-file copies. (v0.39.3 --
+                REPLACED /Z restartable mode: /Z journals a resume checkpoint
+                per block and cut throughput 30-50% on a stable LAN, pure
+                overhead for a local NAS. /J is the opposite trade: faster,
+                but a copy interrupted mid-flight can't resume -- fine here,
+                robocopy just re-runs the whole file via /R:2.)
       /R:2    -- retry twice on transient errors.
       /W:5    -- wait 5 s between retries.
       /NJH /NJS /NP /NDL -- quieter output (no header/summary, no progress,
@@ -430,7 +439,7 @@ def _robocopy_transfer(src, dest, move):
         if not src_dir or not dest_dir:
             return False
         cmd = ["robocopy", src_dir, dest_dir, src_name,
-               "/MT:4", "/Z", "/R:2", "/W:5",
+               "/MT:4", "/J", "/R:2", "/W:5",
                "/NJH", "/NJS", "/NP", "/NDL"]
         if move:
             cmd.append("/MOV")
