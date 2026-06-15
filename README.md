@@ -84,6 +84,8 @@ curl -s localhost:8080/data/aircraft.json | grep -o '"hex"' | wc -l  # planes se
 
 **Web UI loads but no aircraft?** Almost always dump1090, not the app — run the count above. `0` is normal at night or with an indoor antenna; use a **USB-2** port and a window/outdoor antenna.
 
+**Where do I put the antenna?** Line-of-sight rules everything: mount it **high, vertical, with a clear horizon** and away from metal. Ground level ≈ 20–30 km; on the roof up to ~500 km (≈100 km is a good target). A building to the north = no planes from the north. The coax is usually long enough for a broomstick, branch or wall corner.
+
 **SDR "No supported devices found"?** The DVB-T driver grabbed the stick — `echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtl.conf && sudo reboot` (the installer does this for you).
 
 **See planes but never a transit?** Transits across the ~0.5° disc are genuinely rare — check your coordinates in ⚙ Settings and that the Sun/Moon is up (≥20° elevation). The 24 h watchlist previews upcoming geometry.
