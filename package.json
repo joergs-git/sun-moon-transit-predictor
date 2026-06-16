@@ -1,6 +1,6 @@
 {
   "name": "sun-moon-transit-predictor",
-  "version": "0.39.4",
+  "version": "0.40.0",
   "description": "Predicts and detects aircraft transits across the sun and moon disc from a fixed observer location.",
   "type": "module",
   "private": true,
@@ -13,7 +13,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "analyze": "node scripts/analyze-history.js"
   },
   "dependencies": {
     "astronomy-engine": "^2.1.19"
