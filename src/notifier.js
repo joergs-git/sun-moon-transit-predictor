@@ -158,6 +158,12 @@ export class Notifier {
     // buzz the phone; the other disc still records to History/stats. ISS is
     // exempt. Settable at runtime by the service.
     this.pushBodies = opts.pushBodies ?? null;
+    // Active-target hard gate (v0.39.4). When the operator explicitly points
+    // the scope at one disc via the header pulldown ('Sun'/'Moon'), the other
+    // disc is suppressed everywhere — and UNLIKE pushBodies this also covers
+    // ISS, because it is a deliberate operator choice, not the rig-armed
+    // automatic suppression. null = no active-target constraint. Set at runtime.
+    this.activeBody = opts.activeBody ?? null;
     this.baseUrl = opts.baseUrl;
     /** @type {Map<string, { radioSent: boolean, candidateSent: boolean,
      *                       imminentSent: boolean, lastClosestMs: number }>} */
@@ -266,6 +272,15 @@ export class Notifier {
 
       // ---- Pushover dispatch: unchanged gating ----
       if (!sendStage) continue;
+      // Active-target hard gate (v0.39.4): the operator explicitly pointed the
+      // scope at one disc (header pulldown). Unlike pushBodies below this DOES
+      // apply to ISS — a 'Sun' selection means a Moon transit (aircraft or ISS)
+      // is not wanted on the phone. The History record above is kept, so stats
+      // stay complete. Mark sent so an upgrade doesn't re-evaluate every poll.
+      if (this.activeBody && cand.body !== this.activeBody) {
+        mark('Sent', sendStage);
+        continue;
+      }
       // Body allow-list (Pushover-only): when the SharpCap trigger is armed
       // for one disc, the other disc's aircraft alerts are noise — suppress
       // the phone buzz but keep the History record above. ISS is exempt.

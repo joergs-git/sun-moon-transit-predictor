@@ -78,6 +78,36 @@ describe('Notifier', () => {
     expect(px.calls.length).toBe(1);
   });
 
+  // Active-target hard gate (v0.39.4): an explicit 'Sun'/'Moon' selection in
+  // the header pulldown suppresses the other disc everywhere — and, unlike
+  // pushBodies, it covers ISS too. History stays complete.
+  it('suppresses the other disc when activeBody is set, but keeps the History record', async () => {
+    const px = new FakePushover();
+    const recorded = [];
+    const n = new Notifier({ pushover: px, activeBody: 'Sun', onEvent: (e) => recorded.push(e) });
+    const moon = makeCandidate({ body: 'Moon', closestInMs: 90_000, level: 'candidate' });
+    const events = await n.tick([moon], 1_000_000_000_000);
+    expect(recorded.some((e) => e.candidate.body === 'Moon')).toBe(true);  // history kept
+    expect(px.calls.length).toBe(0);                                       // no buzz
+    expect(events.length).toBe(0);
+  });
+
+  it('still pushes the selected disc when activeBody is set', async () => {
+    const px = new FakePushover();
+    const n = new Notifier({ pushover: px, activeBody: 'Sun' });
+    const sun = makeCandidate({ body: 'Sun', closestInMs: 90_000, level: 'candidate' });
+    await n.tick([sun], 1_000_000_000_000);
+    expect(px.calls.length).toBe(1);
+  });
+
+  it('applies activeBody to the ISS too (unlike pushBodies)', async () => {
+    const px = new FakePushover();
+    const issMoon = { ...makeCandidate({ body: 'Moon', closestInMs: 90_000, level: 'candidate' }), isISS: true };
+    const n = new Notifier({ pushover: px, activeBody: 'Sun' });
+    await n.tick([issMoon], 1_000_000_000_000);
+    expect(px.calls.length).toBe(0);   // Moon ISS suppressed when scope is on the Sun
+  });
+
   it('sends a radio notification first when first sighting is level=radio', async () => {
     const px = new FakePushover();
     const n = new Notifier({ pushover: px });

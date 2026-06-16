@@ -2020,7 +2020,16 @@ export async function runService({
       }
       return { ...c, route };
     }));
-    state.candidates = enriched;
+    // Active-target body filter (v0.39.4): an explicit 'Sun'/'Moon' selection
+    // in the header pulldown restricts the WHOLE pipeline to that disc. We
+    // compute activeBody ONCE here and reuse it for the lifecycle display and
+    // the Pushover gate below ('auto'/sky-object → null = no constraint).
+    // `enriched` itself is NOT filtered — it still feeds the lifecycle, notifier
+    // and SharpCap arming (which apply their own per-disc gating). Only the
+    // EXPOSED state.candidates is filtered: it is the e-paper/buzzer fallback
+    // used when state.lifecycle is empty, so keep that path consistent too.
+    const activeBody = (activeTarget === 'Sun' || activeTarget === 'Moon') ? activeTarget : null;
+    state.candidates = activeBody ? enriched.filter((c) => c.body === activeBody) : enriched;
 
     // ── Twilight aircraft × bright-planet appulses (v0.38.0) ──────────────────
     // Relaxed "aircraft + a bright planet in the same FOV during twilight" — not
@@ -2775,7 +2784,15 @@ export async function runService({
       }
     }
 
-    state.lifecycle = lifecycleArray(lifecycleMap, nowMs);
+    // Active-target body filter (v0.39.4): state.lifecycle is the single list
+    // the web UI, e-paper AND buzzer all read, so filtering it by the selected
+    // disc keeps those three consistent in one place. activeBody is computed
+    // once near state.candidates above. (SharpCap arming filters separately at
+    // the routing below; Pushover via notifier.activeBody — same activeBody.)
+    const lifecycleAll = lifecycleArray(lifecycleMap, nowMs);
+    state.lifecycle = activeBody
+      ? lifecycleAll.filter((e) => e.body === activeBody)
+      : lifecycleAll;
 
     // Recent real transits (confirmed/predicted, aircraft only) for the e-paper
     // "recently learned" strip. Slow cadence — history changes a few times/hour.
@@ -2823,6 +2840,11 @@ export async function runService({
     // Sun rig → Moon stays quiet. Trigger off → null = both push. ISS exempt.
     const scBodies = sharpcapArmedBodies();
     notifier.pushBodies = scBodies.length ? scBodies : null;
+    // Active-target hard gate (v0.39.4): an explicit 'Sun'/'Moon' selection in
+    // the header pulldown also suppresses the OTHER disc's Pushover — including
+    // ISS (pushBodies above is rig-based and ISS-exempt; this is the operator's
+    // deliberate choice, so it covers ISS too). 'auto'/sky-object → null = off.
+    notifier.activeBody = activeBody;
 
     try {
       // ISS rides the same notifier path as aircraft → Pushover the moment a
