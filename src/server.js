@@ -336,7 +336,10 @@ export function createHttpServer(opts) {
       if (url.pathname.startsWith('/api/stats/report') && req.method === 'GET') {
         if (!store) return jsonResponse(res, 404, { error: 'stats api disabled (no store)' });
         try {
-          const report = buildReport(store, {});
+          // Pass the live sharpcap config so recommendations show the REAL
+          // current values (a saved service.json keeps old values after a
+          // default bump) and only surface actual deltas.
+          const report = buildReport(store, { sharpcap: getConfig?.()?.sharpcap });
           if (url.pathname === '/api/stats/report.csv') {
             return textResponse(res, 200, formatCsv(report), 'text/csv; charset=utf-8', 'transit-stats.csv');
           }

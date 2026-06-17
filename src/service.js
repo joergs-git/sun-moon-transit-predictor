@@ -1103,7 +1103,7 @@ export async function runService({
     if (nowMs - lastAdaptiveLearnMs < ADAPTIVE_INTERVAL_MS) return;
     lastAdaptiveLearnMs = nowMs;
     try {
-      const recs = buildReport(store, { nowMs }).recommendations ?? [];
+      const recs = buildReport(store, { nowMs, sharpcap: config.sharpcap }).recommendations ?? [];
       const find = (id) => recs.find((r) => r.id === id);
       let changed = false;
       if (sc.adaptiveDrift) {

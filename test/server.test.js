@@ -56,8 +56,11 @@ describe('HTTP server', () => {
     expect(res.headers.get('content-type')).toMatch(/application\/json/);
     const body = await res.json();
     expect(body.meta).toBeTruthy();
+    // recommendations only surface real deltas vs the live config, so on an
+    // empty store at shipped defaults the list can legitimately be empty.
     expect(Array.isArray(body.recommendations)).toBe(true);
-    expect(body.recommendations.some((r) => r.id === 'preBufferS')).toBe(true);
+    expect(body.corridor).toBeTruthy();
+    expect('yield' in body).toBe(true);
   });
 
   it('serves the stats report as a downloadable CSV and TXT', async () => {

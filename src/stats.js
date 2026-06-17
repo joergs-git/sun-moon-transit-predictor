@@ -30,9 +30,11 @@ const round = (x, d = 2) => (Number.isFinite(x) ? Number(x.toFixed(d)) : null);
 /**
  * Build the full report object from a HistoryStore.
  * @param {object} store  an open HistoryStore
- * @param {{ nowMs?: number, windowMs?: number, dbPath?: string }} [opts]
+ * @param {{ nowMs?: number, windowMs?: number, dbPath?: string, sharpcap?: object }} [opts]
+ *   sharpcap: the LIVE sharpcap config, so recommendations show real current
+ *   values (a saved service.json keeps old values after a default bump).
  */
-export function buildReport(store, { nowMs = Date.now(), windowMs = ALL_WINDOW_MS, dbPath = null } = {}) {
+export function buildReport(store, { nowMs = Date.now(), windowMs = ALL_WINDOW_MS, dbPath = null, sharpcap = null } = {}) {
   const db = store.db;
   const W = { windowMs, nowMs };
 
@@ -206,7 +208,7 @@ export function buildReport(store, { nowMs = Date.now(), windowMs = ALL_WINDOW_M
     regulars, candidates, triggers, drift, perDay: perDayStats, profile, accuracy, extras,
     corridor, yield: yieldStats,
   };
-  report.recommendations = deriveRecommendations(report, store);
+  report.recommendations = deriveRecommendations(report, sharpcap ?? {});
   delete report.profile._elevs;                 // strip the working array from output
   return report;
 }
@@ -296,23 +298,30 @@ function readTopRoutes(db) {
  * `current` is filled in by the caller against live config where possible;
  * here we encode the SHIPPED defaults so the CLI/UI can show a delta.
  */
-function deriveRecommendations(report, store) {
+function deriveRecommendations(report, cfg) {
   const recs = [];
   const d = report.drift;
   const elevs = report.profile._elevs ?? [];
+
+  // `current` reflects the LIVE config where available (a user's saved
+  // service.json keeps its old values even after a default bump), with the
+  // shipped default as the fallback. A rec is only emitted when current ≠
+  // suggested, so the Apply list shows real, actionable deltas.
+  const cur = (id, shipped) => (Number.isFinite(cfg?.[id]) ? cfg[id] : shipped);
+  const push = (rec) => { if (rec.current !== rec.suggested) recs.push(rec); };
 
   // 1+2. Pre/post-roll. The transit framing only needs to straddle closest
   // approach; the TIME drift (median ~1.5 s, p95 ~27 s) is what must be
   // covered, asymmetrically (a late aircraft is the bigger risk than an early
   // one). 5 s before / 15 s after frames it tightly and keeps clips short.
-  recs.push({
+  push({
     id: 'preBufferS', label: 'Pre-roll (record before closest approach)', path: 'sharpcap.preBufferS',
-    current: 10, suggested: 5, unit: 's',
-    rationale: `Median closest-approach time error is only ${d.time.medianS ?? '?'} s, so a 20 s symmetric clip wastes frames before the transit. 5 s is ample lead.`,
+    current: cur('preBufferS', 5), suggested: 5, unit: 's',
+    rationale: `Median closest-approach time error is only ${d.time.medianS ?? '?'} s, so a long lead wastes frames before the transit. 5 s is ample.`,
   });
-  recs.push({
+  push({
     id: 'postBufferS', label: 'Post-roll (record after closest approach)', path: 'sharpcap.postBufferS',
-    current: 10, suggested: 15, unit: 's',
+    current: cur('postBufferS', 15), suggested: 15, unit: 's',
     rationale: `Bias the window AFTER the event: a late aircraft is the common miss (time p95 ≈ ${d.time.p95S ?? '?'} s). 15 s tail catches it without a long clip.`,
   });
 
@@ -321,34 +330,34 @@ function deriveRecommendations(report, store) {
   // (reArmShiftS) already corrects a moved prediction, so the residual drift
   // to absorb is small. p95 time drift bounds it.
   const p95 = d.time.p95S ?? 30;
-  const suggestedFrac = 0.25;
   const suggestedMaxDrift = Math.min(45, Math.max(15, Math.ceil(p95 / 5) * 5));   // round p95 up to 5 s
-  recs.push({
+  push({
     id: 'leadDriftFrac', label: 'Lead-drift fraction (window widening per second of lead)', path: 'sharpcap.leadDriftFrac',
-    current: 0.5, suggested: suggestedFrac, unit: '',
-    rationale: `0.5 over-records: it doubles the clip for early arms. Re-arming already corrects moved predictions; ${suggestedFrac} keeps a safety margin without minute-long clips.`,
+    current: cur('leadDriftFrac', 0.25), suggested: 0.25, unit: '',
+    rationale: `A high fraction over-records — it widens the clip for early arms. Re-arming already corrects moved predictions; 0.25 keeps a safety margin without minute-long clips.`,
   });
-  recs.push({
+  push({
     id: 'maxDriftS', label: 'Max drift margin (cap on the widening)', path: 'sharpcap.maxDriftS',
-    current: 45, suggested: suggestedMaxDrift, unit: 's',
+    current: cur('maxDriftS', 30), suggested: suggestedMaxDrift, unit: 's',
     rationale: `Set just above the measured p95 time error (${d.time.p95S ?? '?'} s) so 95% of arms are covered, the rest by re-arm.`,
   });
 
   // 4. Elevation floor — DATA-DRIVEN, site-specific (item 5). Many confirmed
-  // candidates here sit below the current 20° gate; lowering it to retain ~90%
+  // candidates here sit below the current gate; lowering it to retain ~90%
   // of them captures more opportunities (the user is happy with 10–20° shots).
   if (elevs.length >= 20) {
+    const floorNow = cur('minElevationDeg', 20);
     const p10 = pctile(elevs, 10);
     // Suggest a floor that keeps ~90% of confirmed candidates, clamped to a
     // sane visual range; round to 5°.
     const raw = Math.max(10, Math.min(20, Math.round((p10 ?? 15) / 5) * 5));
-    const below20 = elevs.filter((e) => e < 20).length;
-    const gained = elevs.filter((e) => e >= raw && e < 20).length;
-    if (raw < 20) {
-      recs.push({
+    const belowNow = elevs.filter((e) => e < floorNow).length;
+    const gained = elevs.filter((e) => e >= raw && e < floorNow).length;
+    if (raw < floorNow) {
+      push({
         id: 'minElevationDeg', label: 'Capture elevation floor', path: 'sharpcap.minElevationDeg',
-        current: 20, suggested: raw, unit: '°',
-        rationale: `${round(pct(below20, elevs.length), 0)}% of your confirmed candidates were below 20°. Lowering the floor to ${raw}° would re-include ${gained} of them (${round(pct(gained, elevs.length), 0)}% more) — you reported being happy with 10–20° passes; best on clear days.`,
+        current: floorNow, suggested: raw, unit: '°',
+        rationale: `${round(pct(belowNow, elevs.length), 0)}% of your confirmed candidates were below ${floorNow}°. Lowering the floor to ${raw}° would re-include ${gained} of them (${round(pct(gained, elevs.length), 0)}% more) — you reported being happy with 10–20° passes; best on clear days.`,
       });
     }
   }

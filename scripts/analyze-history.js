@@ -18,12 +18,15 @@ import { existsSync, readFileSync } from 'node:fs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-function resolveDbPath(argPath) {
-  if (argPath) return resolve(argPath);
+function loadServiceConfig() {
   try {
-    const cfg = JSON.parse(readFileSync(join(REPO_ROOT, 'config', 'service.json'), 'utf8'));
-    if (cfg?.store?.path) return resolve(REPO_ROOT, cfg.store.path);
-  } catch { /* no user config */ }
+    return JSON.parse(readFileSync(join(REPO_ROOT, 'config', 'service.json'), 'utf8'));
+  } catch { return null; }     // no user config — use shipped defaults
+}
+
+function resolveDbPath(argPath, cfg) {
+  if (argPath) return resolve(argPath);
+  if (cfg?.store?.path) return resolve(REPO_ROOT, cfg.store.path);
   return join(REPO_ROOT, 'data', 'history.db');
 }
 
@@ -31,7 +34,8 @@ async function main() {
   const args = process.argv.slice(2);
   const mode = args.includes('--csv') ? 'csv' : args.includes('--json') ? 'json' : 'text';
   const pathArg = args.find((a) => !a.startsWith('--'));
-  const dbPath = resolveDbPath(pathArg);
+  const cfg = loadServiceConfig();
+  const dbPath = resolveDbPath(pathArg, cfg);
   if (!existsSync(dbPath)) {
     console.error(`No history DB at ${dbPath}\nPass the path: node --experimental-sqlite scripts/analyze-history.js /path/to/history.db`);
     process.exit(1);
@@ -47,7 +51,7 @@ async function main() {
   }
 
   const store = new HistoryStore(dbPath);
-  const report = stats.buildReport(store, { dbPath });
+  const report = stats.buildReport(store, { dbPath, sharpcap: cfg?.sharpcap });
   store.close();
 
   if (mode === 'json') process.stdout.write(JSON.stringify(report, null, 2) + '\n');
