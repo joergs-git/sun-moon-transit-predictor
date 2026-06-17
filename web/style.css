@@ -514,6 +514,13 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
   justify-content: center;
 }
 .sketch-modal[hidden] { display: none; }
+/* Settings modal: grow DOWNWARD from a fixed top offset instead of staying
+   vertically centred. Centred meant the card re-centres (jumps up/down) every
+   time a different settings tab changed its height — visually restless. Top-
+   aligning pins the top edge so only the bottom grows. The FOV sketch modal
+   above keeps its centred behaviour. (v0.40.1) */
+#settings-modal { align-items: flex-start; padding-top: 32px; }
+#settings-modal .settings-card { max-height: calc(100vh - 56px); max-height: calc(100dvh - 56px); }
 .sketch-backdrop {
   position: absolute;
   inset: 0;
