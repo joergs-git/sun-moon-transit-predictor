@@ -2329,21 +2329,95 @@ $('#settings-btn').addEventListener('click', openSettings);
 // the download links point straight at the .txt/.csv/JSON endpoints. No SSH.
 const statsModal = $('#stats-modal');
 const statsOutput = $('#stats-output');
+const statsRecs = $('#stats-recs');
+const statsApplyBtn = $('#stats-apply');
+const statsApplyMsg = $('#stats-apply-msg');
+let statsRecommendations = [];   // last report's recommendations (for Apply)
+
+// Render the data-driven recommendations as a tick-list (idea 1: one-click
+// apply). Each row maps a sharpcap config field to its suggested value.
+function renderStatsRecs(recs) {
+  statsRecommendations = Array.isArray(recs) ? recs : [];
+  statsRecs.innerHTML = '';
+  if (!statsRecommendations.length) { statsRecs.hidden = true; statsApplyBtn.hidden = true; return; }
+  const title = document.createElement('p');
+  title.className = 'rec-title';
+  title.textContent = 'Recommended defaults from your data';
+  statsRecs.appendChild(title);
+  for (const rec of statsRecommendations) {
+    const row = document.createElement('label');
+    row.className = 'stats-rec';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = true; cb.dataset.recId = rec.id;
+    const lbl = document.createElement('span');
+    lbl.className = 'rec-label';
+    lbl.append(`${rec.label} `);
+    const delta = document.createElement('span');
+    delta.className = 'rec-delta';
+    delta.textContent = `${rec.current}${rec.unit || ''} → ${rec.suggested}${rec.unit || ''}`;
+    lbl.append(delta);
+    const why = document.createElement('span');
+    why.className = 'rec-why'; why.textContent = rec.rationale || '';
+    row.append(cb, lbl, why);
+    statsRecs.appendChild(row);
+  }
+  statsRecs.hidden = false;
+  statsApplyBtn.hidden = false;
+}
+
 async function loadStatsReport() {
   statsOutput.textContent = 'Generating…';
+  statsApplyMsg.textContent = '';
   try {
-    const res = await fetch('/api/stats/report.txt');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    statsOutput.textContent = await res.text();
+    // Text for the body + JSON for the interactive recommendations.
+    const [txtRes, jsonRes] = await Promise.all([
+      fetch('/api/stats/report.txt'),
+      fetch('/api/stats/report'),
+    ]);
+    if (!txtRes.ok) throw new Error(`HTTP ${txtRes.status}`);
+    statsOutput.textContent = await txtRes.text();
+    if (jsonRes.ok) renderStatsRecs((await jsonRes.json()).recommendations);
   } catch (e) {
     statsOutput.textContent = 'Failed to generate report: ' + (e?.message ?? e)
       + '\n\nNeeds history in data/history.db — try again once the service has logged some transits.';
+    renderStatsRecs([]);
   }
 }
+
+// Apply the ticked recommendations: build a sharpcap config patch from each
+// rec's path (e.g. 'sharpcap.preBufferS') and POST it to the live config.
+async function applyStatsRecs() {
+  const checked = [...statsRecs.querySelectorAll('input[type=checkbox]')].filter((c) => c.checked).map((c) => c.dataset.recId);
+  const picks = statsRecommendations.filter((r) => checked.includes(r.id));
+  if (!picks.length) { statsApplyMsg.textContent = 'Nothing selected.'; return; }
+  const patch = {};
+  for (const rec of picks) {
+    const parts = String(rec.path || `sharpcap.${rec.id}`).split('.');
+    let node = patch;
+    for (let i = 0; i < parts.length - 1; i += 1) node = (node[parts[i]] ??= {});
+    node[parts[parts.length - 1]] = rec.suggested;
+  }
+  statsApplyBtn.disabled = true;
+  statsApplyMsg.textContent = 'Applying…';
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.error) throw new Error(body.error || `HTTP ${res.status}`);
+    statsApplyMsg.textContent = `Applied ${picks.length} setting${picks.length > 1 ? 's' : ''}. ✓`;
+  } catch (e) {
+    statsApplyMsg.textContent = 'Apply failed: ' + (e?.message ?? e);
+  } finally {
+    statsApplyBtn.disabled = false;
+  }
+}
+
 function openStats() { statsModal.hidden = false; loadStatsReport(); }
 function closeStats() { statsModal.hidden = true; }
 $('#stats-btn').addEventListener('click', openStats);
 $('#stats-refresh').addEventListener('click', loadStatsReport);
+$('#stats-apply').addEventListener('click', applyStatsRecs);
 
 // SharpCap "Test trigger" — fires an immediate 2 s capture against the given
 // host/port (so you can test before saving). The saved token, if any, is

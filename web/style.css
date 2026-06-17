@@ -547,6 +547,25 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
 }
 .stats-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding-bottom: 12px; flex: 0 0 auto; }
 .stats-actions a.btn { text-decoration: none; }
+/* Recommendations checklist (v0.42.0). A compact box above the report body;
+   each row is a checkbox + the current→suggested delta, with the rationale as
+   smaller text. */
+.stats-recs {
+  flex: 0 0 auto;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  max-height: 30vh;
+  overflow: auto;
+}
+.stats-recs .rec-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); margin: 0 0 6px; }
+.stats-rec { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; margin: 0 0 6px; align-items: baseline; }
+.stats-rec input { margin-top: 3px; }
+.stats-rec .rec-label { color: var(--fg); font-size: 13px; }
+.stats-rec .rec-delta { color: var(--accent); font-weight: 600; }
+.stats-rec .rec-why { grid-column: 2; color: var(--muted); font-size: 11px; line-height: 1.35; }
 .sketch-backdrop {
   position: absolute;
   inset: 0;

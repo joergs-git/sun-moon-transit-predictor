@@ -561,9 +561,12 @@
     <div class="sketch-card stats-card">
       <button type="button" class="sketch-close" data-close-stats="1" aria-label="Close">×</button>
       <h3 id="stats-title">📊 History statistics &amp; learnings</h3>
-      <p class="sketch-hint">All-time analysis of your local history DB — generated on demand. Recommended defaults at the bottom are derived from <em>your</em> data.</p>
+      <p class="sketch-hint">All-time analysis of your local history DB — generated on demand. The recommended defaults below are derived from <em>your</em> data; tick the ones you want and Apply.</p>
+      <div id="stats-recs" class="stats-recs" hidden></div>
       <pre id="stats-output" class="stats-pre">Generating…</pre>
       <div class="stats-actions">
+        <button type="button" id="stats-apply" class="btn btn-primary" hidden>✓ Apply selected</button>
+        <span id="stats-apply-msg" class="settings-msg"></span>
         <button type="button" id="stats-refresh" class="btn">↻ Regenerate</button>
         <a id="stats-dl-txt" class="btn" href="/api/stats/report.txt" download>⬇ TXT</a>
         <a id="stats-dl-csv" class="btn" href="/api/stats/report.csv" download>⬇ CSV</a>
