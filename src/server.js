@@ -4,6 +4,7 @@
 import { createServer } from 'node:http';
 import { promises as fs } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
+import { buildReport, formatText, formatCsv } from './stats.js';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -22,6 +23,19 @@ function jsonResponse(res, status, body) {
     'Content-Length': buf.length,
     'Cache-Control': 'no-store',
   });
+  res.end(buf);
+}
+
+// Plain-text / CSV response with an optional download filename (v0.41.0).
+function textResponse(res, status, text, contentType, downloadName) {
+  const buf = Buffer.from(text);
+  const headers = {
+    'Content-Type': contentType,
+    'Content-Length': buf.length,
+    'Cache-Control': 'no-store',
+  };
+  if (downloadName) headers['Content-Disposition'] = `attachment; filename="${downloadName}"`;
+  res.writeHead(status, headers);
   res.end(buf);
 }
 
@@ -310,6 +324,28 @@ export function createHttpServer(opts) {
         if (!getNextOpportunity) return jsonResponse(res, 404, { error: 'sky next-opportunity api disabled' });
         try {
           return jsonResponse(res, 200, getNextOpportunity());
+        } catch (e) {
+          return jsonResponse(res, 500, { error: String(e?.message ?? e) });
+        }
+      }
+
+      // History statistics report (v0.41.0) — the same shared src/stats.js core
+      // the CLI uses, served three ways so the browser can show + download it
+      // without any SSH: JSON (UI render), .txt and .csv (downloads). On-demand
+      // only (a few SELECTs + JS aggregation), never per tick.
+      if (url.pathname.startsWith('/api/stats/report') && req.method === 'GET') {
+        if (!store) return jsonResponse(res, 404, { error: 'stats api disabled (no store)' });
+        try {
+          const report = buildReport(store, {});
+          if (url.pathname === '/api/stats/report.csv') {
+            return textResponse(res, 200, formatCsv(report), 'text/csv; charset=utf-8', 'transit-stats.csv');
+          }
+          if (url.pathname === '/api/stats/report.txt') {
+            // Strip the ANSI bold codes the CLI uses — a plain-text download.
+            const txt = formatText(report).replace(/\x1b\[[0-9;]*m/g, '');
+            return textResponse(res, 200, txt, 'text/plain; charset=utf-8', 'transit-stats.txt');
+          }
+          return jsonResponse(res, 200, report);
         } catch (e) {
           return jsonResponse(res, 500, { error: String(e?.message ?? e) });
         }

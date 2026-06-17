@@ -521,6 +521,32 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
    above keeps its centred behaviour. (v0.40.1) */
 #settings-modal { align-items: flex-start; padding-top: 32px; }
 #settings-modal .settings-card { max-height: calc(100vh - 56px); max-height: calc(100dvh - 56px); }
+/* Statistics modal: top-aligned like settings, with a scrolling monospace
+   report body and a pinned action row. (v0.41.0) */
+#stats-modal { align-items: flex-start; padding-top: 32px; }
+.stats-card {
+  width: min(820px, calc(100vw - 24px));
+  width: min(820px, calc(100dvw - 24px));
+  max-height: calc(100vh - 56px);
+  max-height: calc(100dvh - 56px);
+  display: flex;
+  flex-direction: column;
+}
+.stats-pre {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 8px 0;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+  color: var(--fg);
+}
+.stats-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding-bottom: 12px; flex: 0 0 auto; }
+.stats-actions a.btn { text-decoration: none; }
 .sketch-backdrop {
   position: absolute;
   inset: 0;

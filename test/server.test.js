@@ -50,6 +50,28 @@ describe('HTTP server', () => {
     expect(body.bodies.Sun.observable).toBe(true);
   });
 
+  it('serves /api/stats/report as JSON with meta + recommendations (v0.41.0)', async () => {
+    const res = await fetch(`${baseUrl}/api/stats/report`);
+    expect(res.ok).toBe(true);
+    expect(res.headers.get('content-type')).toMatch(/application\/json/);
+    const body = await res.json();
+    expect(body.meta).toBeTruthy();
+    expect(Array.isArray(body.recommendations)).toBe(true);
+    expect(body.recommendations.some((r) => r.id === 'preBufferS')).toBe(true);
+  });
+
+  it('serves the stats report as a downloadable CSV and TXT', async () => {
+    const csv = await fetch(`${baseUrl}/api/stats/report.csv`);
+    expect(csv.ok).toBe(true);
+    expect(csv.headers.get('content-type')).toMatch(/text\/csv/);
+    expect(csv.headers.get('content-disposition')).toMatch(/attachment/);
+    expect(await csv.text()).toMatch(/^category,key,value,unit/);
+    const txt = await fetch(`${baseUrl}/api/stats/report.txt`);
+    expect(txt.ok).toBe(true);
+    expect(txt.headers.get('content-type')).toMatch(/text\/plain/);
+    expect(await txt.text()).not.toMatch(/\x1b\[/);   // ANSI stripped
+  });
+
   it('serves /api/health', async () => {
     const res = await fetch(`${baseUrl}/api/health`);
     expect(res.ok).toBe(true);

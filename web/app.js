@@ -2324,6 +2324,27 @@ activateSettingsTab('general');
 
 $('#settings-btn').addEventListener('click', openSettings);
 
+// ── History statistics modal (v0.41.0) ──────────────────────────────────
+// Fetches the shared report (formatted text) so it can be viewed in-browser;
+// the download links point straight at the .txt/.csv/JSON endpoints. No SSH.
+const statsModal = $('#stats-modal');
+const statsOutput = $('#stats-output');
+async function loadStatsReport() {
+  statsOutput.textContent = 'Generating…';
+  try {
+    const res = await fetch('/api/stats/report.txt');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    statsOutput.textContent = await res.text();
+  } catch (e) {
+    statsOutput.textContent = 'Failed to generate report: ' + (e?.message ?? e)
+      + '\n\nNeeds history in data/history.db — try again once the service has logged some transits.';
+  }
+}
+function openStats() { statsModal.hidden = false; loadStatsReport(); }
+function closeStats() { statsModal.hidden = true; }
+$('#stats-btn').addEventListener('click', openStats);
+$('#stats-refresh').addEventListener('click', loadStatsReport);
+
 // SharpCap "Test trigger" — fires an immediate 2 s capture against the given
 // host/port (so you can test before saving). The saved token, if any, is
 // applied server-side. Shared by the single-rig button and each rig's own
@@ -2499,9 +2520,12 @@ $('#app-version').addEventListener('keydown', (ev) => {
 });
 document.body.addEventListener('click', (ev) => {
   if (ev.target.closest('[data-close-settings="1"]')) closeSettings();
+  if (ev.target.closest('[data-close-stats="1"]')) closeStats();
 });
 document.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && !settingsModal.hidden) closeSettings();
+  if (ev.key !== 'Escape') return;
+  if (!settingsModal.hidden) closeSettings();
+  else if (!statsModal.hidden) closeStats();
 });
 
 // Pin the copyright year so it always matches the runtime — saves having to

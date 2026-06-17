@@ -143,6 +143,26 @@ CREATE TABLE IF NOT EXISTS sky_plan_alerts (
 );
 CREATE INDEX IF NOT EXISTS idx_sky_alerts_match
   ON sky_plan_alerts(sat_tag, object_id, at_ms);
+
+-- v0.41.0: persistent log of every SharpCap capture ACTUALLY armed (one row
+-- per fired arm, not per re-arm). Answers "how often did a capture really
+-- trigger" historically — the in-memory header counter resets on restart.
+-- Carries the framing/quality params so the stats report can show arms/day,
+-- re-arm rate, and per-body/per-rig breakdowns over time.
+CREATE TABLE IF NOT EXISTS capture_arms (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  armed_at_ms  INTEGER NOT NULL,
+  rig          TEXT,
+  kind         TEXT,        -- 'aircraft' | 'sky'
+  body         TEXT,        -- 'Sun'/'Moon' (aircraft) or the sky-target name
+  icao         TEXT,        -- hex (aircraft) or sat tag (sky)
+  sep_deg      REAL,
+  elev_deg     REAL,
+  pre_roll_s   REAL,
+  duration_s   REAL,
+  re_arm       INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_capture_arms_at ON capture_arms(armed_at_ms DESC);
 `;
 
 export class HistoryStore {
@@ -228,6 +248,32 @@ export class HistoryStore {
        WHERE stage = 'imminent' AND closest_sep_deg IS NOT NULL AND closest_sep_deg < ?
        GROUP BY body`,
     );
+    // v0.41.0: one row per fired SharpCap arm (see capture_arms above).
+    this._armIns = this.db.prepare(`
+      INSERT INTO capture_arms
+        (armed_at_ms, rig, kind, body, icao, sep_deg, elev_deg, pre_roll_s, duration_s, re_arm)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+  }
+
+  /**
+   * Record a SharpCap capture arm. Best-effort history for the stats report;
+   * never throws into the arming path.
+   * @param {{ armedAtMs:number, rig?:string, kind?:string, body?:string,
+   *   icao?:string, sepDeg?:number, elevDeg?:number, preRollS?:number,
+   *   durationS?:number, reArm?:boolean }} a
+   */
+  recordArm(a) {
+    try {
+      this._armIns.run(
+        a.armedAtMs, a.rig ?? null, a.kind ?? null, a.body ?? null, a.icao ?? null,
+        Number.isFinite(a.sepDeg) ? a.sepDeg : null,
+        Number.isFinite(a.elevDeg) ? a.elevDeg : null,
+        Number.isFinite(a.preRollS) ? a.preRollS : null,
+        Number.isFinite(a.durationS) ? a.durationS : null,
+        a.reArm ? 1 : 0,
+      );
+    } catch { /* arm logging is best-effort */ }
   }
 
   /** Mark an ICAO as having appeared at ≥ 30° elevation. Idempotent. */

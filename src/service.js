@@ -157,10 +157,13 @@ export const DEFAULT_CONFIG = {
     port: 9999,
     token: '',
     // Recording window straddles the predicted closest approach: start
-    // preBufferS before it, stop postBufferS after it (so the default −10/+10
-    // gives a 20 s clip centred on the transit). Editable from Settings.
-    preBufferS: 10,
-    postBufferS: 10,
+    // preBufferS before it, stop postBufferS after it (default −5/+15 = a 20 s
+    // clip biased AFTER the event). v0.41.0: tightened from a symmetric −10/+10
+    // on measured data — the closest-approach TIME error is tiny (median ~1.5 s),
+    // so a long lead wastes frames, while a late aircraft is the common miss, so
+    // the tail is the half worth keeping. Editable from Settings.
+    preBufferS: 5,
+    postBufferS: 15,
     triggerOnStage: 'imminent',
     minElevationDeg: 20,
     bodies: ['Sun', 'Moon'],
@@ -173,13 +176,15 @@ export const DEFAULT_CONFIG = {
     // shot. Set lower to be stricter, or minElevationDeg=0 to never gate on
     // elevation.
     maxSepDeg: 0.5,
-    // Arming early means the predicted closest-approach time is less certain
-    // (a stale candidate's estimate can drift 30 s+), so widen the recording
-    // window by leadDriftFrac × secondsToClosest on each side (capped at
-    // maxDriftS). Generous by default — at lead 50 s → ±25 s extra. Set
-    // leadDriftFrac:0 to disable and use only pre/postBufferS.
-    leadDriftFrac: 0.5,
-    maxDriftS: 45,
+    // Arming early means the predicted closest-approach time is less certain,
+    // so widen the recording window by leadDriftFrac × secondsToClosest on each
+    // side (capped at maxDriftS). v0.41.0: cut from 0.5/45 s on measured data —
+    // 0.5 doubled the clip for early arms, but the re-arm mechanism
+    // (reArmShiftS) already corrects a moved prediction, and the measured TIME
+    // error is ~27 s at p95. 0.25 × lead, capped at 30 s, covers ~95% without
+    // minute-long clips. Set leadDriftFrac:0 to use only pre/postBufferS.
+    leadDriftFrac: 0.25,
+    maxDriftS: 30,
     // Hard ceiling on total clip length (s) so preBuffer+postBuffer+drift can
     // never exceed the listener's MAX_DURATION_S (120) and get rejected as
     // over-limit. Keep below the listener's cap.
@@ -641,6 +646,13 @@ export async function runService({
         if (!trigger.enabled) continue;
         trigger.armForCandidate(c, nowMs).then((res) => {
           if (res.sent) {
+            // Persistent arm history (v0.41.0) — every fired arm, re-arms
+            // flagged, so the stats report can show arms/day over time.
+            store?.recordArm({
+              armedAtMs: Date.now(), rig: name, kind: 'aircraft', body: c.body,
+              icao: c.icao ?? null, sepDeg: c.closestApproachSepDeg,
+              elevDeg: c.aircraftAtClosest?.elevationDeg, reArm: !!res.reArmed,
+            });
             // A re-arm replaces the same episode's pending capture — don't
             // double-count it, just refresh the time on the listener.
             if (!res.reArmed) {
@@ -700,6 +712,12 @@ export async function runService({
       for (const { name, trigger } of sharpcapTargets) {
         if (!trigger.enabled) continue;
         trigger.armForSkyTarget(cand, nowMs).then((res) => {
+          if (res.sent) {
+            store?.recordArm({
+              armedAtMs: Date.now(), rig: name, kind: 'sky', body: row.targetName,
+              icao: row.satTag, sepDeg: row.sepDeg, elevDeg: row.elevationDeg, reArm: !!res.reArmed,
+            });
+          }
           if (res.sent && !res.reArmed) {
             sharpcapArmedCount += 1;
             sharpcapArmedLog.push({
