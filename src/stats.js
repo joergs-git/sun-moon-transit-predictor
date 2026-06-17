@@ -90,11 +90,12 @@ export function buildReport(store, { nowMs = Date.now(), windowMs = ALL_WINDOW_M
   };
 
   // ---- f) real-candidate profile (needed early for recommendations) ------
-  const im = db.prepare("SELECT altitude_m AS alt, range_m AS rng, payload_json AS pj FROM transit_history WHERE stage='imminent'").all();
-  const alts = [], rngs = [], elevs = [];
+  const im = db.prepare("SELECT altitude_m AS alt, range_m AS rng, track_deg AS trk, payload_json AS pj FROM transit_history WHERE stage='imminent'").all();
+  const alts = [], rngs = [], elevs = [], tracks = [];
   for (const r of im) {
     if (Number.isFinite(r.alt)) alts.push(r.alt);
     if (Number.isFinite(r.rng)) rngs.push(r.rng);
+    if (Number.isFinite(r.trk)) tracks.push(r.trk);
     try {
       const el = JSON.parse(r.pj)?.candidate?.aircraftAtClosest?.elevationDeg;
       if (Number.isFinite(el)) elevs.push(el);
@@ -183,6 +184,19 @@ export function buildReport(store, { nowMs = Date.now(), windowMs = ALL_WINDOW_M
     topRoutes: readTopRoutes(db),
   };
 
+  // ---- directional corridor (idea 5) -------------------------------------
+  // Fold each confirmed candidate's heading to an undirected axis (a route
+  // produces both ~90° and ~270° tracks → one E–W axis) and bin into the four
+  // compass axes. Tells the user which corridors actually produce transits at
+  // their site — antenna-aiming + site-geometry insight.
+  const corridor = computeCorridor(tracks);
+
+  // ---- capture yield / precision (idea 2) --------------------------------
+  // Join the persisted arms to genuine on-disc transits: of the captures we
+  // actually fired, how many landed on a real <0.27° pass? The honest precision
+  // signal for tuning maxSepDeg. Null until arms accumulate (v0.41.0+).
+  const yieldStats = readYield(db);
+
   const report = {
     meta: {
       dbPath, generatedAtMs: nowMs,
@@ -190,6 +204,7 @@ export function buildReport(store, { nowMs = Date.now(), windowMs = ALL_WINDOW_M
       totalRows, totalEpisodes: nEpisodes, totalIcao, highElevCount: highElev.count,
     },
     regulars, candidates, triggers, drift, perDay: perDayStats, profile, accuracy, extras,
+    corridor, yield: yieldStats,
   };
   report.recommendations = deriveRecommendations(report, store);
   delete report.profile._elevs;                 // strip the working array from output
@@ -215,6 +230,45 @@ function readArmStats(db, spanDays) {
       perBody: Object.fromEntries(byBody.map((x) => [x.body, x.n])),
     };
   } catch { return null; }       // table absent on an older DB — feature degrades cleanly
+}
+
+// ---- directional corridor (undirected heading axes) ----------------------
+const CORRIDOR_AXES = ['N–S', 'NE–SW', 'E–W', 'NW–SE'];
+function axisOf(trackDeg) {
+  const a = ((trackDeg % 180) + 180) % 180;     // fold to [0,180): heading↔reciprocal
+  if (a < 22.5 || a >= 157.5) return 'N–S';
+  if (a < 67.5) return 'NE–SW';
+  if (a < 112.5) return 'E–W';
+  return 'NW–SE';
+}
+function computeCorridor(tracks) {
+  if (!tracks.length) return { nTracks: 0, axes: [], dominant: null, dominantPct: null };
+  const counts = Object.fromEntries(CORRIDOR_AXES.map((k) => [k, 0]));
+  for (const t of tracks) counts[axisOf(t)] += 1;
+  const axes = CORRIDOR_AXES.map((axis) => ({ axis, count: counts[axis], pct: round(pct(counts[axis], tracks.length), 1) }));
+  const top = axes.slice().sort((a, b) => b.count - a.count)[0];
+  return { nTracks: tracks.length, axes, dominant: top.axis, dominantPct: top.pct };
+}
+
+// ---- capture yield / precision (arms × on-disc transits) -----------------
+function readYield(db) {
+  try {
+    // Of fired arms, how many coincided with a genuine on-disc (<0.27°)
+    // confirmed transit of the same airframe within ±10 min of the arm.
+    const r = db.prepare(`
+      SELECT COUNT(*) AS fired,
+        SUM(CASE WHEN EXISTS(
+          SELECT 1 FROM transit_history h
+          WHERE h.stage='imminent' AND h.closest_sep_deg IS NOT NULL AND h.closest_sep_deg < 0.27
+            AND lower(h.icao) = lower(a.icao) AND h.body = a.body
+            AND ABS(h.closest_at_ms - a.armed_at_ms) < 600000
+        ) THEN 1 ELSE 0 END) AS hits
+      FROM capture_arms a WHERE a.re_arm = 0`).get();
+    const fired = r?.fired ?? 0;
+    if (!fired) return null;
+    const hits = r?.hits ?? 0;
+    return { fired, hits, precisionPct: round(pct(hits, fired), 1) };
+  } catch { return null; }
 }
 
 // ---- weekday distribution (local-time buckets) ---------------------------
@@ -383,6 +437,17 @@ export function formatText(r) {
   if (h.topRoutes?.length) p(`Top routes: ${h.topRoutes.slice(0, 5).map((x) => `${x.route} (${x.count})`).join(' · ')}`);
   if (h.topFlights?.length) p(`Top flights: ${h.topFlights.slice(0, 6).map((x) => `${x.key} (${x.visits})`).join(' · ')}`);
 
+  const co = r.corridor;
+  if (co?.nTracks) {
+    p('\ni) Directional CORRIDOR (which axes produce transits — antenna aiming)');
+    p(`  ${co.axes.map((x) => `${x.axis} ${x.pct}%`).join('  ·  ')}   (n=${co.nTracks})`);
+    p(`→ Your transits arrive mostly along the ${co.dominant} axis (${co.dominantPct}%) — make sure the ADS-B antenna has a clear horizon that way.`);
+  }
+  const y = r.yield;
+  p('\nj) Capture YIELD (of armed captures, how many hit a real on-disc transit)');
+  if (y) p(`  ${y.hits} / ${y.fired} fired arms landed on a confirmed <0.27° transit → precision ${y.precisionPct}%.`);
+  else p('  (not enough arm history yet — captured from v0.41.0; check back once arms accumulate.)');
+
   p('\n— Recommended defaults from YOUR data —');
   for (const rec of r.recommendations) {
     p(`• ${rec.label}: ${rec.current}${rec.unit} → \x1b[1m${rec.suggested}${rec.unit}\x1b[0m`);
@@ -421,6 +486,8 @@ export function formatCsv(r) {
   if (Array.isArray(r.extras.hourHistogram)) r.extras.hourHistogram.forEach((n, h) => add('hour_histogram', String(h), n, 'passes'));
   for (const w of (r.extras.weekday ?? [])) add('weekday', w.day, w.count, 'passes');
   for (const x of (r.extras.topRoutes ?? [])) add('top_route', x.route, x.count);
+  for (const ax of (r.corridor?.axes ?? [])) add('corridor_axis', ax.axis, ax.count, 'passes');
+  if (r.yield) { add('yield', 'fired_arms', r.yield.fired); add('yield', 'on_disc_hits', r.yield.hits); add('yield', 'precision_pct', r.yield.precisionPct, '%'); }
   for (const rec of r.recommendations) add('recommendation', rec.id, rec.suggested, rec.unit);
   return rows.map((row) => row.map(csvCell).join(',')).join('\n') + '\n';
 }
