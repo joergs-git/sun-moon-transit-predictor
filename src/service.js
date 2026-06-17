@@ -35,6 +35,7 @@ import { PushoverClient } from './pushover.js';
 import { createHttpServer } from './server.js';
 import { SharpCapTrigger } from './sharpcap.js';
 import { HistoryStore } from './store.js';
+import { buildReport } from './stats.js';
 import { extrapolate, findTransits } from './tracker.js';
 import {
   loadIssTle, predictIssTransits, predictSkyTargetTransits, nextIssVisiblePass,
@@ -185,6 +186,14 @@ export const DEFAULT_CONFIG = {
     // minute-long clips. Set leadDriftFrac:0 to use only pre/postBufferS.
     leadDriftFrac: 0.25,
     maxDriftS: 30,
+    // Self-tuning (v0.42.0, opt-in, default off). When on, the service
+    // periodically (every ~6 h) re-derives the value from your own measured
+    // history via the stats recommendations engine, clamped, and logs any
+    // change. adaptiveDrift → maxDriftS (from the time-drift p95); adaptiveElev
+    // → minElevationDeg (a site-specific floor that keeps ~90% of confirmed
+    // candidates). Both NEVER override while off, so a hand-set value stays put.
+    adaptiveDrift: false,
+    adaptiveElevation: false,
     // Hard ceiling on total clip length (s) so preBuffer+postBuffer+drift can
     // never exceed the listener's MAX_DURATION_S (120) and get rejected as
     // over-limit. Keep below the listener's cap.
@@ -1079,6 +1088,45 @@ export async function runService({
   let lifecycleMap = new Map();
   let lastLifecycleSnapshotMs = 0;
   let lastRecentTransitsMs = 0;   // slow-cadence cache for state.recentTransits
+  let lastAdaptiveLearnMs = 0;    // throttle for the opt-in self-tuning (v0.42.0)
+
+  // Self-tuning defaults (v0.42.0, opt-in). When sharpcap.adaptiveDrift /
+  // adaptiveElevation are on, re-derive maxDriftS / minElevationDeg from the
+  // measured history (the stats recommendations engine) every ~6 h, clamp,
+  // and rebuild the trigger set so live captures use the learned value. A
+  // hand-set value is only ever changed while the corresponding flag is on.
+  const ADAPTIVE_INTERVAL_MS = 6 * 3600_000;
+  function maybeAdaptDefaults(nowMs) {
+    const sc = config.sharpcap;
+    if (!sc || (!sc.adaptiveDrift && !sc.adaptiveElevation)) return;
+    if (!store) return;
+    if (nowMs - lastAdaptiveLearnMs < ADAPTIVE_INTERVAL_MS) return;
+    lastAdaptiveLearnMs = nowMs;
+    try {
+      const recs = buildReport(store, { nowMs }).recommendations ?? [];
+      const find = (id) => recs.find((r) => r.id === id);
+      let changed = false;
+      if (sc.adaptiveDrift) {
+        const v = find('maxDriftS')?.suggested;
+        if (Number.isFinite(v) && v !== sc.maxDriftS) {
+          logger.info?.(`adaptive: maxDriftS ${sc.maxDriftS} → ${v} (from measured time-drift p95)`);
+          sc.maxDriftS = v; changed = true;
+        }
+      }
+      if (sc.adaptiveElevation) {
+        const v = find('minElevationDeg')?.suggested;
+        // The elevation rec only appears when the data supports a LOWER floor;
+        // absent → leave the floor as-is (don't raise it back up).
+        if (Number.isFinite(v) && v !== sc.minElevationDeg) {
+          logger.info?.(`adaptive: minElevationDeg ${sc.minElevationDeg} → ${v} (site floor keeping ~90% of confirmed candidates)`);
+          sc.minElevationDeg = v; changed = true;
+        }
+      }
+      if (changed) sharpcapTargets = buildSharpcapTargets();
+    } catch (e) {
+      logger.warn?.('adaptive defaults learn failed:', e?.message ?? e);
+    }
+  }
 
   if (config.lifecyclePersist?.path) {
     try {
@@ -1688,6 +1736,8 @@ export async function runService({
         if (!Number.isFinite(v) || v < 0) throw new Error('sharpcap.maxDriftS must be ≥ 0');
         config.sharpcap.maxDriftS = v;
       }
+      if (typeof s.adaptiveDrift === 'boolean') config.sharpcap.adaptiveDrift = s.adaptiveDrift;
+      if (typeof s.adaptiveElevation === 'boolean') config.sharpcap.adaptiveElevation = s.adaptiveElevation;
       if ('maxCaptureS' in s) {
         const v = Number(s.maxCaptureS);
         if (!Number.isFinite(v) || v <= 0 || v > 120) throw new Error('sharpcap.maxCaptureS must be > 0 and ≤ 120 (listener hard cap)');
@@ -2851,6 +2901,10 @@ export async function runService({
       lastDriftSnapshotMs = nowMs;
       snapshotDrift();
     }
+
+    // Opt-in self-tuning of maxDriftS / minElevationDeg from measured history
+    // (throttled to ~6 h internally; no-op unless a flag is on).
+    maybeAdaptDefaults(nowMs);
 
     // When the SharpCap trigger is armed, the other (un-armed) disc's aircraft
     // Pushovers are just noise — suppress them. The allow-list is the UNION of

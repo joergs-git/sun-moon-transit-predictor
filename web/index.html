@@ -773,6 +773,12 @@
           <label class="checkbox-row">
             <input name="sharpcap.notifyOnTrigger" type="checkbox"> Push on trigger
             <small class="field-hint">Send a Pushover with flight, separation, ETA and the −pre/+post window whenever a capture is armed.</small></label>
+          <label class="checkbox-row">
+            <input name="sharpcap.adaptiveDrift" type="checkbox"> Self-tune drift window
+            <small class="field-hint">Every ~6 h, re-derive <b>Max drift</b> from your own measured closest-approach time error (p95). Off = keep the value above. See 📊 Stats.</small></label>
+          <label class="checkbox-row">
+            <input name="sharpcap.adaptiveElevation" type="checkbox"> Self-tune elevation floor
+            <small class="field-hint">Every ~6 h, lower the <b>Min elevation</b> to a site-specific floor that keeps ~90% of your confirmed candidates (never raises it). Off = keep the value above.</small></label>
 
           <!-- ── Global defaults — inherited by ALL rigs (main + every
                   entry in the Capture rigs list below) unless that rig
