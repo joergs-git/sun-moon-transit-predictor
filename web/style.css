@@ -420,8 +420,9 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
   min-width: 0;
 }
 /* Sections inside either column lose their outer margin so they pack
-   tightly. Sky now + FOV sketch + plan/side cells live in .top-left;
-   Total live trackings + Detection funnel + airframe card in .top-right. */
+   tightly. FOV sketch + plan/side cells live in .top-left; Total live
+   trackings + airframe card in .top-right. (Detection funnel moved to a
+   full-width section under History in v0.46.4.) */
 .top-left > section,
 .top-right > section { margin: 0; }
 
@@ -437,7 +438,7 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
    funnel + airframe card underneath sit at a predictable y-offset. The
    sticky thead keeps column headers in view while the rest scrolls. */
 .total-live-section .table-scroll {
-  height: 420px;
+  height: 504px;          /* +20% (v0.46.4) — more rows visible without scrolling */
   overflow-y: auto;
   overflow-x: auto;
 }

@@ -165,73 +165,6 @@
         <div id="fov-map" class="fov-aux-pane" hidden></div>
         <div id="fov-side" class="fov-aux-pane" hidden></div>
       </div>
-      <!-- Detection funnel lives in the LEFT column under the FOV (v0.39.1) —
-           more vertical room here than under Total live trackings on the right. -->
-      <section id="detect-section">
-        <!-- Three CSS bars (every airframe seen this session, how many ever
-             projected inside the panel band, how many skimmed < 0.5°) + a
-             lifetime persistent block. -->
-        <div class="detect-funnel" id="detect-funnel" title="Cumulative since the service started (resets on restart). 'Detected' counts every distinct aircraft with a usable position, regardless of how far it was from the Sun/Moon line.">
-          <div class="funnel-title">Detection funnel <span class="funnel-sub" id="funnel-sub">since start</span></div>
-          <div class="funnel-row">
-            <span class="funnel-label" title="Distinct aircraft seen with a usable position since the service started (resets on restart) — regardless of how far from the Sun/Moon line.">Total detected</span>
-            <span class="funnel-track"><span class="funnel-bar fb-total" id="fb-total"></span></span>
-            <span class="funnel-val" id="fv-total">—</span>
-          </div>
-          <div class="funnel-row">
-            <span class="funnel-label" title="Aircraft with a usable fix RIGHT NOW (this tick), including ones nowhere near the Sun/Moon — i.e. the live dump1090 count.">Live planes</span>
-            <span class="funnel-track"><span class="funnel-bar fb-live" id="fb-live"></span></span>
-            <span class="funnel-val" id="fv-live">—</span>
-          </div>
-          <div class="funnel-row">
-            <span class="funnel-label" id="fl-band">&lt; 2°</span>
-            <span class="funnel-track"><span class="funnel-bar fb-band" id="fb-band"></span></span>
-            <span class="funnel-val" id="fv-band">—</span>
-          </div>
-          <div class="funnel-row">
-            <span class="funnel-label">&lt; 0.5°</span>
-            <span class="funnel-track"><span class="funnel-bar fb-near" id="fb-near"></span></span>
-            <span class="funnel-val" id="fv-near">—</span>
-          </div>
-          <div class="funnel-row">
-            <span class="funnel-label" title="Tightest bucket — a sub-0.2° projected pass is a near-certain on-disc transit (Sun/Moon disc radius ≈ 0.27°).">&lt; 0.2°</span>
-            <span class="funnel-track"><span class="funnel-bar fb-vnear" id="fb-vnear"></span></span>
-            <span class="funnel-val" id="fv-vnear">—</span>
-          </div>
-
-          <!-- Lifetime persistent block. Two denominators side-by-side
-               (all ICAOs ever seen vs. only those ≥ 30° elevation) plus
-               per-body confirmed hits at < 0.5° / < 0.2°. Hidden until the
-               server actually delivers the data (older builds don't). -->
-          <div class="funnel-lifetime" id="funnel-lifetime" hidden>
-            <div class="funnel-divider"></div>
-            <div class="funnel-title">Lifetime <span class="funnel-sub" id="funnel-lifetime-sub">persistent (survives restarts)</span></div>
-            <div class="funnel-life-row">
-              <span class="funnel-life-label" title="Total distinct ICAOs ever seen by this receiver (aircraft_sightings). Includes long-range / low-elevation contacts — the broad denominator.">All ICAOs ever seen</span>
-              <span class="funnel-life-val" id="fv-life-all">—</span>
-            </div>
-            <div class="funnel-life-row">
-              <span class="funnel-life-label" title="Subset of ICAOs that reached ≥ 30° elevation at some point — the 'actually overhead' denominator. Tracking started with v0.29.0; rows before that aren't reflected.">≥ 30° elevation ICAOs</span>
-              <span class="funnel-life-val" id="fv-life-high">—</span>
-              <span class="funnel-life-since" id="fv-life-high-since"></span>
-            </div>
-            <div class="funnel-grid">
-              <div class="funnel-grid-h">Body</div>
-              <div class="funnel-grid-h" title="Distinct ICAOs that actually came closer than 0.5° to the body (transit_history, stage=imminent).">&lt; 0.5° hits</div>
-              <div class="funnel-grid-h" title="Distinct ICAOs that actually came closer than 0.2° to the body (sub-disc-radius pass).">&lt; 0.2° hits</div>
-
-              <div class="funnel-grid-body" title="Hits on the Sun.">☀ Sun</div>
-              <div class="funnel-grid-cell" id="fv-life-sun-05">—</div>
-              <div class="funnel-grid-cell" id="fv-life-sun-02">—</div>
-
-              <div class="funnel-grid-body" title="Hits on the Moon.">☾ Moon</div>
-              <div class="funnel-grid-cell" id="fv-life-moon-05">—</div>
-              <div class="funnel-grid-cell" id="fv-life-moon-02">—</div>
-            </div>
-            <div class="funnel-foot">Each cell: <b>N</b> <span class="funnel-foot-frac">(% of all / % of ≥30°)</span></div>
-          </div>
-        </div>
-      </section>
     </div>
     <aside class="top-right">
       <!-- RIGHT column (v0.30.28 layout):
@@ -314,6 +247,74 @@
       <button type="button" class="btn pager-btn" id="hp-newer" title="Towards today">◀ Newer</button>
       <span class="pager-info" id="hp-info">—</span>
       <button type="button" class="btn pager-btn" id="hp-older" title="Further back">Older ▶</button>
+    </div>
+  </section>
+
+  <!-- Detection funnel — moved under History (v0.46.4): more width here
+       than the narrow left column under the FOV preview. -->
+  <section id="detect-section">
+    <!-- Three CSS bars (every airframe seen this session, how many ever
+         projected inside the panel band, how many skimmed < 0.5°) + a
+         lifetime persistent block. -->
+    <div class="detect-funnel" id="detect-funnel" title="Cumulative since the service started (resets on restart). 'Detected' counts every distinct aircraft with a usable position, regardless of how far it was from the Sun/Moon line.">
+      <div class="funnel-title">Detection funnel <span class="funnel-sub" id="funnel-sub">since start</span></div>
+      <div class="funnel-row">
+        <span class="funnel-label" title="Distinct aircraft seen with a usable position since the service started (resets on restart) — regardless of how far from the Sun/Moon line.">Total detected</span>
+        <span class="funnel-track"><span class="funnel-bar fb-total" id="fb-total"></span></span>
+        <span class="funnel-val" id="fv-total">—</span>
+      </div>
+      <div class="funnel-row">
+        <span class="funnel-label" title="Aircraft with a usable fix RIGHT NOW (this tick), including ones nowhere near the Sun/Moon — i.e. the live dump1090 count.">Live planes</span>
+        <span class="funnel-track"><span class="funnel-bar fb-live" id="fb-live"></span></span>
+        <span class="funnel-val" id="fv-live">—</span>
+      </div>
+      <div class="funnel-row">
+        <span class="funnel-label" id="fl-band">&lt; 2°</span>
+        <span class="funnel-track"><span class="funnel-bar fb-band" id="fb-band"></span></span>
+        <span class="funnel-val" id="fv-band">—</span>
+      </div>
+      <div class="funnel-row">
+        <span class="funnel-label">&lt; 0.5°</span>
+        <span class="funnel-track"><span class="funnel-bar fb-near" id="fb-near"></span></span>
+        <span class="funnel-val" id="fv-near">—</span>
+      </div>
+      <div class="funnel-row">
+        <span class="funnel-label" title="Tightest bucket — a sub-0.2° projected pass is a near-certain on-disc transit (Sun/Moon disc radius ≈ 0.27°).">&lt; 0.2°</span>
+        <span class="funnel-track"><span class="funnel-bar fb-vnear" id="fb-vnear"></span></span>
+        <span class="funnel-val" id="fv-vnear">—</span>
+      </div>
+
+      <!-- Lifetime persistent block. Two denominators side-by-side
+           (all ICAOs ever seen vs. only those ≥ 30° elevation) plus
+           per-body confirmed hits at < 0.5° / < 0.2°. Hidden until the
+           server actually delivers the data (older builds don't). -->
+      <div class="funnel-lifetime" id="funnel-lifetime" hidden>
+        <div class="funnel-divider"></div>
+        <div class="funnel-title">Lifetime <span class="funnel-sub" id="funnel-lifetime-sub">persistent (survives restarts)</span></div>
+        <div class="funnel-life-row">
+          <span class="funnel-life-label" title="Total distinct ICAOs ever seen by this receiver (aircraft_sightings). Includes long-range / low-elevation contacts — the broad denominator.">All ICAOs ever seen</span>
+          <span class="funnel-life-val" id="fv-life-all">—</span>
+        </div>
+        <div class="funnel-life-row">
+          <span class="funnel-life-label" title="Subset of ICAOs that reached ≥ 30° elevation at some point — the 'actually overhead' denominator. Tracking started with v0.29.0; rows before that aren't reflected.">≥ 30° elevation ICAOs</span>
+          <span class="funnel-life-val" id="fv-life-high">—</span>
+          <span class="funnel-life-since" id="fv-life-high-since"></span>
+        </div>
+        <div class="funnel-grid">
+          <div class="funnel-grid-h">Body</div>
+          <div class="funnel-grid-h" title="Distinct ICAOs that actually came closer than 0.5° to the body (transit_history, stage=imminent).">&lt; 0.5° hits</div>
+          <div class="funnel-grid-h" title="Distinct ICAOs that actually came closer than 0.2° to the body (sub-disc-radius pass).">&lt; 0.2° hits</div>
+
+          <div class="funnel-grid-body" title="Hits on the Sun.">☀ Sun</div>
+          <div class="funnel-grid-cell" id="fv-life-sun-05">—</div>
+          <div class="funnel-grid-cell" id="fv-life-sun-02">—</div>
+
+          <div class="funnel-grid-body" title="Hits on the Moon.">☾ Moon</div>
+          <div class="funnel-grid-cell" id="fv-life-moon-05">—</div>
+          <div class="funnel-grid-cell" id="fv-life-moon-02">—</div>
+        </div>
+        <div class="funnel-foot">Each cell: <b>N</b> <span class="funnel-foot-frac">(% of all / % of ≥30°)</span></div>
+      </div>
     </div>
   </section>
 
