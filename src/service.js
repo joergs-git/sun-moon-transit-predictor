@@ -1266,6 +1266,8 @@ export async function runService({
         leadDriftFrac: config.sharpcap.leadDriftFrac,
         maxDriftS: config.sharpcap.maxDriftS,
         maxCaptureS: config.sharpcap.maxCaptureS,
+        adaptiveDrift: config.sharpcap.adaptiveDrift === true,
+        adaptiveElevation: config.sharpcap.adaptiveElevation === true,
         triggerOnStage: config.sharpcap.triggerOnStage,
         minElevationDeg: config.sharpcap.minElevationDeg,
         maxSepDeg: config.sharpcap.maxSepDeg,
@@ -1325,6 +1327,9 @@ export async function runService({
           leadMaxDays: config.iss?.skyTargets?.planAlerts?.leadMaxDays ?? 7,
         },
       },
+      // Local diagnostics toggle (v0.46.0) — read by the Settings checkbox and
+      // the /api/diag/sql gate. Without this the flag never reaches the UI/gate.
+      diag: { enabled: config.diag?.enabled === true },
       _servicePath: configPaths.service ?? null,
     };
   }
@@ -1827,6 +1832,8 @@ export async function runService({
         leadDriftFrac: config.sharpcap.leadDriftFrac,
         maxDriftS: config.sharpcap.maxDriftS,
         maxCaptureS: config.sharpcap.maxCaptureS,
+        adaptiveDrift: config.sharpcap.adaptiveDrift === true,
+        adaptiveElevation: config.sharpcap.adaptiveElevation === true,
         triggerOnStage: config.sharpcap.triggerOnStage,
         minElevationDeg: config.sharpcap.minElevationDeg,
         maxSepDeg: config.sharpcap.maxSepDeg,
@@ -1865,6 +1872,7 @@ export async function runService({
           // overrides. Written only when the UI actually edited it.
           iss:           { ...(existing.iss ?? {}), skyTargets: config.iss?.skyTargets },
           appulse:       { ...(existing.appulse ?? {}), ...config.appulse },
+          diag:          { ...(existing.diag ?? {}), ...config.diag },
         };
         await fsp.writeFile(configPaths.service, JSON.stringify(merged, null, 2), 'utf8');
       } catch (e) {
