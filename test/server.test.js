@@ -130,6 +130,47 @@ describe('HTTP server', () => {
   });
 });
 
+describe('HTTP server — /api/diag/sql (v0.46.0)', () => {
+  let srv; let url; let diagOn;
+
+  beforeAll(async () => {
+    diagOn = true;
+    store.recordArm({ armedAtMs: 1, rig: 'r', kind: 'aircraft', body: 'Sun', icao: 'abc123', sepDeg: 0.3, elevDeg: 25 });
+    srv = createHttpServer({
+      port: 0, host: '127.0.0.1', getState: () => fakeState, store,
+      webRoot: resolve(ROOT, 'web'), getConfig: () => ({ diag: { enabled: diagOn } }),
+    });
+    const { port } = await srv.start();
+    url = `http://127.0.0.1:${port}`;
+  });
+  afterAll(async () => { if (srv) await srv.stop(); });
+
+  const q = (sql) => fetch(`${url}/api/diag/sql`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sql }),
+  });
+
+  it('runs a read-only SELECT and returns columns + rows', async () => {
+    const res = await q('SELECT icao, sep_deg FROM capture_arms');
+    expect(res.ok).toBe(true);
+    const b = await res.json();
+    expect(b.columns).toEqual(['icao', 'sep_deg']);
+    expect(b.rows[0].icao).toBe('abc123');
+  });
+
+  it('rejects writes, DDL and multiple statements', async () => {
+    for (const sql of ['DELETE FROM capture_arms', 'DROP TABLE capture_arms',
+      'UPDATE capture_arms SET sep_deg=0', 'SELECT 1; DROP TABLE capture_arms', 'PRAGMA table_info(capture_arms)']) {
+      expect((await q(sql)).status).toBe(400);
+    }
+  });
+
+  it('404s when diagnostics are disabled', async () => {
+    diagOn = false;
+    expect((await q('SELECT 1')).status).toBe(404);
+    diagOn = true;
+  });
+});
+
 describe('HTTP server — /api/update gating', () => {
   let srv;
   let url;

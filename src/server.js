@@ -26,6 +26,17 @@ function jsonResponse(res, status, body) {
   res.end(buf);
 }
 
+// Read-only SQL guard for /api/diag/sql (v0.46.0): a single SELECT/WITH
+// statement only — no writes, no multiple statements, no PRAGMA/ATTACH. Belt
+// and braces even on a LAN-only tool so a typo can never mutate the history DB.
+function isReadOnlySql(sql) {
+  const s = String(sql || '').trim().replace(/;+\s*$/, '');   // strip trailing ';'
+  if (!s || s.includes(';')) return false;                    // single statement only
+  if (!/^(select|with)\b/i.test(s)) return false;             // must start SELECT/WITH
+  // Reject any write/DDL/side-effect keyword as a standalone word, anywhere.
+  return !/\b(insert|update|delete|drop|alter|create|replace|attach|detach|pragma|vacuum|reindex|truncate)\b/i.test(s);
+}
+
 // Plain-text / CSV response with an optional download filename (v0.41.0).
 function textResponse(res, status, text, contentType, downloadName) {
   const buf = Buffer.from(text);
@@ -351,6 +362,29 @@ export function createHttpServer(opts) {
           return jsonResponse(res, 200, report);
         } catch (e) {
           return jsonResponse(res, 500, { error: String(e?.message ?? e) });
+        }
+      }
+
+      // Local diagnostics (v0.46.0): a SELECT-only read window onto the history
+      // DB, for the /diag page. OFF unless diag.enabled — a LAN debug tool with
+      // no auth. SELECT/WITH only, single statement, result-capped; it can read
+      // the (non-secret) history DB but never write to it.
+      if (url.pathname === '/api/diag/sql' && req.method === 'POST') {
+        if (!getConfig?.()?.diag?.enabled) return jsonResponse(res, 404, { error: 'diagnostics disabled — enable it in Settings (Diag)' });
+        if (!store) return jsonResponse(res, 404, { error: 'no store' });
+        let body;
+        try { body = await readJsonBody(req); }
+        catch (e) { return jsonResponse(res, 400, { error: `bad json: ${e.message}` }); }
+        const sql = String(body?.sql ?? '');
+        if (!isReadOnlySql(sql)) return jsonResponse(res, 400, { error: 'only a single read-only SELECT / WITH query is allowed' });
+        try {
+          const rows = store.db.prepare(sql).all();
+          const LIMIT = 2000;
+          const capped = rows.slice(0, LIMIT);
+          const columns = capped.length ? Object.keys(capped[0]) : [];
+          return jsonResponse(res, 200, { columns, rows: capped, total: rows.length, truncated: rows.length > LIMIT });
+        } catch (e) {
+          return jsonResponse(res, 400, { error: String(e?.message ?? e) });
         }
       }
       if (url.pathname === '/api/health') {

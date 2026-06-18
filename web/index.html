@@ -780,6 +780,13 @@
             <small class="field-hint">On-Demand API v2 base. Change only if AirNav moves the host.</small></label>
         </fieldset>
 
+        <fieldset data-tab="general">
+          <legend>Diag</legend>
+          <label class="checkbox-row">
+            <input name="diag.enabled" type="checkbox"> Enable diagnostics
+            <small class="field-hint">Opens <a href="/diag.html" target="_blank" rel="noopener">/diag.html</a> — a read-only <b>SELECT</b> window onto the history DB for troubleshooting (e.g. "why did this aircraft fire but not transit?"). LAN-only debug tool with no auth; leave OFF unless you need it.</small></label>
+        </fieldset>
+
         <fieldset data-tab="scopes">
           <legend>SharpCap capture trigger</legend>
           <!-- ── On/off toggles ─────────────────────────────────────── -->

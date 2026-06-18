@@ -110,6 +110,11 @@ export const DEFAULT_CONFIG = {
   },
   server: { port: 8081, host: '0.0.0.0', publicUrl: '' },
   store: { path: './data/history.db' },
+  // Local diagnostics (v0.46.0): when enabled, /diag exposes a SELECT-only,
+  // read-only query window onto the history DB for troubleshooting (e.g. "why
+  // did this aircraft fire but not transit?"). OFF by default — it's a LAN-only
+  // debug tool with no auth; turn it on in Settings only when you need it.
+  diag: { enabled: false },
   // Optical setup for the FOV sketch popup. Editable from the web Settings
   // panel; persisted into config/service.json so a restart preserves it.
   optics: {
@@ -447,6 +452,7 @@ function mergeConfig(user) {
     buzzer:    { ...DEFAULT_CONFIG.buzzer,    ...(user.buzzer    ?? {}) },
     lifecyclePersist: { ...DEFAULT_CONFIG.lifecyclePersist, ...(user.lifecyclePersist ?? {}) },
     driftPersist: { ...DEFAULT_CONFIG.driftPersist, ...(user.driftPersist ?? {}) },
+    diag: { ...DEFAULT_CONFIG.diag, ...(user.diag ?? {}) },
   };
 }
 
@@ -1483,6 +1489,11 @@ export async function runService({
       }
       if (typeof o.mirror === 'boolean') config.optics.mirror = o.mirror;
       applied.optics = { ...config.optics };
+    }
+
+    if (patch.diag && typeof patch.diag === 'object') {
+      if (typeof patch.diag.enabled === 'boolean') config.diag.enabled = patch.diag.enabled;
+      applied.diag = { ...config.diag };
     }
 
     if (patch.display && typeof patch.display === 'object') {
