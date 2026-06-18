@@ -119,6 +119,13 @@ export const DEFAULT_CONFIG = {
     sensorPxW: 1936,
     sensorPxH: 1216,
     sensorName: 'ZWO ASI174MM',
+    // Camera orientation for the FOV "Sensor view" (v0.43.0). driftWest = the
+    // screen direction the body drifts with tracking OFF ('right'|'left'|'up'|
+    // 'down') = celestial West in the sensor (one-time drift-test calibration).
+    // mirror = image is mirrored (star diagonal / Lunt). Empty driftWest →
+    // sensor view disabled.
+    driftWest: '',
+    mirror: false,
   },
   // Where to write the periodic lifecycle snapshot used to repopulate the
   // tracking panel after a service restart. Set to '' to disable persistence.
@@ -1469,6 +1476,12 @@ export async function runService({
         }
       }
       if (typeof o.sensorName === 'string') config.optics.sensorName = o.sensorName;
+      if ('driftWest' in o) {
+        const v = String(o.driftWest ?? '').toLowerCase();
+        if (v && !['right', 'left', 'up', 'down'].includes(v)) throw new Error("optics.driftWest must be '', 'right', 'left', 'up' or 'down'");
+        config.optics.driftWest = v;
+      }
+      if (typeof o.mirror === 'boolean') config.optics.mirror = o.mirror;
       applied.optics = { ...config.optics };
     }
 

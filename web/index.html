@@ -154,6 +154,7 @@
         <h2>
           FOV preview
           <span id="fov-mode" class="fov-mode" title="auto = best live candidate with sep &lt; 2° (preferring sep &lt; 1° when one exists). pinned = locked to your selection; cleared automatically when a newer qualifying tight candidate appears.">auto</span>
+          <button id="fov-view-toggle" class="fov-view-toggle" type="button" title="Sky view = N/S/E/W with elevation up (geometric). Sensor view = exactly as it appears in SharpCap, using your camera orientation (Settings → Telescope &amp; sensor). Click to switch.">Sky</button>
         </h2>
         <p class="hint" id="fov-hint">Waiting for a close approach (separation &lt; 1°). Click any tracking or history row to pin it here.</p>
         <div id="fov-body" class="fov-body"></div>
@@ -639,6 +640,18 @@
             <small class="field-hint">Horizontal resolution — informational only, not used in the geometric FOV.</small></label>
           <label>Sensor H (px)<input name="optics.sensorPxH" type="number" step="1" min="1">
             <small class="field-hint">Vertical resolution — informational only.</small></label>
+          <label>Camera orientation — Sun drifts toward
+            <select name="optics.driftWest">
+              <option value="">Off (sky view only)</option>
+              <option value="right">Right →</option>
+              <option value="left">← Left</option>
+              <option value="up">Up ↑</option>
+              <option value="down">Down ↓</option>
+            </select>
+            <small class="field-hint">Do a SharpCap <b>drift test</b>: tracking OFF, watch which way the Sun drifts across the sensor — that direction is <b>West</b>. Enables the FOV <b>Sensor view</b> (the 🔭/AZ toggle) so the sketch matches what you see in SharpCap. Leave Off for the plain sky view.</small></label>
+          <label class="checkbox-row">
+            <input name="optics.mirror" type="checkbox"> Mirrored image (star diagonal / Lunt)
+            <small class="field-hint">Tick if your image is mirrored (a star diagonal or the Lunt's internal mirror flips it — swaps N/S). The sensor view rotates with the Sun automatically on an EQ mount; you only calibrate once.</small></label>
         </fieldset>
 
         <fieldset data-tab="pushover">

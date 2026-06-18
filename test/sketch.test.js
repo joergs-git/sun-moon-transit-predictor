@@ -9,9 +9,12 @@ import { sunAzEl } from '../src/geometry.js';
 import { findTransits } from '../src/tracker.js';
 import {
   buildSketchSvg,
+  buildSensorSvg,
   buildSideViewSvg,
+  computeSensorMatrix,
   fromHistoryRow,
   fromLifecycleEntry,
+  setOptics,
   SKETCH_OPTICS,
 } from '../web/sketch.js';
 
@@ -227,5 +230,60 @@ describe('side view', () => {
     expect(buildSideViewSvg({ elevationDeg: 30 })).toBe('');
     expect(buildSideViewSvg({ elevationDeg: 0, rangeM: 18000 })).toBe('');
     expect(buildSideViewSvg(null)).toBe('');
+  });
+});
+
+describe('sensor-view transform (v0.43.0)', () => {
+  const apply = (m, x, y) => ({ x: m.a * x + m.c * y, y: m.b * x + m.d * y });
+  const near = (v, t) => Math.abs(v - t) < 1e-9;
+
+  it('returns null when not configured', () => {
+    expect(computeSensorMatrix({ azDeg: 180, elDeg: 40, latDeg: 52, driftWest: '', mirror: false })).toBe(null);
+    expect(computeSensorMatrix({ azDeg: NaN, elDeg: 40, latDeg: 52, driftWest: 'right', mirror: false })).toBe(null);
+  });
+
+  it('is a pure rotation without mirror, a reflection with mirror', () => {
+    const rot = computeSensorMatrix({ azDeg: 150, elDeg: 35, latDeg: 52, driftWest: 'right', mirror: false });
+    const ref = computeSensorMatrix({ azDeg: 150, elDeg: 35, latDeg: 52, driftWest: 'right', mirror: true });
+    expect(rot.a * rot.d - rot.b * rot.c).toBeCloseTo(1, 9);    // det +1
+    expect(ref.a * ref.d - ref.b * ref.c).toBeCloseTo(-1, 9);   // det -1
+  });
+
+  it('maps celestial West to the chosen drift direction (right)', () => {
+    // At the meridian (south) the sky-frame West vector is screen-right [1,0].
+    const m = computeSensorMatrix({ azDeg: 180, elDeg: 40, latDeg: 52, driftWest: 'right', mirror: true });
+    const w = apply(m, 1, 0);
+    expect(near(w.x, 1) && near(w.y, 0)).toBe(true);
+  });
+
+  it('flips N/S with the mirror (Lunt): at meridian, North goes down', () => {
+    // Sky-frame North at the meridian is screen-up [0,-1].
+    const mirrored = computeSensorMatrix({ azDeg: 180, elDeg: 40, latDeg: 52, driftWest: 'right', mirror: true });
+    const plain = computeSensorMatrix({ azDeg: 180, elDeg: 40, latDeg: 52, driftWest: 'right', mirror: false });
+    expect(apply(mirrored, 0, -1).y).toBeGreaterThan(0.99);     // down
+    expect(apply(plain, 0, -1).y).toBeLessThan(-0.99);          // up
+  });
+
+  it('rotates with the Sun (parallactic): matrices differ off the meridian', () => {
+    const a = computeSensorMatrix({ azDeg: 120, elDeg: 30, latDeg: 52, driftWest: 'right', mirror: true });
+    const b = computeSensorMatrix({ azDeg: 240, elDeg: 30, latDeg: 52, driftWest: 'right', mirror: true });
+    expect(Math.abs(a.b - b.b) + Math.abs(a.d - b.d)).toBeGreaterThan(0.1);
+  });
+
+  it('buildSensorSvg renders a frame when configured, a hint otherwise', () => {
+    const d = {
+      body: 'Sun', flight: 'ISS', sepDeg: 0.6, closestAtMs: 1.7e12, nowMs: 1.7e12,
+      bodyAt: { az: 140, el: 30 }, obsLat: 52.28, aircraftAt: { rangeM: 710000 },
+      transitPath: [
+        { aircraftAz: 139, aircraftEl: 32, bodyAz: 140, bodyEl: 30, tOffsetMs: -60000 },
+        { aircraftAz: 140, aircraftEl: 30.4, bodyAz: 140, bodyEl: 30, tOffsetMs: 0 },
+      ],
+    };
+    setOptics({ driftWest: 'right', mirror: true });
+    const svg = buildSensorSvg(d);
+    expect(svg).toContain('SENSOR VIEW');
+    expect(svg).toContain('move Sun');
+    setOptics({ driftWest: '' });
+    expect(buildSensorSvg(d)).toContain('not set up');
   });
 });

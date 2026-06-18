@@ -24,6 +24,13 @@ const OPTICS = {
   SENSOR_PX_W: 1936,
   SENSOR_PX_H: 1216,
   SENSOR_NAME: 'ZWO ASI174MM',
+  // Camera orientation for the "Sensor view" (v0.43.0). DRIFT_WEST = the screen
+  // direction the body drifts with tracking OFF ('right'|'left'|'up'|'down') =
+  // celestial West in the sensor (a one-time drift-test calibration). MIRROR =
+  // the image is mirrored (star diagonal / Lunt). Empty DRIFT_WEST → no sensor
+  // view (sky view only). See computeSensorMatrix().
+  DRIFT_WEST: '',
+  MIRROR: false,
 };
 
 // Generic airliner fallback envelope (~A320/B737), used only when the ADS-B
@@ -69,6 +76,72 @@ export function setOptics(patch) {
   if (typeof patch.sensorName === 'string' && patch.sensorName.trim()) {
     OPTICS.SENSOR_NAME = patch.sensorName.trim();
   }
+  if ('driftWest' in patch) {
+    const v = String(patch.driftWest ?? '').toLowerCase();
+    OPTICS.DRIFT_WEST = ['right', 'left', 'up', 'down'].includes(v) ? v : '';
+  }
+  if ('mirror' in patch) OPTICS.MIRROR = Boolean(patch.mirror);
+}
+
+/**
+ * Sensor-frame transform (v0.43.0). Returns a 2×2 matrix {a,b,c,d} that maps a
+ * SKY-frame screen offset (dx,dy from the disc centre, y-down) to the SENSOR
+ * frame, so the FOV preview can be shown exactly as it appears in SharpCap —
+ * or null when not configured / no data.
+ *
+ * It reuses the same ENU vectors the celestial compass uses, so celestial West
+ * (= the drift direction) and North are already parallactic-correct: on an EQ
+ * mount the camera↔equatorial angle is fixed, the camera↔alt-az angle rotates
+ * with the parallactic angle over the day, and this picks that up automatically
+ * because West/North are recomputed from the body's az/el each call. The user
+ * calibrates only the constant offset (drift direction) + parity (mirror).
+ *
+ * @param {{azDeg:number, elDeg:number, latDeg:number, driftWest:string, mirror:boolean}} o
+ */
+export function computeSensorMatrix({ azDeg, elDeg, latDeg, driftWest, mirror }) {
+  const DW = { right: [1, 0], left: [-1, 0], up: [0, -1], down: [0, 1] }[driftWest];
+  if (!DW) return null;
+  if (![azDeg, elDeg, latDeg].every(Number.isFinite)) return null;
+
+  const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  const cross = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const norm = (v) => { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / n, v[1] / n, v[2] / n]; };
+
+  const A = azDeg * DEG; const h = elDeg * DEG; const phi = latDeg * DEG;
+  const O = [Math.cos(h) * Math.sin(A), Math.cos(h) * Math.cos(A), Math.sin(h)];   // body
+  const P = [0, Math.cos(phi), Math.sin(phi)];                                     // celestial pole
+  const Rs = [Math.cos(A), -Math.sin(A), 0];                                       // +az tangent (screen right)
+  let Us = norm(cross(O, Rs));                                                      // toward-zenith tangent (screen up)
+  if (Us[2] < 0) Us = [-Us[0], -Us[1], -Us[2]];
+  const Et = norm(cross(P, O));                                                     // celestial East (increasing RA)
+  const Wt = [-Et[0], -Et[1], -Et[2]];                                             // celestial West = drift direction
+  const projN = (() => { const k = dot(P, O); return norm([P[0] - k * O[0], P[1] - k * O[1], P[2] - k * O[2]]); })();
+
+  // Sky-frame SCREEN unit vectors (x right, y DOWN → y = −Us component).
+  const westS = [dot(Wt, Rs), -dot(Wt, Us)];
+  const northS = [dot(projN, Rs), -dot(projN, Us)];
+  const hs = westS[0] * northS[1] - westS[1] * northS[0];      // source handedness, ±1
+
+  // Desired North direction: perpendicular to D_W, sign chosen so the whole
+  // transform is a pure rotation (no mirror) or a reflection (mirror).
+  const target = (mirror ? -1 : 1) * hs;
+  const DN = target > 0 ? [-DW[1], DW[0]] : [DW[1], -DW[0]];
+
+  // M = [DW DN] · [westS northS]^T  (both bases orthonormal → M orthogonal).
+  const a = DW[0] * westS[0] + DN[0] * northS[0];
+  const c = DW[0] * westS[1] + DN[0] * northS[1];
+  const b = DW[1] * westS[0] + DN[1] * northS[0];
+  const dd = DW[1] * westS[1] + DN[1] * northS[1];
+  // In the sensor frame the cardinals land at fixed directions by construction:
+  // West → D_W, North → D_N, and the opposites for East/South. Handed back so
+  // the renderer can label them without recomputing the ENU math.
+  const cardinals = { W: DW, E: [-DW[0], -DW[1]], N: DN, S: [-DN[0], -DN[1]] };
+  return { a, b, c, d: dd, cardinals };
+}
+
+/** Apply a {a,b,c,d} matrix to a screen offset (ox,oy). */
+function applyMat(m, ox, oy) {
+  return m ? { x: m.a * ox + m.c * oy, y: m.b * ox + m.d * oy } : { x: ox, y: oy };
 }
 
 /** Aircraft angular size at distance r (m). Returns degrees. */
@@ -473,6 +546,110 @@ function buildPredictionChart(d, wX, wY, wW, wH) {
   svg += `<circle cx="${xOf(last.leadMs).toFixed(1)}" cy="${yOf(last.sepDeg).toFixed(1)}" `
        + `r="2" fill="${stroke(last.sepDeg)}"/>`;
   return svg;
+}
+
+/**
+ * Sensor-frame FOV view (v0.43.0): the SAME transit drawn as it actually
+ * appears in SharpCap — the sensor rectangle upright (landscape), the disc,
+ * the crossing track and the compass rose all rotated + mirrored into the
+ * camera's orientation, plus a "move Sun →" cue for where to nudge the mount.
+ * Falls back to a hint when the camera orientation isn't configured.
+ */
+export function buildSensorSvg(d) {
+  const bg = `<rect x="0" y="0" width="${SVG_W}" height="${SVG_H}" rx="6" fill="${COLOURS.fovFill}"/>`;
+  const wrap = (inner) => `<svg viewBox="0 0 ${SVG_W} ${SVG_H}" xmlns="http://www.w3.org/2000/svg" width="100%" role="img">${bg}${inner}</svg>`;
+
+  const M = computeSensorMatrix({
+    azDeg: d.bodyAt?.az, elDeg: d.bodyAt?.el, latDeg: d.obsLat,
+    driftWest: OPTICS.DRIFT_WEST, mirror: OPTICS.MIRROR,
+  });
+  if (!M) {
+    // Not configured (or no observer latitude). Tell the user how to enable it.
+    const msg = !OPTICS.DRIFT_WEST
+      ? 'Sensor view not set up yet.'
+      : 'Need observer latitude for the sensor view.';
+    return wrap(
+      txt(SVG_W / 2, SVG_H / 2 - 6, msg, { fill: '#e6edf3', size: 12, anchor: 'middle' })
+      + txt(SVG_W / 2, SVG_H / 2 + 12, 'Settings → Telescope & sensor → Camera orientation', { fill: COLOURS.label, size: 10, anchor: 'middle' }),
+    );
+  }
+
+  const fovWDeg = fovDeg(OPTICS.TELESCOPE_FOCAL_MM, OPTICS.SENSOR_W_MM);
+  const fovHDeg = fovDeg(OPTICS.TELESCOPE_FOCAL_MM, OPTICS.SENSOR_H_MM);
+  const innerW = SVG_W - 2 * PAD;
+  const innerH = SVG_H - HEADER_H - FOOTER_H - 2 * PAD;
+  const bodyDiameterDeg = BODY_DIAMETER_DEG[d.body] ?? 0.53;
+  const pxPerDeg = (Math.min(innerW, innerH) * 0.5) / bodyDiameterDeg;
+  const cx = SVG_W / 2;
+  const cy = HEADER_H + PAD + innerH / 2;
+  const bodyR = (bodyDiameterDeg / 2) * pxPerDeg;
+  const fovPxW = fovWDeg * pxPerDeg;
+  const fovPxH = fovHDeg * pxPerDeg;
+  const bodyFill = d.body === 'Sun' ? COLOURS.Sun : COLOURS.Moon;
+  const bodyRim = d.body === 'Sun' ? COLOURS.SunRim : COLOURS.MoonRim;
+
+  // Header (one row + a SENSOR tag).
+  const clock = fmtTime(d.closestAtMs);
+  const header =
+    txt(PAD, HEADER_H, `${d.body} · ${d.flight ?? d.satName ?? '—'}`, { fill: '#e6edf3', size: 12, weight: 600 })
+    + txt(SVG_W - PAD, HEADER_H, `Sep ${fmtSepArcmin(d.sepDeg)}`, { fill: '#e6edf3', size: LABEL_SIZE, anchor: 'end' })
+    + txt(PAD, HEADER_H + 13, `<tspan fill="#7fd0ff">SENSOR VIEW</tspan> · ${clock}`, { fill: COLOURS.label, size: LABEL_SIZE });
+
+  // Upright sensor rectangle (landscape, as SharpCap shows it).
+  const rect =
+    `<rect x="${(cx - fovPxW / 2).toFixed(1)}" y="${(cy - fovPxH / 2).toFixed(1)}" `
+    + `width="${fovPxW.toFixed(1)}" height="${fovPxH.toFixed(1)}" `
+    + `fill="none" stroke="${COLOURS.fovStroke}" stroke-width="1.2" stroke-dasharray="4 3"/>`;
+
+  // Disc with an emphasised limb (the user asked for a clearer edge).
+  const disc =
+    `<circle cx="${cx}" cy="${cy}" r="${bodyR.toFixed(1)}" fill="${bodyFill}"/>`
+    + `<circle cx="${cx}" cy="${cy}" r="${bodyR.toFixed(1)}" fill="none" stroke="${bodyRim}" stroke-width="2"/>`;
+
+  // Transit path, each sample mapped sky→sensor.
+  const refEl = d.bodyAt.el;
+  const pts = (d.transitPath ?? []).map((p) => {
+    const { dx, dy } = relOffsetDeg(p, refEl);
+    const o = applyMat(M, dx * pxPerDeg, -dy * pxPerDeg);
+    return { x: cx + o.x, y: cy + o.y, degOff: Math.hypot(dx, dy), tOffsetMs: p.tOffsetMs };
+  }).filter((p) => p.degOff <= 4 * Math.hypot(fovWDeg, fovHDeg));
+  let path = '';
+  for (let i = 1; i < pts.length; i++) {
+    path += `<line x1="${pts[i - 1].x.toFixed(1)}" y1="${pts[i - 1].y.toFixed(1)}" x2="${pts[i].x.toFixed(1)}" y2="${pts[i].y.toFixed(1)}" stroke="${COLOURS.pathStroke}" stroke-width="1.6"/>`;
+  }
+  // Closest-approach marker = the sample nearest the disc centre.
+  const closest = pts.slice().sort((a, b) => a.degOff - b.degOff)[0];
+  if (closest) path += `<circle cx="${closest.x.toFixed(1)}" cy="${closest.y.toFixed(1)}" r="3" fill="${COLOURS.ac}"/>`;
+
+  // Compass rose at the sensor-frame cardinals.
+  const L = bodyR + 16;
+  let rose = '';
+  for (const [name, v] of Object.entries(M.cardinals)) {
+    const x = cx + v[0] * L; const y = cy + v[1] * L;
+    const col = name === 'N' ? '#7fd0ff' : COLOURS.label;
+    rose += txt(x, y + 3, name, { fill: col, size: LABEL_SIZE, anchor: 'middle' });
+  }
+
+  // "Move Sun" cue: nudge the mount so the crossing lands on the sensor. Only
+  // when the satellite/aircraft passes OUTSIDE the disc (otherwise it's already
+  // on it). Direction = toward the closest-approach offset.
+  let cue = '';
+  if (closest && Number.isFinite(d.sepDeg) && d.sepDeg > bodyDiameterDeg / 2) {
+    const vx = closest.x - cx; const vy = closest.y - cy;
+    const mag = Math.hypot(vx, vy) || 1;
+    const ax = cx + (vx / mag) * (bodyR + 30); const ay = cy + (vy / mag) * (bodyR + 30);
+    cue =
+      `<line x1="${cx}" y1="${cy}" x2="${ax.toFixed(1)}" y2="${ay.toFixed(1)}" stroke="#ffb454" stroke-width="1.6" marker-end="url(#sarrow)"/>`
+      + txt(ax, ay - 6, 'move Sun', { fill: '#ffb454', size: 10, anchor: 'middle' });
+  }
+  const defs = '<defs><marker id="sarrow" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#ffb454"/></marker></defs>';
+
+  const mirrorTag = OPTICS.MIRROR ? ', mirrored' : '';
+  const footer = txt(PAD, SVG_H - PAD + 2,
+    `FOV ${fovWDeg.toFixed(2)}° × ${fovHDeg.toFixed(2)}° · West ${OPTICS.DRIFT_WEST}${mirrorTag} · ${OPTICS.SENSOR_NAME}`,
+    { fill: COLOURS.label, size: 10 });
+
+  return wrap(defs + header + rect + disc + path + rose + cue + footer);
 }
 
 export function buildSketchSvg(d) {
