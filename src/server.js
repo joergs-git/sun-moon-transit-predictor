@@ -30,7 +30,13 @@ function jsonResponse(res, status, body) {
 // statement only — no writes, no multiple statements, no PRAGMA/ATTACH. Belt
 // and braces even on a LAN-only tool so a typo can never mutate the history DB.
 function isReadOnlySql(sql) {
-  const s = String(sql || '').trim().replace(/;+\s*$/, '');   // strip trailing ';'
+  // Strip SQL comments first — they're harmless (SQLite ignores them) but a
+  // leading "-- note" would otherwise fail the "starts with SELECT" check. Done
+  // on a copy used ONLY for the safety check; the original runs verbatim.
+  const s = String(sql || '')
+    .replace(/--[^\n]*/g, ' ')          // line comments
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')  // block comments
+    .trim().replace(/;+\s*$/, '');      // strip trailing ';'
   if (!s || s.includes(';')) return false;                    // single statement only
   if (!/^(select|with)\b/i.test(s)) return false;             // must start SELECT/WITH
   // Reject any write/DDL/side-effect keyword as a standalone word, anywhere.

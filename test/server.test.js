@@ -157,9 +157,16 @@ describe('HTTP server — /api/diag/sql (v0.46.0)', () => {
     expect(b.rows[0].icao).toBe('abc123');
   });
 
+  it('allows a leading SQL comment before SELECT', async () => {
+    const res = await q('-- drift check\nSELECT icao FROM capture_arms');
+    expect(res.ok).toBe(true);
+    expect((await res.json()).rows[0].icao).toBe('abc123');
+  });
+
   it('rejects writes, DDL and multiple statements', async () => {
     for (const sql of ['DELETE FROM capture_arms', 'DROP TABLE capture_arms',
-      'UPDATE capture_arms SET sep_deg=0', 'SELECT 1; DROP TABLE capture_arms', 'PRAGMA table_info(capture_arms)']) {
+      'UPDATE capture_arms SET sep_deg=0', 'SELECT 1; DROP TABLE capture_arms',
+      'PRAGMA table_info(capture_arms)', '/* x */ DELETE FROM capture_arms']) {
       expect((await q(sql)).status).toBe(400);
     }
   });
