@@ -269,6 +269,20 @@ describe('sensor-view transform (v0.43.0)', () => {
     expect(Math.abs(a.b - b.b) + Math.abs(a.d - b.d)).toBeGreaterThan(0.1);
   });
 
+  it('draws an ✕ marker for a far/illegible aircraft, the silhouette when close (v0.45.4)', () => {
+    const base = {
+      body: 'Sun', flight: 'X', closestAtMs: 1.7e12, nowMs: 1.7e12,
+      bodyAt: { az: 140, el: 30 }, obsLat: 52.28,
+      aircraftAt: { az: 140.1, el: 30.1, rangeM: 42000 },
+    };
+    const cross = /x1="-6" y1="-6" x2="6" y2="6"/;
+    const close = buildSketchSvg({ ...base, sepDeg: 0.3 });
+    expect(close).not.toMatch(cross);
+    expect(close).toContain('<path d="M ');       // true-shape silhouette
+    const far = buildSketchSvg({ ...base, sepDeg: 4.0 });
+    expect(far).toMatch(cross);                    // ✕ marker instead
+  });
+
   it('uses a North-up frame with obsLat, falls back to alt-az without it (v0.45.2)', () => {
     const candidate = syntheticTransitCandidate();
     const entry = {

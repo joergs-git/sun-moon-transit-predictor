@@ -40,6 +40,11 @@ const OPTICS = {
 const AC_WINGSPAN_M = 36;
 const AC_LENGTH_M = 38;
 
+// Beyond this separation the dynamic zoom-out (v0.45.0) has shrunk the
+// silhouette to an illegible blob, so the aircraft is drawn as a clear ✕ marker
+// at its position instead of a tiny shape. (v0.45.4)
+const FAR_MARKER_SEP_DEG = 2.0;
+
 // Mean apparent angular diameters. Variation is small enough at this scale
 // (Sun ±0.014°, Moon ±0.05°) that constants are fine for a sketch.
 const BODY_DIAMETER_DEG = { Sun: 0.533, Moon: 0.518 };
@@ -913,13 +918,28 @@ export function buildSketchSvg(d) {
   // glyph (core module + two solar-array wings) so it never reads as a
   // plane. Both are translated to the anchor and rotated to the apparent
   // direction of travel.
-  const glyph = d.isISS
-    ? issGlyph(Math.max(lenPx, 7), Math.max(wingPx, 14))
-    : `<path d="${aircraftPath(lenPx, wingPx)}" fill="${COLOURS.ac}" stroke="${COLOURS.acStroke}" stroke-width="0.5"/>`;
-  const acGroup =
-    `<g transform="translate(${anchor.x.toFixed(1)} ${anchor.y.toFixed(1)}) rotate(${(headingRad * RAD).toFixed(1)})">` +
-    glyph +
-    `</g>`;
+  // Far/illegible → a clear ✕ marker (diagonal, so it never reads as the
+  // horizontal/vertical centre crosshair) at the aircraft's position; otherwise
+  // the true-shape silhouette / ISS glyph, rotated to the heading.
+  const farMarker = (Number.isFinite(d.sepDeg) && d.sepDeg > FAR_MARKER_SEP_DEG)
+    || Math.max(wingPx, lenPx) < 6;
+  let acGroup;
+  if (farMarker) {
+    const a = 6;
+    acGroup =
+      `<g transform="translate(${anchor.x.toFixed(1)} ${anchor.y.toFixed(1)})">`
+      + `<line x1="${-a}" y1="${-a}" x2="${a}" y2="${a}" stroke="${COLOURS.ac}" stroke-width="1.5"/>`
+      + `<line x1="${-a}" y1="${a}" x2="${a}" y2="${-a}" stroke="${COLOURS.ac}" stroke-width="1.5"/>`
+      + `</g>`;
+  } else {
+    const glyph = d.isISS
+      ? issGlyph(Math.max(lenPx, 7), Math.max(wingPx, 14))
+      : `<path d="${aircraftPath(lenPx, wingPx)}" fill="${COLOURS.ac}" stroke="${COLOURS.acStroke}" stroke-width="0.5"/>`;
+    acGroup =
+      `<g transform="translate(${anchor.x.toFixed(1)} ${anchor.y.toFixed(1)}) rotate(${(headingRad * RAD).toFixed(1)})">` +
+      glyph +
+      `</g>`;
+  }
 
   // v0.30.19 — "initial guess" overlay. When the lifecycle entry has
   // carried forward a frozen first-emission geometry that's measurably
