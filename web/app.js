@@ -1825,7 +1825,11 @@ function refreshFovPane() {
   // when the user clicked. Equal timestamps do NOT displace (so an
   // auto-picked entry that was already there before the click stays
   // out of the way).
-  if (pin && auto && (auto.firstSeenMs ?? 0) > pin.firstSeenMs) {
+  // A live-followed Total-live pin is a deliberate "watch this specific plane"
+  // gesture, so it is exempt — it stays until the user clicks elsewhere (or it
+  // leaves range). Other pins are displaced by a newer qualifying candidate.
+  if (pin && !pin.key?.startsWith('totallive:')
+      && auto && (auto.firstSeenMs ?? 0) > pin.firstSeenMs) {
     pin = null;
   }
 
@@ -1837,7 +1841,17 @@ function refreshFovPane() {
     // fallback for entries that no longer exist live (e.g. pinned
     // from History) — same behaviour as pre-v0.30.22.
     let pinInput = pin.input;
-    if (pin.key && !pin.key.startsWith('history:') && Array.isArray(lastLifecycle)) {
+    if (pin.key?.startsWith('totallive:') && Array.isArray(lastTotalLive)) {
+      // Live-follow (v0.45.5): re-derive the plane's CURRENT offset each tick so
+      // it moves in the FOV. Match by icao+body; keep the last snapshot once it
+      // drops out of range.
+      const [icao, body] = pin.key.slice('totallive:'.length).split('|');
+      const row = lastTotalLive.find((r) => r.icao === icao && r.body === body);
+      const bodyAzEl = row && lastBodies?.[body]
+        ? { az: lastBodies[body].azimuthDeg, el: lastBodies[body].elevationDeg } : null;
+      const fresh = row ? fromTotalLiveRow(row, bodyAzEl) : null;
+      if (fresh) pinInput = fresh;
+    } else if (pin.key && !pin.key.startsWith('history:') && Array.isArray(lastLifecycle)) {
       const fresh = lastLifecycle.find((e) => e.key === pin.key);
       if (fresh) {
         const refreshed = fromLifecycleEntry(fresh);
@@ -1892,8 +1906,9 @@ function pinFromRow(source, index) {
     };
   } else if (source === 'totallive') {
     // Any tracked aircraft (v0.45.1). Builds the sketch from the plane's
-    // CURRENT offset to the nearest body — no prediction path. A static
-    // snapshot (like a History pin); re-click to refresh its position.
+    // CURRENT offset to the nearest body — no prediction path. Live-followed:
+    // refreshFovPane re-derives it each tick by icao+body (v0.45.5), and the
+    // pin is exempt from auto-displacement so it stays while you watch.
     const r = lastTotalLive[idx];
     const bodyAzEl = r && lastBodies?.[r.body]
       ? { az: lastBodies[r.body].azimuthDeg, el: lastBodies[r.body].elevationDeg } : null;
