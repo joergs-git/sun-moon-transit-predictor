@@ -28,6 +28,7 @@ This module never touches hardware; epaper_client.py owns the panel. That keeps
 rendering testable on any machine via the client's --dry-run flag.
 """
 
+import math
 import os
 import socket
 import time
@@ -401,8 +402,66 @@ def _header(draw, state):
     draw.line((0, _HDR_RULE, WIDTH, _HDR_RULE), fill=BLACK, width=1)
 
 
+def _dashed_line(draw, p0, p1, dash=4, gap=3):
+    """Dashed segment between two points (Pillow has no native dashes). Works at
+    any angle, so it draws the edges of a rotated FOV box."""
+    x0, y0 = p0
+    x1, y1 = p1
+    seg = math.hypot(x1 - x0, y1 - y0)
+    if seg <= 0:
+        return
+    ux, uy = (x1 - x0) / seg, (y1 - y0) / seg
+    pos = 0.0
+    while pos < seg:
+        a = pos
+        bb = min(pos + dash, seg)
+        draw.line((x0 + ux * a, y0 + uy * a, x0 + ux * bb, y0 + uy * bb), fill=BLACK, width=1)
+        pos += dash + gap
+
+
+def _draw_fov_box(draw, cx, cy, w, h, m, box):
+    """Dashed sensor-FOV box centred at (cx, cy), w×h px. Rotated to the camera
+    orientation (with W/R/T edge labels) when a sensor matrix is given, else the
+    plain axis-aligned rectangle. Port of fovBoxSvg() in web/sketch.js — the
+    e-paper has no Sky/Sensor toggle, so this is how the real orientation is
+    shown, identical to the web FOV."""
+    bx0, by0, bx1, by1 = box
+    hw, hh = w / 2.0, h / 2.0
+    if not m:
+        for p0, p1 in (((cx - hw, cy - hh), (cx + hw, cy - hh)),
+                       ((cx + hw, cy - hh), (cx + hw, cy + hh)),
+                       ((cx + hw, cy + hh), (cx - hw, cy + hh)),
+                       ((cx - hw, cy + hh), (cx - hw, cy - hh))):
+            _dashed_line(draw, p0, p1)
+        return
+
+    def inv(sx, sy):
+        # Mᵀ: sensor-frame coord → sky frame. +x = image right, −y = image top.
+        return (cx + m["a"] * sx + m["b"] * sy, cy + m["c"] * sx + m["d"] * sy)
+
+    corners = [inv(-hw, -hh), inv(hw, -hh), inv(hw, hh), inv(-hw, hh)]
+    for i in range(4):
+        _dashed_line(draw, corners[i], corners[(i + 1) % 4])
+
+    f = _font(9)
+
+    def _label(sx, sy, ch):
+        px, py = inv(sx, sy)
+        px = min(max(px - 2, bx0 + 1), bx1 - 8)     # clamp inside the panel cell
+        py = min(max(py - 5, by0 + 1), by1 - 11)
+        draw.text((px, py), ch, font=f, fill=BLACK)
+
+    dw = m["cardinals"]["W"]
+    _label(dw[0] * hw, dw[1] * hh, "W")             # West / drift edge
+    _label(hw * 1.12, 0, "R")                       # image right edge
+    _label(0, -hh * 1.18, "T")                      # image top edge
+
+
 def _draw_fov(draw, state, view, box):
-    """Draw the FOV frame (body disc + candidate marker) inside `box`."""
+    """Draw the FOV frame (body disc + dashed sensor box + crossing marker).
+    The sensor box is drawn ROTATED to the camera's real orientation when a
+    drift-test calibration is set (optics.driftWest), with W/R/T edge labels —
+    same as the web FOV, no toggle."""
     bx0, by0, bx1, by1 = box
     draw.rectangle((bx0, by0, bx1, by1), outline=BLACK)
     if not view:
@@ -420,20 +479,32 @@ def _draw_fov(draw, state, view, box):
     body_el = view["body_el_c"] if view["body_el_c"] is not None else _num(b.get("elevationDeg"))
     range_m = _num(b.get("rangeM"))
     optics = state.get("optics") or {}
-    fov_w = fov.fov_deg(_num(optics.get("telescopeFocalMm")), _num(optics.get("sensorWmm")))
-    if not fov_w:
-        fov_w = 1.0  # ~1° default frame if optics missing
-    px_per_deg = (bx1 - bx0) / fov_w
 
-    # Body disc, centred. Filled so it reads as a clear solid Sun/Moon on e-ink.
+    # Disc-centred scale (matches the web FOV): the disc fills ~0.4 of the widget
+    # so the sensor box — which may be larger or smaller — floats inside with room
+    # for the rotated outline + labels.
     disc_deg = fov.body_disc_deg(body, range_m) if range_m else 0.5
+    widget_min = min(bx1 - bx0, by1 - by0)
+    px_per_deg = (widget_min * 0.40) / disc_deg
+
+    # Body disc, centred.
     r = max(3.0, (disc_deg / 2.0) * px_per_deg)
     draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=BLACK)
 
+    # Sensor FOV box, rotated to the camera orientation (v0.43.0).
+    fov_w_deg = fov.fov_deg(_num(optics.get("telescopeFocalMm")), _num(optics.get("sensorWmm")))
+    fov_h_deg = fov.fov_deg(_num(optics.get("telescopeFocalMm")), _num(optics.get("sensorHmm")))
+    if fov_w_deg and fov_h_deg:
+        lat = _num((state.get("observer") or {}).get("latitudeDeg"))
+        sensor_m = fov.compute_sensor_matrix(
+            body_az, body_el, lat, optics.get("driftWest"), bool(optics.get("mirror")))
+        _draw_fov_box(draw, cx, cy, fov_w_deg * px_per_deg, fov_h_deg * px_per_deg,
+                      sensor_m, (bx0, by0, bx1, by1))
+
     def _pt(b_az, b_el, a_az, a_el):
-        """Pixel for an aircraft az/el relative to a body az/el (clamped)."""
+        """Pixel for an aircraft az/el relative to a body az/el (sky frame, clamped)."""
         dx, dy = fov.offset_deg(b_az, b_el, a_az, a_el)
-        px, py = fov.deg_to_px(dx, dy, cx, cy, px_per_deg)
+        px, py = cx + dx * px_per_deg, cy - dy * px_per_deg
         return (min(max(px, bx0 + 2), bx1 - 2), min(max(py, by0 + 2), by1 - 2))
 
     def _cross(px, py, arm, w):

@@ -139,9 +139,38 @@ export function computeSensorMatrix({ azDeg, elDeg, latDeg, driftWest, mirror })
   return { a, b, c, d: dd, cardinals };
 }
 
-/** Apply a {a,b,c,d} matrix to a screen offset (ox,oy). */
-function applyMat(m, ox, oy) {
-  return m ? { x: m.a * ox + m.c * oy, y: m.b * ox + m.d * oy } : { x: ox, y: oy };
+/**
+ * Dashed sensor-FOV box centred at (cx,cy), w×h px. With a sensor matrix it is
+ * drawn ROTATED into the camera's real sky orientation (a small blue 'W' tick
+ * marks the drift/West edge so it maps to the SharpCap drift test); without
+ * one it falls back to the axis-aligned dashed rectangle. The box is placed by
+ * mapping the sensor's own axis-aligned corners back to the sky frame via Mᵀ
+ * (M is orthogonal, so the inverse is the transpose).
+ */
+function fovBoxSvg(cx, cy, w, h, m) {
+  if (!m) {
+    return `<rect x="${(cx - w / 2).toFixed(1)}" y="${(cy - h / 2).toFixed(1)}" `
+      + `width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="none" `
+      + `stroke="${COLOURS.fovStroke}" stroke-width="1.2" stroke-dasharray="6 4" rx="2"/>`;
+  }
+  // Mᵀ maps a sensor-frame coord back to the sky frame. The sensor frame here
+  // IS the displayed SharpCap image (drift calibration + mirror baked in), so
+  // +x = image right, −y = image top.
+  const inv = (sx, sy) => ({ x: cx + m.a * sx + m.b * sy, y: cy + m.c * sx + m.d * sy });
+  const hw = w / 2; const hh = h / 2;
+  const poly = [inv(-hw, -hh), inv(hw, -hh), inv(hw, hh), inv(-hw, hh)]
+    .map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const dw = m.cardinals.W;                           // drift/West direction in the sensor
+  const wEdge = inv(dw[0] * hw, dw[1] * hh);           // West-edge midpoint (blue dot)
+  // R / T labels at the RIGHT and TOP edge MIDPOINTS (not corners) of the image,
+  // pushed just outside — so the orientation incl. the mirror is unambiguous.
+  const rEdge = inv(hw * 1.18, 0);
+  const tEdge = inv(0, -hh * 1.28);
+  return `<polygon points="${poly}" fill="none" stroke="${COLOURS.fovStroke}" stroke-width="1.2" stroke-dasharray="6 4"/>`
+    + `<circle cx="${wEdge.x.toFixed(1)}" cy="${wEdge.y.toFixed(1)}" r="1.8" fill="#7fd0ff"/>`
+    + txt(wEdge.x + 4, wEdge.y + 3, 'W', { fill: '#7fd0ff', size: 9 })
+    + txt(rEdge.x, rEdge.y + 3, 'R', { fill: COLOURS.label, size: 9, anchor: 'middle' })
+    + txt(tEdge.x, tEdge.y + 3, 'T', { fill: COLOURS.label, size: 9, anchor: 'middle' });
 }
 
 /** Aircraft angular size at distance r (m). Returns degrees. */
@@ -548,109 +577,6 @@ function buildPredictionChart(d, wX, wY, wW, wH) {
   return svg;
 }
 
-/**
- * Sensor-frame FOV view (v0.43.0): the SAME transit drawn as it actually
- * appears in SharpCap — the sensor rectangle upright (landscape), the disc,
- * the crossing track and the compass rose all rotated + mirrored into the
- * camera's orientation, plus a "move Sun →" cue for where to nudge the mount.
- * Falls back to a hint when the camera orientation isn't configured.
- */
-export function buildSensorSvg(d) {
-  const bg = `<rect x="0" y="0" width="${SVG_W}" height="${SVG_H}" rx="6" fill="${COLOURS.fovFill}"/>`;
-  const wrap = (inner) => `<svg viewBox="0 0 ${SVG_W} ${SVG_H}" xmlns="http://www.w3.org/2000/svg" width="100%" role="img">${bg}${inner}</svg>`;
-
-  const M = computeSensorMatrix({
-    azDeg: d.bodyAt?.az, elDeg: d.bodyAt?.el, latDeg: d.obsLat,
-    driftWest: OPTICS.DRIFT_WEST, mirror: OPTICS.MIRROR,
-  });
-  if (!M) {
-    // Not configured (or no observer latitude). Tell the user how to enable it.
-    const msg = !OPTICS.DRIFT_WEST
-      ? 'Sensor view not set up yet.'
-      : 'Need observer latitude for the sensor view.';
-    return wrap(
-      txt(SVG_W / 2, SVG_H / 2 - 6, msg, { fill: '#e6edf3', size: 12, anchor: 'middle' })
-      + txt(SVG_W / 2, SVG_H / 2 + 12, 'Settings → Telescope & sensor → Camera orientation', { fill: COLOURS.label, size: 10, anchor: 'middle' }),
-    );
-  }
-
-  const fovWDeg = fovDeg(OPTICS.TELESCOPE_FOCAL_MM, OPTICS.SENSOR_W_MM);
-  const fovHDeg = fovDeg(OPTICS.TELESCOPE_FOCAL_MM, OPTICS.SENSOR_H_MM);
-  const innerW = SVG_W - 2 * PAD;
-  const innerH = SVG_H - HEADER_H - FOOTER_H - 2 * PAD;
-  const bodyDiameterDeg = BODY_DIAMETER_DEG[d.body] ?? 0.53;
-  const pxPerDeg = (Math.min(innerW, innerH) * 0.5) / bodyDiameterDeg;
-  const cx = SVG_W / 2;
-  const cy = HEADER_H + PAD + innerH / 2;
-  const bodyR = (bodyDiameterDeg / 2) * pxPerDeg;
-  const fovPxW = fovWDeg * pxPerDeg;
-  const fovPxH = fovHDeg * pxPerDeg;
-  const bodyFill = d.body === 'Sun' ? COLOURS.Sun : COLOURS.Moon;
-  const bodyRim = d.body === 'Sun' ? COLOURS.SunRim : COLOURS.MoonRim;
-
-  // Header (one row + a SENSOR tag).
-  const clock = fmtTime(d.closestAtMs);
-  const header =
-    txt(PAD, HEADER_H, `${d.body} · ${d.flight ?? d.satName ?? '—'}`, { fill: '#e6edf3', size: 12, weight: 600 })
-    + txt(SVG_W - PAD, HEADER_H, `Sep ${fmtSepArcmin(d.sepDeg)}`, { fill: '#e6edf3', size: LABEL_SIZE, anchor: 'end' })
-    + txt(PAD, HEADER_H + 13, `<tspan fill="#7fd0ff">SENSOR VIEW</tspan> · ${clock}`, { fill: COLOURS.label, size: LABEL_SIZE });
-
-  // Upright sensor rectangle (landscape, as SharpCap shows it).
-  const rect =
-    `<rect x="${(cx - fovPxW / 2).toFixed(1)}" y="${(cy - fovPxH / 2).toFixed(1)}" `
-    + `width="${fovPxW.toFixed(1)}" height="${fovPxH.toFixed(1)}" `
-    + `fill="none" stroke="${COLOURS.fovStroke}" stroke-width="1.2" stroke-dasharray="4 3"/>`;
-
-  // Disc with an emphasised limb (the user asked for a clearer edge).
-  const disc =
-    `<circle cx="${cx}" cy="${cy}" r="${bodyR.toFixed(1)}" fill="${bodyFill}"/>`
-    + `<circle cx="${cx}" cy="${cy}" r="${bodyR.toFixed(1)}" fill="none" stroke="${bodyRim}" stroke-width="2"/>`;
-
-  // Transit path, each sample mapped sky→sensor.
-  const refEl = d.bodyAt.el;
-  const pts = (d.transitPath ?? []).map((p) => {
-    const { dx, dy } = relOffsetDeg(p, refEl);
-    const o = applyMat(M, dx * pxPerDeg, -dy * pxPerDeg);
-    return { x: cx + o.x, y: cy + o.y, degOff: Math.hypot(dx, dy), tOffsetMs: p.tOffsetMs };
-  }).filter((p) => p.degOff <= 4 * Math.hypot(fovWDeg, fovHDeg));
-  let path = '';
-  for (let i = 1; i < pts.length; i++) {
-    path += `<line x1="${pts[i - 1].x.toFixed(1)}" y1="${pts[i - 1].y.toFixed(1)}" x2="${pts[i].x.toFixed(1)}" y2="${pts[i].y.toFixed(1)}" stroke="${COLOURS.pathStroke}" stroke-width="1.6"/>`;
-  }
-  // Closest-approach marker = the sample nearest the disc centre.
-  const closest = pts.slice().sort((a, b) => a.degOff - b.degOff)[0];
-  if (closest) path += `<circle cx="${closest.x.toFixed(1)}" cy="${closest.y.toFixed(1)}" r="3" fill="${COLOURS.ac}"/>`;
-
-  // Compass rose at the sensor-frame cardinals.
-  const L = bodyR + 16;
-  let rose = '';
-  for (const [name, v] of Object.entries(M.cardinals)) {
-    const x = cx + v[0] * L; const y = cy + v[1] * L;
-    const col = name === 'N' ? '#7fd0ff' : COLOURS.label;
-    rose += txt(x, y + 3, name, { fill: col, size: LABEL_SIZE, anchor: 'middle' });
-  }
-
-  // "Move Sun" cue: nudge the mount so the crossing lands on the sensor. Only
-  // when the satellite/aircraft passes OUTSIDE the disc (otherwise it's already
-  // on it). Direction = toward the closest-approach offset.
-  let cue = '';
-  if (closest && Number.isFinite(d.sepDeg) && d.sepDeg > bodyDiameterDeg / 2) {
-    const vx = closest.x - cx; const vy = closest.y - cy;
-    const mag = Math.hypot(vx, vy) || 1;
-    const ax = cx + (vx / mag) * (bodyR + 30); const ay = cy + (vy / mag) * (bodyR + 30);
-    cue =
-      `<line x1="${cx}" y1="${cy}" x2="${ax.toFixed(1)}" y2="${ay.toFixed(1)}" stroke="#ffb454" stroke-width="1.6" marker-end="url(#sarrow)"/>`
-      + txt(ax, ay - 6, 'move Sun', { fill: '#ffb454', size: 10, anchor: 'middle' });
-  }
-  const defs = '<defs><marker id="sarrow" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#ffb454"/></marker></defs>';
-
-  const mirrorTag = OPTICS.MIRROR ? ', mirrored' : '';
-  const footer = txt(PAD, SVG_H - PAD + 2,
-    `FOV ${fovWDeg.toFixed(2)}° × ${fovHDeg.toFixed(2)}° · West ${OPTICS.DRIFT_WEST}${mirrorTag} · ${OPTICS.SENSOR_NAME}`,
-    { fill: COLOURS.label, size: 10 });
-
-  return wrap(defs + header + rect + disc + path + rose + cue + footer);
-}
 
 export function buildSketchSvg(d) {
   // FOV pixel rectangle, padded to leave room for top header and bottom
@@ -810,13 +736,17 @@ export function buildSketchSvg(d) {
     `<rect x="${widgetX}" y="${widgetY}" width="${widgetW}" height="${widgetH}" ` +
     `fill="${COLOURS.fovFill}" stroke="${COLOURS.fovStroke}" stroke-width="1" rx="2"/>`;
 
-  // Sensor FOV rectangle: dashed outline, no fill — sits ON TOP of the
-  // disc so the user sees which slice of the Sun/Moon their sensor will
-  // actually capture. Drawn after the disc to stay visible above it.
-  const fovRect =
-    `<rect x="${fovX}" y="${fovY}" width="${fovPxW}" height="${fovPxH}" ` +
-    `fill="none" stroke="${COLOURS.fovStroke}" stroke-width="1.2" ` +
-    `stroke-dasharray="6 4" rx="2"/>`;
+  // Sensor FOV rectangle: dashed outline, no fill — sits ON TOP of the disc so
+  // the user sees which slice of the Sun/Moon their sensor will capture. When a
+  // camera orientation is configured (drift-test calibration) the box is drawn
+  // ROTATED + a small 'W' tick marking the drift (West) edge, so it matches how
+  // the sensor actually sits on the sky — no separate view / toggle needed. The
+  // rotation is parallactic-correct and follows the Sun over the day (EQ mount).
+  const sensorM = computeSensorMatrix({
+    azDeg: d.bodyAt?.az, elDeg: d.bodyAt?.el, latDeg: d.obsLat,
+    driftWest: OPTICS.DRIFT_WEST, mirror: OPTICS.MIRROR,
+  });
+  const fovRect = fovBoxSvg(cx, cy, fovPxW, fovPxH, sensorM);
 
   // Axis crosshair through the body centre — subtle, helps eye lock to the
   // disc when the aircraft passes off-centre. Spans the whole widget now

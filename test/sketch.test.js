@@ -9,7 +9,6 @@ import { sunAzEl } from '../src/geometry.js';
 import { findTransits } from '../src/tracker.js';
 import {
   buildSketchSvg,
-  buildSensorSvg,
   buildSideViewSvg,
   computeSensorMatrix,
   fromHistoryRow,
@@ -270,20 +269,31 @@ describe('sensor-view transform (v0.43.0)', () => {
     expect(Math.abs(a.b - b.b) + Math.abs(a.d - b.d)).toBeGreaterThan(0.1);
   });
 
-  it('buildSensorSvg renders a frame when configured, a hint otherwise', () => {
-    const d = {
-      body: 'Sun', flight: 'ISS', sepDeg: 0.6, closestAtMs: 1.7e12, nowMs: 1.7e12,
-      bodyAt: { az: 140, el: 30 }, obsLat: 52.28, aircraftAt: { rangeM: 710000 },
-      transitPath: [
-        { aircraftAz: 139, aircraftEl: 32, bodyAz: 140, bodyEl: 30, tOffsetMs: -60000 },
-        { aircraftAz: 140, aircraftEl: 30.4, bodyAz: 140, bodyEl: 30, tOffsetMs: 0 },
-      ],
+  it('rotates the FOV box to the camera orientation when configured (W/R/T labels)', () => {
+    const candidate = syntheticTransitCandidate();
+    const entry = {
+      body: 'Sun', icao: candidate.icao, flight: 'TST123', callsign: 'TST123',
+      closestApproachAtMs: candidate.closestApproachAtMs,
+      closestApproachSepDeg: candidate.closestApproachSepDeg,
+      candidate,
     };
-    setOptics({ driftWest: 'right', mirror: true });
-    const svg = buildSensorSvg(d);
-    expect(svg).toContain('SENSOR VIEW');
-    expect(svg).toContain('move Sun');
+    const input = { ...fromLifecycleEntry(entry), obsLat: 52.28 };
+
+    // Not configured → the FOV box is the plain axis-aligned dashed rect, and
+    // there are no R/T edge labels (those are unique to the rotated box; a bare
+    // <polygon> can be the aircraft arrowhead, so we key on R/T instead).
     setOptics({ driftWest: '' });
-    expect(buildSensorSvg(d)).toContain('not set up');
+    const plain = buildSketchSvg(input);
+    expect(plain).not.toMatch(/>R</);
+    expect(plain).not.toMatch(/>T</);
+
+    // Configured → the box becomes a rotated, dashed fovStroke <polygon> with
+    // W/R/T edge labels.
+    setOptics({ driftWest: 'right', mirror: true });
+    const rotated = buildSketchSvg(input);
+    expect(rotated).toMatch(/<polygon[^>]*stroke="#5a6470"[^>]*stroke-dasharray="6 4"/);
+    expect(rotated).toMatch(/>R</);
+    expect(rotated).toMatch(/>T</);
+    setOptics({ driftWest: '' });   // reset for other tests
   });
 });

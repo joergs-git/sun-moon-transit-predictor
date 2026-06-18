@@ -471,19 +471,6 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
    one surface; SVG inside scales to the panel width. The fov-mode pill in
    the heading tells the user whether the pane is auto-tracking or pinned. */
 #fov-section h2 { display: flex; align-items: center; gap: 8px; }
-/* Sky ⟷ Sensor view toggle in the FOV header (v0.43.0). */
-.fov-view-toggle {
-  margin-left: auto;
-  font: 11px/1 ui-monospace, Menlo, monospace;
-  color: var(--muted);
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 3px 8px;
-  cursor: pointer;
-}
-.fov-view-toggle:hover { color: var(--fg); border-color: var(--accent); }
-.fov-view-toggle.sensor { color: #1a1300; background: #7fd0ff; border-color: #7fd0ff; }
 .fov-mode {
   font-size: 10px;
   font-weight: 500;

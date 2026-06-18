@@ -1,5 +1,5 @@
 import {
-  buildSketchSvg, buildSensorSvg, buildMiniMapSvg, buildSideViewSvg, fromHistoryRow,
+  buildSketchSvg, buildMiniMapSvg, buildSideViewSvg, fromHistoryRow,
   fromLifecycleEntry, setOptics, SKETCH_GEOMETRY,
 } from './sketch.js';
 import { resolveAircraftType, designAgePhrase, klassLabel } from './aircraft-types.js';
@@ -1407,26 +1407,6 @@ const FOV_NEAR_DEG = 1.0;
 const fovBody = $('#fov-body');
 const fovMode = $('#fov-mode');
 const fovHint = $('#fov-hint');
-const fovViewToggle = $('#fov-view-toggle');
-
-// Sky ⟷ Sensor view for the FOV preview (v0.43.0). Persisted; the sensor view
-// draws the frame as it appears in SharpCap using the configured camera
-// orientation (Settings → Telescope & sensor → Camera orientation).
-const FOV_VIEW_KEY = 'stp.fovView';
-let fovViewMode = 'sky';
-try { fovViewMode = localStorage.getItem(FOV_VIEW_KEY) === 'sensor' ? 'sensor' : 'sky'; } catch { /* ignore */ }
-function syncFovViewToggle() {
-  if (!fovViewToggle) return;
-  fovViewToggle.textContent = fovViewMode === 'sensor' ? 'Sensor' : 'Sky';
-  fovViewToggle.classList.toggle('sensor', fovViewMode === 'sensor');
-}
-fovViewToggle?.addEventListener('click', () => {
-  fovViewMode = fovViewMode === 'sensor' ? 'sky' : 'sensor';
-  try { localStorage.setItem(FOV_VIEW_KEY, fovViewMode); } catch { /* ignore */ }
-  syncFovViewToggle();
-  refreshFovPane();
-});
-syncFovViewToggle();
 
 /** @type {{ key: string, firstSeenMs: number, input: object, label: string } | null} */
 let pin = null;
@@ -1514,7 +1494,7 @@ function renderFovSketch(input, { pinned, label }) {
   // obsLat feeds the parallactic celestial N/E rose AND the sensor-view
   // transform. The Sky⟷Sensor toggle picks which renderer draws the frame.
   const payload = { ...input, nowMs: Date.now(), obsLat: lastObserver?.latitudeDeg ?? null };
-  fovBody.innerHTML = fovViewMode === 'sensor' ? buildSensorSvg(payload) : buildSketchSvg(payload);
+  fovBody.innerHTML = buildSketchSvg(payload);
   fovMode.textContent = pinned ? 'pinned' : 'auto';
   fovMode.classList.toggle('pinned', pinned);
   fovMode.title = pinned
