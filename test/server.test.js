@@ -61,6 +61,9 @@ describe('HTTP server', () => {
     expect(Array.isArray(body.recommendations)).toBe(true);
     expect(body.corridor).toBeTruthy();
     expect('yield' in body).toBe(true);
+    expect(body.timing).toBeTruthy();
+    expect(Array.isArray(body.timing.byHour)).toBe(true);
+    expect(Array.isArray(body.timing.byElevation)).toBe(true);
   });
 
   it('serves the stats report as a downloadable CSV and TXT', async () => {

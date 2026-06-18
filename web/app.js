@@ -2488,6 +2488,16 @@ function closeStats() { statsModal.hidden = true; }
 $('#stats-btn').addEventListener('click', openStats);
 $('#stats-refresh').addEventListener('click', loadStatsReport);
 $('#stats-apply').addEventListener('click', applyStatsRecs);
+// Copy the full report text to the clipboard (v0.46.5).
+$('#stats-copy')?.addEventListener('click', async () => {
+  const text = statsOutput.textContent || '';
+  const btn = $('#stats-copy');
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+    else { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+    const prev = btn.textContent; btn.textContent = '✓ Copied'; setTimeout(() => { btn.textContent = prev; }, 1500);
+  } catch { statsApplyMsg.textContent = 'Copy failed (clipboard blocked).'; }
+});
 
 // SharpCap "Test trigger" — fires an immediate 2 s capture against the given
 // host/port (so you can test before saving). The saved token, if any, is

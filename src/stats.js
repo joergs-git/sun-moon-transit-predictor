@@ -92,15 +92,24 @@ export function buildReport(store, { nowMs = Date.now(), windowMs = ALL_WINDOW_M
   };
 
   // ---- f) real-candidate profile (needed early for recommendations) ------
-  const im = db.prepare("SELECT altitude_m AS alt, range_m AS rng, track_deg AS trk, payload_json AS pj FROM transit_history WHERE stage='imminent'").all();
+  const im = db.prepare("SELECT altitude_m AS alt, range_m AS rng, track_deg AS trk, closest_at_ms AS at, payload_json AS pj FROM transit_history WHERE stage='imminent'").all();
   const alts = [], rngs = [], elevs = [], tracks = [];
+  const byHour = new Array(24).fill(0);   // candidates per LOCAL hour (timing)
+  const sunElevs = [];                    // Sun/Moon elevation at closest (≈ candidate height)
   for (const r of im) {
     if (Number.isFinite(r.alt)) alts.push(r.alt);
     if (Number.isFinite(r.rng)) rngs.push(r.rng);
     if (Number.isFinite(r.trk)) tracks.push(r.trk);
+    if (Number.isFinite(r.at)) byHour[new Date(r.at).getHours()] += 1;
     try {
-      const el = JSON.parse(r.pj)?.candidate?.aircraftAtClosest?.elevationDeg;
-      if (Number.isFinite(el)) elevs.push(el);
+      const cand = JSON.parse(r.pj)?.candidate;
+      const acEl = cand?.aircraftAtClosest?.elevationDeg;
+      // Body elevation at closest = the Sun/Moon's height; at a transit the
+      // aircraft sits in front of it, so the aircraft elevation is an equally
+      // good proxy when bodyAtClosest is absent (old rows).
+      const sunEl = cand?.bodyAtClosest?.elevationDeg ?? acEl;
+      if (Number.isFinite(acEl)) elevs.push(acEl);
+      if (Number.isFinite(sunEl)) sunElevs.push(sunEl);
     } catch { /* old payload */ }
   }
   const rs = store.rangeStats({ sepBelowDeg: 0.5, ...W });
@@ -193,6 +202,27 @@ export function buildReport(store, { nowMs = Date.now(), windowMs = ALL_WINDOW_M
   // their site — antenna-aiming + site-geometry insight.
   const corridor = computeCorridor(tracks);
 
+  // ---- timing: when + at what Sun height do candidates occur ----------------
+  // Hypothesis: most transits happen at LOW Sun elevation (morning/evening),
+  // few when the Sun is high. Bucket the real candidates by local hour and by
+  // Sun/Moon elevation at closest approach.
+  const ELEV_BANDS = [[0, 15], [15, 30], [30, 45], [45, 60], [60, 90]];
+  const byElevation = ELEV_BANDS.map(([lo, hi]) => ({
+    band: `${lo}–${hi}°`, lo, hi,
+    count: sunElevs.filter((e) => e >= lo && e < (hi === 90 ? 91 : hi)).length,
+  }));
+  const peakHour = byHour.some((x) => x) ? byHour.indexOf(Math.max(...byHour)) : null;
+  const peakBand = byElevation.length ? byElevation.slice().sort((a, b) => b.count - a.count)[0] : null;
+  const timing = {
+    n: sunElevs.length,
+    byHour,
+    peakHour,
+    byElevation,
+    peakBand: peakBand?.count ? peakBand.band : null,
+    lowSunPct: round(pct(sunElevs.filter((e) => e < 30).length, sunElevs.length), 1),  // Sun < 30°
+    medianSunElevDeg: round(median(sunElevs), 1),
+  };
+
   // ---- capture yield / precision (idea 2) --------------------------------
   // Join the persisted arms to genuine on-disc transits: of the captures we
   // actually fired, how many landed on a real <0.27° pass? The honest precision
@@ -206,7 +236,7 @@ export function buildReport(store, { nowMs = Date.now(), windowMs = ALL_WINDOW_M
       totalRows, totalEpisodes: nEpisodes, totalIcao, highElevCount: highElev.count,
     },
     regulars, candidates, triggers, drift, perDay: perDayStats, profile, accuracy, extras,
-    corridor, yield: yieldStats,
+    corridor, yield: yieldStats, timing,
   };
   report.recommendations = deriveRecommendations(report, sharpcap ?? {});
   delete report.profile._elevs;                 // strip the working array from output
@@ -457,6 +487,24 @@ export function formatText(r) {
   if (y) p(`  ${y.hits} / ${y.fired} fired arms landed on a confirmed <0.27° transit → precision ${y.precisionPct}%.`);
   else p('  (not enough arm history yet — captured from v0.41.0; check back once arms accumulate.)');
 
+  const tm = r.timing;
+  if (tm?.n) {
+    const bar = (n, max, w = 24) => '█'.repeat(Math.round((n / (max || 1)) * w)) || '·';
+    p('\nk) WHEN do candidates occur — by Sun/Moon elevation & local hour');
+    const emax = Math.max(...tm.byElevation.map((b) => b.count));
+    p('By Sun/Moon elevation at closest:');
+    for (const b of tm.byElevation) {
+      p(`  ${b.band.padStart(6)}: ${bar(b.count, emax).padEnd(24)} ${String(b.count).padStart(4)} (${pct(b.count, tm.n).toFixed(0)}%)`);
+    }
+    p(`→ ${tm.lowSunPct}% of candidates occur with the body BELOW 30° (low = morning/evening); median height ${DEG(tm.medianSunElevDeg)}.`);
+    // Compact 24-hour line + the busiest hours.
+    const hmax = Math.max(...tm.byHour);
+    p(`By local hour (peak ${tm.peakHour != null ? String(tm.peakHour).padStart(2, '0') + ':00' : 'n/a'}):`);
+    p('  ' + tm.byHour.map((n) => (n === 0 ? '·' : '▁▂▃▄▅▆▇█'[Math.min(7, Math.round((n / (hmax || 1)) * 7))])).join('') + '   (00→23 h)');
+    const topHours = tm.byHour.map((n, h) => ({ h, n })).filter((x) => x.n).sort((a, b) => b.n - a.n).slice(0, 3);
+    if (topHours.length) p('  busiest: ' + topHours.map((x) => `${String(x.h).padStart(2, '0')}:00 (${x.n})`).join(' · '));
+  }
+
   p('\n— Recommended defaults from YOUR data —');
   for (const rec of r.recommendations) {
     p(`• ${rec.label}: ${rec.current}${rec.unit} → \x1b[1m${rec.suggested}${rec.unit}\x1b[0m`);
@@ -493,6 +541,12 @@ export function formatCsv(r) {
   add('triggers', 'imminent_per_day', r.triggers.imminentPerDay, '/day');
   if (r.triggers.arms) add('triggers', 'actual_arms', r.triggers.arms.total);
   if (Array.isArray(r.extras.hourHistogram)) r.extras.hourHistogram.forEach((n, h) => add('hour_histogram', String(h), n, 'passes'));
+  if (r.timing) {
+    r.timing.byHour.forEach((n, h) => add('candidates_by_hour', String(h), n, 'candidates'));
+    for (const b of r.timing.byElevation) add('candidates_by_sun_elev', b.band, b.count, 'candidates');
+    add('timing', 'low_sun_pct', r.timing.lowSunPct, '%');
+    add('timing', 'median_sun_elev_deg', r.timing.medianSunElevDeg, 'deg');
+  }
   for (const w of (r.extras.weekday ?? [])) add('weekday', w.day, w.count, 'passes');
   for (const x of (r.extras.topRoutes ?? [])) add('top_route', x.route, x.count);
   for (const ax of (r.corridor?.axes ?? [])) add('corridor_axis', ax.axis, ax.count, 'passes');
