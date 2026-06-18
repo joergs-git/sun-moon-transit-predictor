@@ -2499,6 +2499,54 @@ $('#stats-copy')?.addEventListener('click', async () => {
   } catch { statsApplyMsg.textContent = 'Copy failed (clipboard blocked).'; }
 });
 
+// ── Satellite transit search modal (v0.47.1) ────────────────────────────
+const satModal = $('#sat-modal');
+const satResult = $('#sat-result');
+const satMsg = $('#sat-msg');
+function toLocalInput(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+function openSat() {
+  if (!$('#sat-time').value) $('#sat-time').value = toLocalInput(new Date());
+  satModal.hidden = false;
+}
+function closeSat() { satModal.hidden = true; }
+async function searchSat() {
+  const t = new Date($('#sat-time').value);
+  if (Number.isNaN(t.getTime())) { satMsg.textContent = 'Pick a valid time.'; return; }
+  const q = new URLSearchParams({
+    ms: String(t.getTime()),
+    window: $('#sat-window').value || '12',
+    sep: $('#sat-sep').value || '2',
+    body: $('#sat-body').value,
+    group: $('#sat-group').value,
+  });
+  satMsg.textContent = 'Searching… (first run fetches the catalogue)';
+  satResult.innerHTML = '';
+  try {
+    const res = await fetch(`/api/sat-transit?${q}`);
+    const b = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(b.error || `HTTP ${res.status}`);
+    satMsg.textContent = `${b.scanned} satellites scanned · ${b.body} az ${b.bodyAt.azimuthDeg.toFixed(0)}° el ${b.bodyAt.elevationDeg.toFixed(0)}°`;
+    if (!b.hits.length) { satResult.innerHTML = `<p class="empty">No satellite within ${$('#sat-sep').value}° of the ${b.body} in that window. Widen sep/window, or try the starlink/visual catalogue.</p>`; return; }
+    const rows = b.hits.map((h) => {
+      const local = new Date(h.atMs).toLocaleTimeString();
+      const dir = h.eastward == null ? '?' : (h.eastward ? '→E' : '→W');
+      const cells = [h.norad, h.name, `${h.sepDeg.toFixed(3)}°`, local, `${h.elevationDeg.toFixed(0)}°`,
+        `${h.rangeKm.toFixed(0)} km`, h.speedDegPerS ? `${h.speedDegPerS.toFixed(3)}°/s` : '—',
+        h.crossingS ? `${h.crossingS.toFixed(1)} s` : '—', dir, h.onDisc ? '★ on disc' : ''];
+      return `<tr class="${h.onDisc ? 'on-disc' : ''}">${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
+    }).join('');
+    satResult.innerHTML = `<table><thead><tr>${['NORAD', 'Satellite', 'min sep', 'time (local)', 'el', 'range', 'ang.speed', '~disc', 'dir', ''].map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) {
+    satMsg.textContent = 'Search failed: ' + (e?.message ?? e);
+  }
+}
+$('#sat-btn')?.addEventListener('click', openSat);
+$('#sat-search')?.addEventListener('click', searchSat);
+$('#sat-time')?.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') searchSat(); });
+
 // SharpCap "Test trigger" — fires an immediate 2 s capture against the given
 // host/port (so you can test before saving). The saved token, if any, is
 // applied server-side. Shared by the single-rig button and each rig's own
@@ -2675,11 +2723,13 @@ $('#app-version').addEventListener('keydown', (ev) => {
 document.body.addEventListener('click', (ev) => {
   if (ev.target.closest('[data-close-settings="1"]')) closeSettings();
   if (ev.target.closest('[data-close-stats="1"]')) closeStats();
+  if (ev.target.closest('[data-close-sat="1"]')) closeSat();
 });
 document.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Escape') return;
   if (!settingsModal.hidden) closeSettings();
   else if (!statsModal.hidden) closeStats();
+  else if (!satModal.hidden) closeSat();
 });
 
 // Pin the copyright year so it always matches the runtime — saves having to

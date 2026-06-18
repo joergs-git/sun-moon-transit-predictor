@@ -43,6 +43,7 @@
         <time id="clock" class="clock" title="Local wall-clock time, ticking once per second.">--:--:--</time>
         <div id="sharpcap-status" class="sc-status" hidden title="SharpCap capture trigger: armed body and how many captures it has armed this session (resets on service restart)."></div>
         <div id="status" class="status" title="Service liveness. Shows seconds since the last successful tick and the number of aircraft currently tracked by dump1090.">connecting…</div>
+        <button id="sat-btn" type="button" class="btn" title="Which satellite crossed the Sun/Moon at a given time? Propagates the full Celestrak catalogue with the app's SGP4 — enter a time, get the matching satellites (NORAD, separation, speed, direction).">🛰 Sat</button>
         <button id="stats-btn" type="button" class="btn" title="Generate a founded statistical report over the whole history DB — serious-candidate rate, prediction drift, best times, and data-driven recommended defaults. View &amp; download (TXT/CSV/JSON), no SSH needed.">📊 Stats</button>
         <button id="settings-btn" type="button" class="btn" title="Edit Pushover credentials, observer location and optical setup (focal length + sensor).">⚙ Settings</button>
       </div>
@@ -558,6 +559,32 @@
        FOV optics. POSTs to /api/config which hot-reloads the running service
        and writes back to config/observer.json + config/service.json so the
        next nightly auto-update restart keeps the new values. -->
+  <!-- Satellite transit search modal (v0.47.1). Browser path for the CLI
+       finder: pick a time, get the satellites that crossed the Sun/Moon. -->
+  <div id="sat-modal" class="sketch-modal" hidden role="dialog" aria-modal="true" aria-labelledby="sat-title">
+    <div class="sketch-backdrop" data-close-sat="1"></div>
+    <div class="sketch-card stats-card">
+      <button type="button" class="sketch-close" data-close-sat="1" aria-label="Close">×</button>
+      <h3 id="sat-title">🛰 Satellite transit search</h3>
+      <p class="sketch-hint">Which satellite crossed the Sun/Moon at a given time? Propagates the full Celestrak catalogue with the app's SGP4 (first search fetches ~15 k TLEs, then cached ~6 h).</p>
+      <div class="sat-form">
+        <label>Time (local)<input id="sat-time" type="datetime-local" step="1"></label>
+        <label>Body
+          <select id="sat-body"><option value="Sun">Sun ☀</option><option value="Moon">Moon ☾</option></select></label>
+        <label>± window (s)<input id="sat-window" type="number" min="1" max="60" value="12"></label>
+        <label>sep ≤ (°)<input id="sat-sep" type="number" min="0.1" max="10" step="0.1" value="2"></label>
+        <label>Catalogue
+          <select id="sat-group"><option value="active">active (all)</option><option value="starlink">starlink</option><option value="visual">visual (bright)</option></select></label>
+        <button id="sat-search" type="button" class="btn btn-primary">🔍 Search</button>
+        <span id="sat-msg" class="settings-msg"></span>
+      </div>
+      <div id="sat-result" class="sat-result"></div>
+      <div class="stats-actions">
+        <button type="button" class="btn" data-close-sat="1">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Statistics report modal (v0.41.0). Fetches the shared stats report and
        shows it as formatted text, with TXT/CSV/JSON downloads — the browser
        path so no SSH / npm run analyze is needed. -->

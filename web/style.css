@@ -520,6 +520,20 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
    time a different settings tab changed its height — visually restless. Top-
    aligning pins the top edge so only the bottom grows. The FOV sketch modal
    above keeps its centred behaviour. (v0.40.1) */
+/* Satellite transit search modal (v0.47.1) — top-aligned like the others. */
+#sat-modal { align-items: flex-start; padding-top: 32px; }
+#sat-modal .stats-card { max-height: calc(100vh - 56px); max-height: calc(100dvh - 56px); }
+.sat-form { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; margin: 8px 0; }
+.sat-form label { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); gap: 2px; }
+.sat-form input, .sat-form select { font: inherit; font-size: 13px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
+.sat-form #sat-time { min-width: 200px; }
+.sat-result { flex: 1 1 auto; min-height: 0; overflow: auto; margin: 6px 0; }
+.sat-result table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.sat-result th, .sat-result td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.sat-result th { position: sticky; top: 0; background: var(--panel); color: var(--accent); }
+.sat-result tr.on-disc td { color: #7fffa0; font-weight: 600; }
+.sat-result .empty { color: var(--muted); padding: 10px; }
+
 #settings-modal { align-items: flex-start; padding-top: 32px; }
 #settings-modal .settings-card { max-height: calc(100vh - 56px); max-height: calc(100dvh - 56px); }
 /* Statistics modal: top-aligned like settings, with a scrolling monospace

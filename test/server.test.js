@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { request as httpRequest } from 'node:http';
 import { createHttpServer } from '../src/server.js';
 import { HistoryStore } from '../src/store.js';
+import { fetchActiveTles } from '../src/sattransit.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -76,6 +77,20 @@ describe('HTTP server', () => {
     expect(txt.ok).toBe(true);
     expect(txt.headers.get('content-type')).toMatch(/text\/plain/);
     expect(await txt.text()).not.toMatch(/\x1b\[/);   // ANSI stripped
+  });
+
+  it('serves /api/sat-transit (cached catalogue, no live fetch) (v0.47.1)', async () => {
+    // Seed the TLE cache via a mock fetchImpl so the endpoint does no network.
+    const tle = 'ISS (ZARYA)\n1 25544U 98067A   24123.54791667  .00016717  00000-0  30074-3 0  9994\n2 25544  51.6402 211.1063 0004604  47.1827  85.0114 15.49814641450000\n';
+    await fetchActiveTles({ group: 'active', fetchImpl: async () => ({ ok: true, status: 200, text: async () => tle }) });
+    const ms = Date.UTC(2024, 4, 2, 13, 0, 0);
+    const res = await fetch(`${baseUrl}/api/sat-transit?ms=${ms}&window=4&sep=180&group=active`);
+    expect(res.ok).toBe(true);
+    const b = await res.json();
+    expect(b.body).toBe('Sun');
+    expect(b.scanned).toBe(1);
+    expect(Number.isFinite(b.bodyAt.elevationDeg)).toBe(true);
+    expect(Array.isArray(b.hits)).toBe(true);
   });
 
   it('serves /api/health', async () => {

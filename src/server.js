@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { promises as fs } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import { buildReport, formatText, formatCsv } from './stats.js';
+import { fetchActiveTles, findBodyTransits } from './sattransit.js';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -368,6 +369,28 @@ export function createHttpServer(opts) {
           return jsonResponse(res, 200, report);
         } catch (e) {
           return jsonResponse(res, 500, { error: String(e?.message ?? e) });
+        }
+      }
+
+      // Satellite Sun/Moon transit search (v0.47.1): "which satellite crossed
+      // the disc at this time?" Fetches Celestrak (cached ~6 h) and propagates
+      // the catalogue with the app's SGP4 — the browser path for the CLI finder.
+      if (url.pathname === '/api/sat-transit' && req.method === 'GET') {
+        const st = getState?.();
+        const observer = st?.observer;
+        if (!observer || !Number.isFinite(observer.latitudeDeg)) return jsonResponse(res, 404, { error: 'no observer location' });
+        const q = url.searchParams;
+        const whenMs = Number(q.get('ms')) || Date.now();
+        const windowS = Math.min(60, Math.max(1, Number(q.get('window')) || 12));
+        const sepDeg = Math.min(10, Math.max(0.1, Number(q.get('sep')) || 2));
+        const body = q.get('body') === 'Moon' ? 'Moon' : 'Sun';
+        const group = /^[a-z0-9_-]{1,30}$/i.test(q.get('group') || '') ? q.get('group') : 'active';
+        try {
+          const sats = await fetchActiveTles({ group });
+          const result = findBodyTransits({ observer, sats, whenMs, windowS, sepDeg, body });
+          return jsonResponse(res, 200, result);
+        } catch (e) {
+          return jsonResponse(res, 502, { error: String(e?.message ?? e) });
         }
       }
 
