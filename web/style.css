@@ -1013,6 +1013,7 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
 .top-left > [hidden],
 .top-right > [hidden] { display: none; }
 .top-left > .fov-aux-cell,
+.top-left > .fov-aux,
 .top-right > .fov-aux-cell,
 .top-right > .fov-aux-right {
   background: var(--panel);
@@ -1023,6 +1024,14 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
   font-size: 11px;
 }
 .fov-aux-cell svg { display: block; width: 100%; height: auto; }
+/* Plan + side view share one box, side by side (v0.44.0). Each pane is half the
+   width → both fit in roughly the height a single full-width view used to take,
+   well under the old stacked pair. A pane collapses on its own (no lat/lon → no
+   plan view; ISS → no side view); the wrapper hides when both are empty. */
+.fov-aux { display: flex; gap: 10px; align-items: flex-start; }
+.fov-aux-pane { flex: 1 1 0; min-width: 0; }
+.fov-aux-pane[hidden] { display: none; }
+.fov-aux-pane svg { display: block; width: 100%; height: auto; }
 .fov-aux-right { overflow: auto; }
 .top-right > .fov-aux-right { display: flex; flex-direction: column; }
 .ac-photo {

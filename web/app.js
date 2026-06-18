@@ -1583,6 +1583,7 @@ function acMetaFromHistory(row) {
 }
 
 const fovSpecs = $('#fov-specs');
+const fovAux = $('#fov-aux');
 const fovMap = $('#fov-map');
 const fovSide = $('#fov-side');
 
@@ -1722,6 +1723,9 @@ function syncFovAux() {
   const acHas = !!(fovAcinfo && fovAcinfo.innerHTML);
   if (fovMap) fovMap.hidden = !mapHas;
   if (fovSide) fovSide.hidden = !sideHas;
+  // The shared box hides only when BOTH panes are empty; otherwise the live
+  // pane takes the full width on its own (v0.44.0).
+  if (fovAux) fovAux.hidden = !(mapHas || sideHas);
   if (fovAcinfo) fovAcinfo.hidden = !acHas;
 }
 async function renderFovAcinfo(meta) {

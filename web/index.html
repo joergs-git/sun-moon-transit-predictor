@@ -158,9 +158,13 @@
         <p class="hint" id="fov-hint">Waiting for a close approach (separation &lt; 1°). Click any tracking or history row to pin it here.</p>
         <div id="fov-body" class="fov-body"></div>
       </section>
-      <!-- Plan view + side view moved under FOV preview (left column, v0.30.41). -->
-      <div id="fov-map" class="fov-aux-cell" hidden></div>
-      <div id="fov-side" class="fov-aux-cell" hidden></div>
+      <!-- Plan view + side view under the FOV preview (left column, v0.30.41).
+           v0.44.0: combined into ONE box, side by side, to save vertical space —
+           each pane collapses on its own, the box hides when both are empty. -->
+      <div id="fov-aux" class="fov-aux" hidden>
+        <div id="fov-map" class="fov-aux-pane" hidden></div>
+        <div id="fov-side" class="fov-aux-pane" hidden></div>
+      </div>
       <!-- Detection funnel lives in the LEFT column under the FOV (v0.39.1) —
            more vertical room here than under Total live trackings on the right. -->
       <section id="detect-section">
