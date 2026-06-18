@@ -1,6 +1,6 @@
 import {
   buildSketchSvg, buildMiniMapSvg, buildSideViewSvg, fromHistoryRow,
-  fromLifecycleEntry, fromTotalLiveRow, setOptics, SKETCH_GEOMETRY,
+  fromLifecycleEntry, fromTotalLiveRow, fromSatTransit, setOptics, SKETCH_GEOMETRY,
 } from './sketch.js';
 import { resolveAircraftType, designAgePhrase, klassLabel } from './aircraft-types.js';
 
@@ -34,6 +34,7 @@ let lastVersion = null;   // last server-reported version (for badge restore)
 let lastObserver = null;  // {latitudeDeg,longitudeDeg} — for the mini-map
 let lastTotalLive = [];   // all tracked aircraft this tick (for pin-from-row)
 let lastBodies = null;    // state.bodies {Sun:{az,el},Moon:{…}} — body position now
+let lastSkyPlanRows = []; // unified sky-plan rows (for pinning future ISS passes)
 let historyPage = 0;   // 0 = today; ≥1 = older, HISTORY_PAGE_SIZE/page
 
 function fmtCountdown(ms) {
@@ -356,7 +357,7 @@ let nextOppLoading = false;
 
 const SKYPLAN_TYPE = { visible: 'visible', transit: 'transit', field: 'field' };
 
-function appendSkyPlanRow(tbody, r) {
+function appendSkyPlanRow(tbody, r, idx) {
   const typeLabel = SKYPLAN_TYPE[r.kind] ?? r.kind;
   const c = r.confidence ? CONFIDENCE_BADGE[r.confidence] : null;
   const conf = c ? `${c.dot} ${c.label}` : '—';
@@ -371,7 +372,11 @@ function appendSkyPlanRow(tbody, r) {
     ? '<span class="skyplan-vis">naked-eye</span>'
     : `${r.objectIcon ? r.objectIcon + ' ' : ''}${r.object ?? '—'}`;
   const tr = document.createElement('tr');
-  tr.className = `skyplan-row conf-${r.confidence ?? 'none'}${r.conflictWithPrev ? ' has-conflict' : ''}`;
+  // A future satellite transit with attached geometry is clickable → pin it
+  // into the FOV preview (v0.45.3).
+  const clickable = r.kind === 'transit' && r.geom ? ' sketchable' : '';
+  tr.className = `skyplan-row conf-${r.confidence ?? 'none'}${r.conflictWithPrev ? ' has-conflict' : ''}${clickable}`;
+  if (clickable) { tr.dataset.source = 'skyplan'; tr.dataset.index = String(idx); }
   tr.innerHTML = `
     <td class="skyplan-when">${fmtDateTime(r.atMs)}${conflict}</td>
     <td class="skyplan-obj">${objCell}</td>
@@ -407,6 +412,9 @@ function unifiedPlanRows(state, dsoRows) {
         object: nt.body, objectIcon: nt.body === 'Sun' ? '☀' : '🌙',
         detailHtml: `sep ${fmtSep(nt.sepDeg)}${nt.tentative ? ' <span class="skyplan-tentative">· tentative</span>' : ''}`,
         confidence: null,
+        // Sketchable when the server attached geometry (v0.45.3) → click to
+        // preview a future ISS/HST/CSS transit in the FOV.
+        body: nt.body, sepDeg: nt.sepDeg, geom: nt.geom ?? null,
       });
     }
   }
@@ -466,7 +474,8 @@ function renderSkyPlan(state) {
     tbody.innerHTML = '<tr class="empty"><td colspan="6">No upcoming satellite events.</td></tr>';
     return;
   }
-  for (const r of rows) appendSkyPlanRow(tbody, r);
+  lastSkyPlanRows = rows;     // for pin-from-row (future ISS, v0.45.3)
+  rows.forEach((r, i) => appendSkyPlanRow(tbody, r, i));
 }
 
 // On-demand long scan: ticking "next opportunity" fires it (default OFF on every
@@ -1901,6 +1910,21 @@ function pinFromRow(source, index) {
         isISS: false, flight: r.callsign ?? null, trackDeg: r.trackDeg ?? null,
         lat: null, lon: null,
       },
+    };
+  } else if (source === 'skyplan') {
+    // A future satellite (ISS/HST/CSS) Sun/Moon transit (v0.45.3). Geometry
+    // comes from the server-attached `geom`; the satellite spec card is hidden
+    // for SAT_TAGS, so acMeta is minimal.
+    const r = lastSkyPlanRows[idx];
+    const input = r ? fromSatTransit(r) : null;
+    if (!input) return;
+    pin = {
+      key: `skyplan:${r.satTag}|${r.body}|${r.atMs}`,
+      firstSeenMs: Date.now(),
+      input,
+      label: `${r.body} · ${r.satTag} transit (upcoming)`,
+      acMeta: { icao: r.satTag ?? 'ISS', isISS: true, rangeM: r.geom?.aircraftAt?.rangeM ?? null,
+                elevationDeg: r.geom?.aircraftAt?.el ?? null, lat: null, lon: null },
     };
   }
   refreshFovPane();

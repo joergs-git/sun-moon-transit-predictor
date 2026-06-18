@@ -2677,6 +2677,17 @@ export async function runService({
       : null;
     const nextTransit = issEvents.find(e => e.closestApproachAtMs >= nowMs) ?? null;
     const notifyWithinMs = config.iss.notifyWithinMs ?? 3 * 24 * 3600_000;
+    // Sketch-ready geometry for a future satellite transit (v0.45.3) so the UI
+    // can pin it into the FOV preview before it is imminent. Small payload (one
+    // per satellite); the heavy per-tick lifecycle path is untouched.
+    const transitGeom = (ev) => (ev?.aircraftAtClosest && ev?.bodyAtClosest ? {
+      bodyAt: { az: ev.bodyAtClosest.azimuthDeg, el: ev.bodyAtClosest.elevationDeg },
+      aircraftAt: {
+        az: ev.aircraftAtClosest.azimuthDeg, el: ev.aircraftAtClosest.elevationDeg,
+        rangeM: ev.aircraftAtClosest.rangeM ?? null,
+      },
+      transitPath: Array.isArray(ev.transitPath) ? ev.transitPath : [],
+    } : null);
     state.iss = {
       active: Boolean(issTle),
       name: issTle?.name ?? null,
@@ -2694,6 +2705,7 @@ export async function runService({
           sepDeg: nextTransit.closestApproachSepDeg,
           level: nextTransit.level,
           tentative: (nextTransit.closestApproachAtMs - nowMs) > notifyWithinMs,
+          geom: transitGeom(nextTransit),
         }
         : null,
       horizonDays: Math.round((config.iss.horizonMs / 86400000) * 10) / 10,
@@ -2725,6 +2737,7 @@ export async function runService({
             sepDeg: next.closestApproachSepDeg,
             level: next.level,
             tentative: (next.closestApproachAtMs - nowMs) > notifyWithinMs,
+            geom: transitGeom(next),
           }
           : null,
       };

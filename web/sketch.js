@@ -347,6 +347,33 @@ export function fromTotalLiveRow(row, bodyAzEl) {
 }
 
 /**
+ * Normalise a future satellite (ISS/HST/CSS) transit Sky-plan row into
+ * SketchInput (v0.45.3). The server surfaces a compact `geom` (bodyAt,
+ * aircraftAt, transitPath) on the next-transit summary so an upcoming pass can
+ * be previewed in the FOV before it is imminent.
+ * @param {{body:string, sepDeg:number|null, atMs:number|null, satTag:string,
+ *   geom:{bodyAt:object, aircraftAt:object, transitPath:Array}|null}} row
+ * @returns {SketchInput|null}
+ */
+export function fromSatTransit(row) {
+  const g = row?.geom;
+  if (!g?.bodyAt || !g?.aircraftAt
+      || !Number.isFinite(g.bodyAt.az) || !Number.isFinite(g.aircraftAt.az)) return null;
+  return {
+    body: row.body,
+    bodyAt: g.bodyAt,
+    aircraftAt: g.aircraftAt,
+    sepDeg: row.sepDeg ?? null,
+    trackDeg: null, groundSpeedMs: null, altMmsl: null,
+    closestAtMs: row.atMs ?? null,
+    flight: row.satTag ?? 'ISS',
+    icao: row.satTag ?? 'ISS',
+    isISS: true,                  // draws the satellite glyph, not an airliner
+    transitPath: Array.isArray(g.transitPath) ? g.transitPath : [],
+  };
+}
+
+/**
  * Normalise a History row (with parsed `payload`) into SketchInput.
  * Pre-payload-json rows fall back to top-level columns only — the path will
  * be empty so the sketch shows the closest-approach geometry without a line.
