@@ -324,6 +324,22 @@ describe('SharpCapTrigger', () => {
       expect(res).toEqual({ sent: false, reason: 'too-low' });
     });
 
+    it('skips an over-extrapolated projection (freshness gate, v0.46.3)', async () => {
+      const { netImpl } = makeFakeNet({ replyLine: '{"ok":true}\n' });
+      const t = new SharpCapTrigger(
+        { enabled: true, host: 'pc', maxExtrapolationS: 120 },
+        { netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+      );
+      // Last real fix 500 s before closest → 500 s of dead-reckoning → rejected.
+      const stale = await t.armForCandidate(
+        armCand({ closestApproachAtMs: NOW + 20_000, aircraft: { receivedAtMs: NOW + 20_000 - 500_000 } }), NOW);
+      expect(stale).toEqual({ sent: false, reason: 'too-extrapolated' });
+      // A fresh fix (≈ now, 20 s to closest) sails through the gate.
+      const fresh = await t.armForCandidate(
+        armCand({ closestApproachAtMs: NOW + 20_000, aircraft: { receivedAtMs: NOW } }), NOW);
+      expect(fresh.sent).toBe(true);
+    });
+
     it('keeps the dedup slot on a listener-level rejection (busy etc.) so we do NOT TCP-storm', async () => {
       // v0.30.3: when the listener REPLIED but with ok:false (busy /
       // unauth / over-limit / …), the listener received our payload and

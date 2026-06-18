@@ -185,10 +185,17 @@ export const DEFAULT_CONFIG = {
     // Tick-based arming (the "never miss a transit" path): arm as soon as a
     // candidate's projected closest separation is within maxSepDeg AND the
     // closest approach is near enough that the pre-roll fits the listener cap.
-    // maxSepDeg is generous on purpose — better an extra clip than a missed
-    // shot. Set lower to be stricter, or minElevationDeg=0 to never gate on
-    // elevation.
-    maxSepDeg: 0.5,
+    // v0.46.3: tightened 0.5 → 0.3 on real false-fires — the Sun/Moon disc
+    // radius is only ~0.27°, so 0.5° armed on grazes that landed OUTSIDE the
+    // limb ("fired but not on disc"). 0.3 keeps the whole disc + a small margin.
+    // Widefield rigs can raise it (1–2°); long focal can go tighter (~0.2°).
+    maxSepDeg: 0.3,
+    // Freshness gate (v0.46.3): don't arm when the projection extrapolates more
+    // than this many seconds from the aircraft's last real ADS-B fix to closest
+    // approach. The fallback re-arm can otherwise fire off a position last seen
+    // minutes ago (signal lost / long coast) — unreliable dead-reckoning that
+    // produced "armed but never transited". 0 disables. See src/sharpcap.js.
+    maxExtrapolationS: 120,
     // Arming early means the predicted closest-approach time is less certain,
     // so widen the recording window by leadDriftFrac × secondsToClosest on each
     // side (capped at maxDriftS). v0.41.0: cut from 0.5/45 s on measured data —
@@ -674,6 +681,7 @@ export async function runService({
               armedAtMs: Date.now(), rig: name, kind: 'aircraft', body: c.body,
               icao: c.icao ?? null, sepDeg: c.closestApproachSepDeg,
               elevDeg: c.aircraftAtClosest?.elevationDeg, reArm: !!res.reArmed,
+              preRollS: res.preRollS, durationS: res.durationS,
             });
             // A re-arm replaces the same episode's pending capture — don't
             // double-count it, just refresh the time on the listener.
@@ -738,6 +746,7 @@ export async function runService({
             store?.recordArm({
               armedAtMs: Date.now(), rig: name, kind: 'sky', body: row.targetName,
               icao: row.satTag, sepDeg: row.sepDeg, elevDeg: row.elevationDeg, reArm: !!res.reArmed,
+              preRollS: res.preRollS, durationS: res.durationS,
             });
           }
           if (res.sent && !res.reArmed) {
@@ -1268,6 +1277,7 @@ export async function runService({
         maxCaptureS: config.sharpcap.maxCaptureS,
         adaptiveDrift: config.sharpcap.adaptiveDrift === true,
         adaptiveElevation: config.sharpcap.adaptiveElevation === true,
+        maxExtrapolationS: config.sharpcap.maxExtrapolationS,
         triggerOnStage: config.sharpcap.triggerOnStage,
         minElevationDeg: config.sharpcap.minElevationDeg,
         maxSepDeg: config.sharpcap.maxSepDeg,
@@ -1767,6 +1777,11 @@ export async function runService({
       }
       if (typeof s.adaptiveDrift === 'boolean') config.sharpcap.adaptiveDrift = s.adaptiveDrift;
       if (typeof s.adaptiveElevation === 'boolean') config.sharpcap.adaptiveElevation = s.adaptiveElevation;
+      if ('maxExtrapolationS' in s) {
+        const v = Number(s.maxExtrapolationS);
+        if (!Number.isFinite(v) || v < 0) throw new Error('sharpcap.maxExtrapolationS must be ≥ 0 (0 = off)');
+        config.sharpcap.maxExtrapolationS = v;
+      }
       if ('maxCaptureS' in s) {
         const v = Number(s.maxCaptureS);
         if (!Number.isFinite(v) || v <= 0 || v > 120) throw new Error('sharpcap.maxCaptureS must be > 0 and ≤ 120 (listener hard cap)');
@@ -1834,6 +1849,7 @@ export async function runService({
         maxCaptureS: config.sharpcap.maxCaptureS,
         adaptiveDrift: config.sharpcap.adaptiveDrift === true,
         adaptiveElevation: config.sharpcap.adaptiveElevation === true,
+        maxExtrapolationS: config.sharpcap.maxExtrapolationS,
         triggerOnStage: config.sharpcap.triggerOnStage,
         minElevationDeg: config.sharpcap.minElevationDeg,
         maxSepDeg: config.sharpcap.maxSepDeg,

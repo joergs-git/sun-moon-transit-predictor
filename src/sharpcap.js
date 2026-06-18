@@ -24,6 +24,12 @@ const DEFAULT_DEDUP_MS = 60_000;    // suppress identical (icao|body) re-trigger
 // Tick-based arming (armForCandidate): "rather over-record than miss a shot".
 const DEFAULT_MAX_SEP_DEG = 0.5;    // arm any candidate projected within this sep
 const DEFAULT_MAX_PRE_ROLL_S = 85;  // keep pre-roll under the listener's 90 s cap
+// Freshness gate (v0.46.3): don't arm when the projection extrapolates more than
+// this many seconds from the aircraft's last real ADS-B fix to closest approach.
+// The "never miss in an ADS-B gap" fallback can otherwise re-arm from a position
+// last seen minutes ago — over that much dead-reckoning a jet's path is unreliable
+// and the capture fires on a transit that never happens. 0 disables the gate.
+const DEFAULT_MAX_EXTRAP_S = 120;
 // Arming early (to never miss a lost-tracking case) means the predicted
 // closest-approach TIME is less accurate the further out we are — for a
 // candidate that then goes stale the estimate can drift 30 s+. Widen the
@@ -246,6 +252,17 @@ export class SharpCapTrigger {
       if (Number.isFinite(el) && el < minEl) return { sent: false, reason: 'too-low' };
     }
 
+    // Freshness gate (v0.46.3) — see DEFAULT_MAX_EXTRAP_S. Reject a projection
+    // extrapolated too far from the last real ADS-B fix to closest approach;
+    // a long dead-reckoning is exactly the "armed but never transited" case.
+    const maxExtrapS = Number.isFinite(this.config.maxExtrapolationS)
+      ? this.config.maxExtrapolationS : DEFAULT_MAX_EXTRAP_S;
+    const lastFixMs = c.aircraft?.receivedAtMs;
+    if (maxExtrapS > 0 && Number.isFinite(lastFixMs)
+        && (c.closestApproachAtMs - lastFixMs) / 1000 > maxExtrapS) {
+      return { sent: false, reason: 'too-extrapolated' };
+    }
+
     const preBufferS = Number.isFinite(this.config.preBufferS) ? this.config.preBufferS : DEFAULT_PRE_BUFFER_S;
     const postBufferS = Number.isFinite(this.config.postBufferS) ? this.config.postBufferS : DEFAULT_POST_BUFFER_S;
     const maxPreRollS = Number.isFinite(this.config.maxPreRollS) ? this.config.maxPreRollS : DEFAULT_MAX_PRE_ROLL_S;
@@ -313,6 +330,9 @@ export class SharpCapTrigger {
       this.armedClosest.delete(key);
     }
     if (result.sent && reArm) result.reArmed = true;
+    // Surface the window params so the service can log them to capture_arms.
+    result.preRollS = preRollS;
+    result.durationS = durationS;
     return result;
   }
 
@@ -384,6 +404,9 @@ export class SharpCapTrigger {
       this.armedClosest.delete(key);
     }
     if (result.sent && reArm) result.reArmed = true;
+    // Surface the window params so the service can log them to capture_arms.
+    result.preRollS = preRollS;
+    result.durationS = durationS;
     return result;
   }
 
