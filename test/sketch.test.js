@@ -269,6 +269,33 @@ describe('sensor-view transform (v0.43.0)', () => {
     expect(Math.abs(a.b - b.b) + Math.abs(a.d - b.d)).toBeGreaterThan(0.1);
   });
 
+  it('uses a North-up frame with obsLat, falls back to alt-az without it (v0.45.2)', () => {
+    const candidate = syntheticTransitCandidate();
+    const entry = {
+      body: 'Sun', icao: candidate.icao, flight: 'TST123', callsign: 'TST123',
+      closestApproachAtMs: candidate.closestApproachAtMs,
+      closestApproachSepDeg: candidate.closestApproachSepDeg,
+      candidate,
+    };
+    setOptics({ driftWest: '' });   // isolate from the sensor-box test
+    const input = fromLifecycleEntry(entry);
+
+    // No obsLat → raw alt-az frame (EL ↑ / AZ → axis labels, no zenith tick).
+    const altaz = buildSketchSvg(input);
+    expect(altaz).toContain('EL ↑');
+    expect(altaz).toContain('AZ →');
+    expect(altaz).not.toMatch(/>Z</);
+
+    // With obsLat → North-up: no EL/AZ labels, a fixed N/S/E/W rose (N in the
+    // rose colour at the top) and a zenith 'Z' tick.
+    const northUp = buildSketchSvg({ ...input, obsLat: 52.28 });
+    expect(northUp).not.toContain('EL ↑');
+    expect(northUp).not.toContain('AZ →');
+    expect(northUp).toMatch(/>N</);
+    expect(northUp).toMatch(/>Z</);
+    expect(northUp).toContain('#7fd0ff');   // North drawn in the rose colour
+  });
+
   it('rotates the FOV box to the camera orientation when configured (W/R/T labels)', () => {
     const candidate = syntheticTransitCandidate();
     const entry = {

@@ -147,16 +147,51 @@ export function computeSensorMatrix({ azDeg, elDeg, latDeg, driftWest, mirror })
  * mapping the sensor's own axis-aligned corners back to the sky frame via Mᵀ
  * (M is orthogonal, so the inverse is the transpose).
  */
-function fovBoxSvg(cx, cy, w, h, m) {
+/**
+ * Screen-space rotation {c,s} that brings celestial North to screen-up (and
+ * therefore West to screen-right) for a body at (az,el) seen from latitude lat.
+ * Applied to every plotted offset so the whole FOV reads N-up / W-right (the
+ * intuitive solar/astro convention) instead of the alt-az frame. The angle is
+ * the parallactic angle, so it follows the body over the day. null when lat is
+ * missing → the caller keeps the alt-az frame. Reuses the same ENU vectors as
+ * computeSensorMatrix.
+ */
+function northUpScreenRot(azDeg, elDeg, latDeg) {
+  if (![azDeg, elDeg, latDeg].every(Number.isFinite)) return null;
+  const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  const cross = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const norm = (v) => { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / n, v[1] / n, v[2] / n]; };
+  const A = azDeg * DEG; const h = elDeg * DEG; const phi = latDeg * DEG;
+  const O = [Math.cos(h) * Math.sin(A), Math.cos(h) * Math.cos(A), Math.sin(h)];
+  const P = [0, Math.cos(phi), Math.sin(phi)];
+  const Rs = [Math.cos(A), -Math.sin(A), 0];
+  let Us = norm(cross(O, Rs));
+  if (Us[2] < 0) Us = [-Us[0], -Us[1], -Us[2]];
+  const k = dot(P, O);
+  const Nt = norm([P[0] - k * O[0], P[1] - k * O[1], P[2] - k * O[2]]);
+  // Celestial North as a SCREEN vector (y-down): x = +Rs comp, y = −Us comp.
+  const ax = dot(Nt, Rs); const ay = -dot(Nt, Us);
+  const theta = -Math.PI / 2 - Math.atan2(ay, ax);   // rotate North to (0,−1) = up
+  return { c: Math.cos(theta), s: Math.sin(theta) };
+}
+
+/** Rotate a screen offset (ox,oy) by a {c,s} rotation (identity when null). */
+function rotOff(rot, ox, oy) {
+  return rot ? { x: rot.c * ox - rot.s * oy, y: rot.s * ox + rot.c * oy } : { x: ox, y: oy };
+}
+
+function fovBoxSvg(cx, cy, w, h, m, rot) {
   if (!m) {
     return `<rect x="${(cx - w / 2).toFixed(1)}" y="${(cy - h / 2).toFixed(1)}" `
       + `width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="none" `
       + `stroke="${COLOURS.fovStroke}" stroke-width="1.2" stroke-dasharray="6 4" rx="2"/>`;
   }
-  // Mᵀ maps a sensor-frame coord back to the sky frame. The sensor frame here
-  // IS the displayed SharpCap image (drift calibration + mirror baked in), so
-  // +x = image right, −y = image top.
-  const inv = (sx, sy) => ({ x: cx + m.a * sx + m.b * sy, y: cy + m.c * sx + m.d * sy });
+  // Mᵀ maps a sensor-frame coord back to the sky frame; then the north-up screen
+  // rotation (if any) is applied so the box sits correctly in the N-up view.
+  const inv = (sx, sy) => {
+    const o = rotOff(rot, m.a * sx + m.b * sy, m.c * sx + m.d * sy);
+    return { x: cx + o.x, y: cy + o.y };
+  };
   const hw = w / 2; const hh = h / 2;
   const poly = [inv(-hw, -hh), inv(hw, -hh), inv(hw, hh), inv(-hw, hh)]
     .map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
@@ -662,6 +697,18 @@ export function buildSketchSvg(d) {
   const fovX = cx - fovPxW / 2;
   const fovY = cy - fovPxH / 2;
 
+  // North-up frame (v0.45.2): rotate every plotted offset so celestial North is
+  // up and West is right — the intuitive solar/astro convention — instead of the
+  // raw alt-az frame. The angle is the parallactic angle (follows the body over
+  // the day). Needs the observer latitude; without it we keep the alt-az frame.
+  const northRot = northUpScreenRot(d.bodyAt?.az, d.bodyAt?.el, d.obsLat);
+  // Project a (dAz·cosEl, dEl) degree offset to a screen point, with the N-up
+  // rotation applied. Replaces the bare degToPx for all sky content.
+  const project = (dxDeg, dyDeg) => {
+    const o = rotOff(northRot, dxDeg * pxPerDeg, -dyDeg * pxPerDeg);
+    return { x: cx + o.x, y: cy + o.y };
+  };
+
   // Widget viewing-area bounds (the visible sketch rectangle). Crosshair,
   // axis labels and horizon compass are anchored to THIS, not the FOV box —
   // the FOV box has become a free-floating dashed overlay whose size varies
@@ -679,7 +726,7 @@ export function buildSketchSvg(d) {
   const pathPts = (d.transitPath ?? []).map(p => {
     const { dx, dy } = relOffsetDeg(p, refEl);
     return {
-      ...degToPx(dx, dy, cx, cy, pxPerDeg),
+      ...project(dx, dy),
       tOffsetMs: p.tOffsetMs,
       degOff: Math.hypot(dx, dy),
     };
@@ -710,7 +757,7 @@ export function buildSketchSvg(d) {
   } else {
     const dx = (d.aircraftAt.az - d.bodyAt.az) * Math.cos(refEl * DEG);
     const dy = d.aircraftAt.el - d.bodyAt.el;
-    anchor = degToPx(dx, dy, cx, cy, pxPerDeg);
+    anchor = project(dx, dy);
   }
 
   // Apparent heading angle from the visible-portion samples (end - start).
@@ -788,7 +835,7 @@ export function buildSketchSvg(d) {
     azDeg: d.bodyAt?.az, elDeg: d.bodyAt?.el, latDeg: d.obsLat,
     driftWest: OPTICS.DRIFT_WEST, mirror: OPTICS.MIRROR,
   });
-  const fovRect = fovBoxSvg(cx, cy, fovPxW, fovPxH, sensorM);
+  const fovRect = fovBoxSvg(cx, cy, fovPxW, fovPxH, sensorM, northRot);
 
   // Axis crosshair through the body centre — subtle, helps eye lock to the
   // disc when the aircraft passes off-centre. Spans the whole widget now
@@ -862,7 +909,7 @@ export function buildSketchSvg(d) {
     const initialPathPts = (d.initialTransitPath ?? []).map(p => {
       const { dx, dy } = relOffsetDeg(p, refEl);
       return {
-        ...degToPx(dx, dy, cx, cy, pxPerDeg),
+        ...project(dx, dy),
         tOffsetMs: p.tOffsetMs,
         degOff: Math.hypot(dx, dy),
       };
@@ -875,7 +922,7 @@ export function buildSketchSvg(d) {
     } else {
       const dxi = (d.initialAircraftAt.az - d.initialBodyAt.az) * Math.cos(refEl * DEG);
       const dyi = d.initialAircraftAt.el - d.initialBodyAt.el;
-      initialAnchor = degToPx(dxi, dyi, cx, cy, pxPerDeg);
+      initialAnchor = project(dxi, dyi);
     }
     const overlayDistPx = Math.hypot(initialAnchor.x - anchor.x, initialAnchor.y - anchor.y);
     const OVERLAY_MIN_PX = 6;     // half a silhouette length-ish; below this it just clutters
@@ -906,26 +953,36 @@ export function buildSketchSvg(d) {
   // widget edges as of v0.20.0 — the FOV box is no longer the reference
   // frame (it shrinks below a useful label-anchor size at long focal
   // lengths and may extend beyond the widget at short focal lengths).
-  const axisLabels =
-    txt(widgetX + 4, widgetY + 12, 'EL ↑', { fill: COLOURS.label, size: LABEL_SIZE }) +
-    txt(widgetX + widgetW - 4, widgetY + widgetH - 4, 'AZ →', { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'end' });
-
-  // ---- Compass overlays (v0.17.0, anchors moved to widget edges in v0.20.0)-
-  // (a) Horizon N/E/S/W at the widget edges (was: FOV-box edges), derived
-  //     purely from the body's azimuth, so it is automatically right for
-  //     BOTH hemispheres and any sky position (no hemisphere switch): in
-  //     this alt-az frame screen-right is the bearing Az+90°, screen-down
-  //     the bearing Az (toward the horizon). This is the frame the
-  //     aircraft's ground track lives in — "enters from the E side".
-  // (b) Parallactic celestial N/E rose on the disc: the true sky North/East
-  //     from the observer latitude + body az/el via 3D ENU vectors (avoids
-  //     the parallactic-angle sign pitfalls). N up only at the meridian; it
-  //     visibly rotates off-meridian. The frame for sunspot/lunar maps.
-  // Both are the geometric/true-sky view (a star diagonal or a rotated
-  // camera would re-orient the real eyepiece — not modelled here).
-  let compass = '';
+  // ---- Compass overlays --------------------------------------------------
+  // Default frame is now North-up / West-right (v0.45.2) — the intuitive
+  // solar/astro convention. When the observer latitude is known the whole
+  // content is rotated to it (see `project`), so the compass is FIXED: N top,
+  // S bottom, W right, E left, with a dashed 'Z' tick toward the zenith (the
+  // alt-az "up", now tilted) so the horizon relationship isn't lost. Without a
+  // latitude (old callers / tests) we fall back to the raw alt-az frame: the
+  // EL/AZ axis labels + the azimuth-derived horizon compass.
   const Ab = d.bodyAt?.az;
-  if (Number.isFinite(Ab)) {
+  const rose = '#7fd0ff';
+  let axisLabels = '';
+  let compass = '';
+  if (northRot) {
+    const lab = (s, x, y, col, anchor = 'middle') => txt(x, y, s, { fill: col, size: LABEL_SIZE, anchor });
+    compass +=
+      lab('N', cx, widgetY + 12, rose)
+      + lab('S', cx, widgetY + widgetH - 4, COLOURS.label)
+      + lab('W', widgetX + widgetW - 8, cy + 4, COLOURS.label)
+      + lab('E', widgetX + 8, cy + 4, COLOURS.label);
+    // Zenith direction (alt-az "up" = +1° elevation, rotated into the frame).
+    const zo = rotOff(northRot, 0, -1);
+    const zl = bodyR + 16;
+    const zx = cx + zo.x * zl; const zy = cy + zo.y * zl;
+    compass +=
+      `<line x1="${cx}" y1="${cy}" x2="${zx.toFixed(1)}" y2="${zy.toFixed(1)}" stroke="${COLOURS.axis}" stroke-width="1" stroke-dasharray="2 2"/>`
+      + txt(zx + 3, zy + 3, 'Z', { fill: COLOURS.axis, size: 9 });
+  } else if (Number.isFinite(Ab)) {
+    axisLabels =
+      txt(widgetX + 4, widgetY + 12, 'EL ↑', { fill: COLOURS.label, size: LABEL_SIZE }) +
+      txt(widgetX + widgetW - 4, widgetY + widgetH - 4, 'AZ →', { fill: COLOURS.label, size: LABEL_SIZE, anchor: 'end' });
     const edge = (bearing, x, y, anchor) =>
       txt(x, y, compass8(bearing), { fill: COLOURS.label, size: LABEL_SIZE, anchor });
     compass +=
@@ -933,59 +990,6 @@ export function buildSketchSvg(d) {
       + edge(Ab + 180, cx, widgetY + 11, 'middle')            // up   → anti-horizon
       + edge(Ab + 90, widgetX + widgetW - 4, cy + 4, 'end')   // right
       + edge(Ab - 90, widgetX + 4, cy + 4, 'start');          // left
-  }
-  const elB = d.bodyAt?.el;
-  if (Number.isFinite(Ab) && Number.isFinite(elB) && Number.isFinite(d.obsLat)) {
-    const A = Ab * DEG;
-    const h = elB * DEG;
-    const phi = d.obsLat * DEG;
-    const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
-    const cross3 = (u, v) => [
-      u[1] * v[2] - u[2] * v[1],
-      u[2] * v[0] - u[0] * v[2],
-      u[0] * v[1] - u[1] * v[0],
-    ];
-    const norm = (v) => {
-      const n = Math.hypot(v[0], v[1], v[2]) || 1;
-      return [v[0] / n, v[1] / n, v[2] / n];
-    };
-    // ENU unit vectors: object O, zenith Z, celestial north pole P (az 0,
-    // alt = latitude — for the southern hemisphere φ<0 points toward the
-    // geometric NCP below the horizon, still the correct "increasing
-    // declination" direction).
-    const O = [Math.cos(h) * Math.sin(A), Math.cos(h) * Math.cos(A), Math.sin(h)];
-    const P = [0, Math.cos(phi), Math.sin(phi)];
-    const Z = [0, 0, 1];
-    // Orthonormal screen basis at O: Rs = +azimuth tangent (matches AZ →),
-    // Us = toward-zenith tangent (matches EL ↑).
-    const Rs = [Math.cos(A), -Math.sin(A), 0];
-    let Us = norm(cross3(O, Rs));
-    if (dot(Us, Z) < 0) Us = [-Us[0], -Us[1], -Us[2]];
-    // Celestial North tangent = pole projected into the tangent plane;
-    // East tangent = P × O (right-hand → increasing RA).
-    const proj = (v) => norm([
-      v[0] - dot(v, O) * O[0],
-      v[1] - dot(v, O) * O[1],
-      v[2] - dot(v, O) * O[2],
-    ]);
-    const Nt = proj(P);
-    const Et = norm(cross3(P, O));
-    const toScreen = (v, len) => ({
-      x: cx + dot(v, Rs) * len,
-      y: cy - dot(v, Us) * len,    // SVG y is inverted (up = −y)
-    });
-    // Anchor the rose just outside the disc rim. The disc is now sized to
-    // fit comfortably inside the widget (v0.20.0), so bodyR + 14 keeps the
-    // N/E labels on-canvas without any further clamp.
-    const L = bodyR + 14;
-    const nP = toScreen(Nt, L);
-    const eP = toScreen(Et, L * 0.78);
-    const rose = '#7fd0ff';
-    compass +=
-      `<line x1="${cx}" y1="${cy}" x2="${nP.x.toFixed(1)}" y2="${nP.y.toFixed(1)}" stroke="${rose}" stroke-width="1.3"/>`
-      + txt(nP.x, nP.y - 2, 'N', { fill: rose, size: LABEL_SIZE, anchor: 'middle' })
-      + `<line x1="${cx}" y1="${cy}" x2="${eP.x.toFixed(1)}" y2="${eP.y.toFixed(1)}" stroke="${rose}" stroke-width="1" stroke-opacity="0.75"/>`
-      + txt(eP.x + 3, eP.y + 3, 'E', { fill: rose, size: LABEL_SIZE, anchor: 'middle' });
   }
 
   // Two-line footer. Line 1 = live aircraft state (R/Alt/v), line 2 = the
