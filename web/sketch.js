@@ -609,7 +609,19 @@ export function buildSketchSvg(d) {
   // leaves room either side for aircraft at sep up to ≈ half the widget
   // half-width in degrees before they fall off the canvas.
   const widgetMinSide = Math.min(innerW, innerH);
-  const pxPerDeg = (widgetMinSide * 0.5) / bodyDiameterDeg;
+  const discScale = (widgetMinSide * 0.5) / bodyDiameterDeg;
+  // Dynamic zoom-to-fit (v0.45.0): for a wide pass the aircraft sits far from
+  // the disc, so scale DOWN until that separation fits inside the widget — the
+  // disc, the sensor box and the aircraft all shrink together, keeping their
+  // true relative proportions (a 3° pass → small disc + small box + the plane
+  // still visible at a sensible distance). `showDeg` is the offset we must keep
+  // on-canvas: the closest-approach separation (≈ the plane's distance to the
+  // disc centre), floored at the disc itself. Never zoom IN past the disc-
+  // centred scale, and keep the disc ≥ a few px so it never vanishes.
+  const showDeg = Math.max(Number.isFinite(d.sepDeg) ? d.sepDeg : 0, bodyDiameterDeg * 0.75);
+  const fitScale = (widgetMinSide * 0.42) / showDeg;
+  const minScale = 6 / (bodyDiameterDeg / 2);            // disc radius ≥ 6 px
+  const pxPerDeg = Math.max(minScale, Math.min(discScale, fitScale));
 
   // Disc sits at the widget centre; FOV rectangle is centred on the disc.
   const cx = SVG_W / 2;
