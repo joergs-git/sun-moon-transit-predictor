@@ -1,6 +1,6 @@
 import {
   buildSketchSvg, buildMiniMapSvg, buildSideViewSvg, fromHistoryRow,
-  fromLifecycleEntry, setOptics, SKETCH_GEOMETRY,
+  fromLifecycleEntry, fromTotalLiveRow, setOptics, SKETCH_GEOMETRY,
 } from './sketch.js';
 import { resolveAircraftType, designAgePhrase, klassLabel } from './aircraft-types.js';
 
@@ -32,6 +32,8 @@ let lastLifecycle = [];
 let lastHistory = [];
 let lastVersion = null;   // last server-reported version (for badge restore)
 let lastObserver = null;  // {latitudeDeg,longitudeDeg} — for the mini-map
+let lastTotalLive = [];   // all tracked aircraft this tick (for pin-from-row)
+let lastBodies = null;    // state.bodies {Sun:{az,el},Moon:{…}} — body position now
 let historyPage = 0;   // 0 = today; ≥1 = older, HISTORY_PAGE_SIZE/page
 
 function fmtCountdown(ms) {
@@ -1047,21 +1049,25 @@ function renderTotalLive(state) {
   if (!section) return;
   section.hidden = false;
   const rows = Array.isArray(state.totalLive) ? state.totalLive : [];
+  lastTotalLive = rows;                 // for pin-from-row (v0.45.1)
+  lastBodies = state.bodies ?? null;    // current body az/el for the sketch
   const tbody = section.querySelector('tbody');
   if (!tbody) return;
   if (rows.length === 0) {
     tbody.innerHTML = '<tr><td colspan="8" class="empty">No tracked aircraft in range right now</td></tr>';
     return;
   }
-  tbody.innerHTML = rows.map((r) => {
-    const bodyIcon = r.body === 'sun' ? '☀' : r.body === 'moon' ? '☾' : '·';
+  tbody.innerHTML = rows.map((r, i) => {
+    const bodyIcon = r.body === 'Sun' ? '☀' : r.body === 'Moon' ? '☾' : '·';
     const route = r.route
       ? fmtRoute(r.route.origin?.iata ?? r.route.origin?.icao,
                  r.route.destination?.iata ?? r.route.destination?.icao)
       : '—';
     const flight = r.callsign ? r.callsign : '—';
     const bearing = Number.isFinite(r.trackDeg) ? `${Math.round(r.trackDeg)}°` : '—';
-    return '<tr>'
+    // Clickable → pin into the FOV preview (shows the plane's CURRENT offset
+    // from the disc; no prediction path). v0.45.1.
+    return `<tr class="sketchable" data-source="totallive" data-index="${i}">`
       + `<td class="sep-cell">${fmtSep(r.sepDeg)}<span class="body-icon">${bodyIcon}</span></td>`
       + `<td class="flight-cell" data-hex="${r.icao ?? ''}" data-cs="${r.callsign ?? ''}">${flight}</td>`
       + `<td>${icaoCellInner(r.icao, false)}</td>`
@@ -1874,6 +1880,27 @@ function pinFromRow(source, index) {
       input,
       label: `${row.body} · ${row.flight ?? row.callsign ?? row.icao} (history)`,
       acMeta: acMetaFromHistory(row),
+    };
+  } else if (source === 'totallive') {
+    // Any tracked aircraft (v0.45.1). Builds the sketch from the plane's
+    // CURRENT offset to the nearest body — no prediction path. A static
+    // snapshot (like a History pin); re-click to refresh its position.
+    const r = lastTotalLive[idx];
+    const bodyAzEl = r && lastBodies?.[r.body]
+      ? { az: lastBodies[r.body].azimuthDeg, el: lastBodies[r.body].elevationDeg } : null;
+    const input = r ? fromTotalLiveRow(r, bodyAzEl) : null;
+    if (!input) return;
+    pin = {
+      key: `totallive:${r.icao}|${r.body}`,
+      firstSeenMs: Date.now(),
+      input,
+      label: `${r.body} · ${r.callsign ?? r.icao} (live)`,
+      acMeta: {
+        icao: r.icao ?? null, registration: null, typeCode: null, typeDesc: null,
+        rangeM: r.rangeM ?? null, elevationDeg: r.elevationDeg ?? null,
+        isISS: false, flight: r.callsign ?? null, trackDeg: r.trackDeg ?? null,
+        lat: null, lon: null,
+      },
     };
   }
   refreshFovPane();

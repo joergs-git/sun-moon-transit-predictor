@@ -282,6 +282,36 @@ export function fromLifecycleEntry(entry) {
 }
 
 /**
+ * Normalise a "Total live trackings" row into SketchInput (v0.45.1). These rows
+ * carry only the aircraft's CURRENT az/el/range + the nearest body — no closest-
+ * approach prediction and no path. So the sketch shows where the plane sits
+ * relative to the disc *right now* (the dynamic zoom keeps a wide offset on
+ * canvas). `bodyAzEl` is the body's current {az, el} from state.bodies.
+ * @param {object} row
+ * @param {{az:number, el:number}|null} bodyAzEl
+ * @returns {SketchInput|null}
+ */
+export function fromTotalLiveRow(row, bodyAzEl) {
+  if (!row || !bodyAzEl
+      || !Number.isFinite(row.azimuthDeg) || !Number.isFinite(row.elevationDeg)
+      || !Number.isFinite(bodyAzEl.az) || !Number.isFinite(bodyAzEl.el)) return null;
+  return {
+    body: row.body,
+    bodyAt: { az: bodyAzEl.az, el: bodyAzEl.el },
+    aircraftAt: { az: row.azimuthDeg, el: row.elevationDeg, rangeM: row.rangeM ?? null },
+    sepDeg: row.sepDeg ?? null,
+    trackDeg: row.trackDeg ?? null,
+    groundSpeedMs: row.groundSpeedMs ?? null,
+    altMmsl: row.altMmsl ?? null,
+    closestAtMs: null,            // no prediction — current snapshot only
+    flight: row.callsign ?? null,
+    icao: row.icao ?? null,
+    isISS: false,
+    transitPath: [],              // no trajectory; the glyph sits at the current offset
+  };
+}
+
+/**
  * Normalise a History row (with parsed `payload`) into SketchInput.
  * Pre-payload-json rows fall back to top-level columns only — the path will
  * be empty so the sketch shows the closest-approach geometry without a line.
