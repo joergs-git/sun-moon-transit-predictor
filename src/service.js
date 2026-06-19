@@ -248,6 +248,13 @@ export const DEFAULT_CONFIG = {
     quickRefreshS: 2,
     // Full-refresh cadence (s) — the periodic flash that clears e-paper ghosting.
     longRefreshS: 60,
+    // Region-only partial refresh (v0.47.3): on a quick tick, refresh ONLY the
+    // pixels that actually changed (the clock seconds → a tiny window) instead
+    // of the whole 400×300 area. Far gentler on the e-ink controller (fewer/
+    // smaller ReadBusy cycles → less wedging + longer panel life); skips the
+    // refresh entirely when nothing changed. The periodic full refresh still
+    // clears any localised ghosting. Opt-in (panel-dependent).
+    regionPartial: false,
   },
   // Piezo buzzer audio alerts (display/buzzer.py on the same Pi as the e-paper
   // client; wired between a GPIO pin and GND). Like `display`, these knobs are
@@ -1554,6 +1561,7 @@ export async function runService({
       if (next.longRefreshS < next.quickRefreshS) {
         throw new Error('display.longRefreshS must be ≥ display.quickRefreshS');
       }
+      if (typeof d.regionPartial === 'boolean') next.regionPartial = d.regionPartial;
       // All checks passed → commit atomically.
       config.display = next;
       applied.display = { ...config.display };

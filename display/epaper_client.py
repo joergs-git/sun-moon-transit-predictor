@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 E-paper display client for the Sun-Moon Transit Predictor.
-v0.47.2 — SIGALRM watchdog so a wedged panel BUSY-wait can't freeze the client.
+v0.47.3 — guarded shutdown (clean restart) + opt-in region-only refresh.
 
 A standalone, decoupled HTTP poller + renderer for a Waveshare 4.2" B/W SPI
 panel (400×300) on a Raspberry Pi 5. It carries NO business logic: it reads its
@@ -29,6 +29,8 @@ import importlib
 import signal
 import sys
 import time
+
+from PIL import ImageChops
 
 import buzzer
 import config
@@ -70,6 +72,19 @@ class Panel:
         # Driver has no partial path — fall back to a full refresh.
         self.show_full(img)
 
+    def show_partial_region(self, img, x0, y0, x1, y1):
+        """Refresh ONLY the (x0,y0)→(x1,y1) window (v0.47.3). x must be byte-
+        aligned (caller's job). Falls back to a full-area partial when the driver
+        lacks the windowed display_Partial signature."""
+        buf = self.epd.getbuffer(img)
+        if self._has_partial:
+            try:
+                self.epd.display_Partial(buf, int(x0), int(y0), int(x1), int(y1))
+                return
+            except TypeError:
+                pass   # older driver: no windowed partial → fall back below
+        self.show_partial(img)
+
     def sleep(self):
         try:
             self.epd.sleep()
@@ -95,6 +110,9 @@ class FilePanel:
         self._save(img)
 
     def show_partial(self, img):
+        self._save(img)
+
+    def show_partial_region(self, img, x0, y0, x1, y1):
         self._save(img)
 
     def sleep(self):
@@ -162,6 +180,7 @@ def run(panel, once=False):
 
     last_full = 0.0          # monotonic time of the last full refresh
     panel_fail = 0           # consecutive panel-update timeouts (for back-off)
+    prev_img = None          # last image pushed, for region-only diffing
     last_conn_ok = None      # connectivity state, logged only on change
     idle_drawn = False       # so the cleared/idle screen is drawn just once
     display_cfg = dict(config.DEFAULTS)
@@ -238,21 +257,55 @@ def run(panel, once=False):
             img = (render.render_state(state, display_cfg, source_url=source_url)
                    if conn_ok else render.render_offline(source_url, reason))
             need_full = (last_full == 0.0) or (now - last_full >= long_s) or recovered
-            # Drive the panel under the watchdog so a wedged BUSY-wait can't
-            # freeze the whole client. On timeout, re-init and force a clean full
-            # refresh next loop; back off so we don't hammer a struggling panel.
-            ok = _guard(lambda: panel.show_full(img) if need_full else panel.show_partial(img))
-            if ok:
-                if need_full:
-                    last_full = now
-                idle_drawn = False
-                panel_fail = 0
+            region_on = bool(display_cfg.get("regionPartial"))
+
+            # Pick the gentlest panel op. Region mode (v0.47.3): on a quick tick
+            # refresh ONLY the changed pixels (the ticking clock → a tiny window)
+            # — far fewer/smaller ReadBusy cycles — and SKIP entirely when nothing
+            # changed. The periodic full refresh still clears any ghosting.
+            op = None
+            kind = "partial"
+            if need_full:
+                op = lambda: panel.show_full(img)        # noqa: E731
+                kind = "full"
+            elif region_on and prev_img is not None:
+                bbox = ImageChops.difference(img.convert("1"), prev_img.convert("1")).getbbox()
+                if bbox is None:
+                    kind = "skip"
+                else:
+                    x0 = (bbox[0] // 8) * 8                                   # byte-align x
+                    x1 = min(render.WIDTH, ((bbox[2] + 7) // 8) * 8)
+                    y0 = max(0, bbox[1] - 1)
+                    y1 = min(render.HEIGHT, bbox[3] + 1)
+                    if (x1 - x0) * (y1 - y0) > 0.6 * render.WIDTH * render.HEIGHT:
+                        op = lambda: panel.show_partial(img)                  # noqa: E731
+                    else:
+                        op = lambda a=x0, b=y0, c=x1, d=y1: panel.show_partial_region(img, a, b, c, d)  # noqa: E731
+                        kind = "region"
             else:
-                panel_fail += 1
-                _log("panel update timed out (>%ds) — recovering [%d]" % (PANEL_TIMEOUT_S, panel_fail))
-                last_full = 0.0                       # force a full re-init next loop
-                _guard(panel.init_full)               # try to un-wedge the controller now
-                time.sleep(min(30, 2 * panel_fail))   # back off a struggling panel
+                op = lambda: panel.show_partial(img)     # noqa: E731
+
+            if kind == "skip":
+                idle_drawn = False
+                panel_fail = 0                            # nothing to draw → done
+            else:
+                # Drive the panel under the watchdog so a wedged BUSY-wait can't
+                # freeze the whole client. On timeout: re-init, force a clean full
+                # next loop, back off so we don't hammer a struggling panel.
+                ok = _guard(op)
+                if ok:
+                    if need_full:
+                        last_full = now
+                    prev_img = img
+                    idle_drawn = False
+                    panel_fail = 0
+                else:
+                    panel_fail += 1
+                    _log("panel update timed out (>%ds) — recovering [%d]" % (PANEL_TIMEOUT_S, panel_fail))
+                    last_full = 0.0                       # force a full re-init next loop
+                    prev_img = None                       # next diff starts clean
+                    _guard(panel.init_full)               # try to un-wedge the controller now
+                    time.sleep(min(30, 2 * panel_fail))   # back off a struggling panel
         elif not idle_drawn:
             # Buzzer-only mode: clear the panel once and leave it.
             panel.show_full(render.render_disabled())
@@ -263,8 +316,11 @@ def run(panel, once=False):
             break
         time.sleep(quick)
 
-    buz.close()
-    panel.sleep()
+    # Guarded shutdown so a wedged panel.sleep() (another ReadBusy) can't hang
+    # the process — otherwise `systemctl restart` waits out TimeoutStopSec and
+    # the new instance collides with still-held GPIO. (v0.47.3)
+    _guard(buz.close, seconds=5)
+    _guard(panel.sleep, seconds=8)
 
 
 def main():

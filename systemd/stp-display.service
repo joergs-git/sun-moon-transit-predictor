@@ -15,6 +15,9 @@ WorkingDirectory=__INSTALL_DIR__/display
 ExecStart=/usr/bin/python3 __INSTALL_DIR__/display/epaper_client.py
 Restart=on-failure
 RestartSec=5
+# Kill a wedged panel quickly so `systemctl restart` can't hang on a hung
+# ReadBusy and the GPIO is released before the new instance starts (v0.47.3).
+TimeoutStopSec=15
 StandardOutput=journal
 StandardError=journal
 

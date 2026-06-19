@@ -42,6 +42,9 @@ DEFAULTS = {
     "sourceUrl": "",
     "quickRefreshS": 2,
     "longRefreshS": 60,
+    # v0.47.3: refresh only the changed region (the ticking clock) on a quick
+    # tick instead of the whole panel — gentler on the e-ink controller.
+    "regionPartial": False,
 }
 
 # Buzzer alert defaults — mirrors DEFAULT_CONFIG.buzzer in src/service.js. All

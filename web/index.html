@@ -895,6 +895,9 @@
             <small class="field-hint">Partial-refresh cadence — the fast, flash-free text update. <b>Default 2 s.</b> Floor 1 s (the panel physically needs ~0.3–0.5 s per partial refresh).</small></label>
           <label>Long refresh (s)<input name="display.longRefreshS" type="number" step="1" min="5" placeholder="60">
             <small class="field-hint">Full-refresh cadence — the periodic brief flash that clears e-paper ghosting. <b>Default 60 s.</b> Must be ≥ Quick refresh.</small></label>
+          <label class="checkbox-row">
+            <input name="display.regionPartial" type="checkbox"> Region-only refresh (gentler)
+            <small class="field-hint">On a quick tick, refresh ONLY the pixels that changed (the ticking clock → a tiny window) instead of the whole panel — far gentler on the e-ink controller (fewer/smaller refresh cycles → less freezing + longer life), and it skips the refresh entirely when nothing changed. The long refresh still clears ghosting. Panel-dependent — verify it looks clean on yours.</small></label>
         </fieldset>
 
         <fieldset data-tab="scopes">
