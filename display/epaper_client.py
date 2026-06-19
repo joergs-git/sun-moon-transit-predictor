@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 E-paper display client for the Sun-Moon Transit Predictor.
-v0.31.18
+v0.47.2 — SIGALRM watchdog so a wedged panel BUSY-wait can't freeze the client.
 
 A standalone, decoupled HTTP poller + renderer for a Waveshare 4.2" B/W SPI
 panel (400×300) on a Raspberry Pi 5. It carries NO business logic: it reads its
@@ -113,6 +113,43 @@ def _log(msg):
     print("[stp-display] %s" % msg, flush=True)
 
 
+# ── Panel watchdog (v0.47.2) ────────────────────────────────────────────────
+# Waveshare's ReadBusy() is an UN-timed busy-wait: if the e-ink controller
+# wedges (which, over a night of 2-second partial refreshes, eventually happens)
+# the SPI call never returns and the whole client freezes — the symptom the user
+# saw (panel + clock frozen, Pi otherwise fine). A SIGALRM interrupts the wedged
+# wait so the loop can re-init the panel and carry on instead of hanging forever.
+PANEL_TIMEOUT_S = 20
+_HAS_ALARM = hasattr(signal, "SIGALRM")
+
+
+class _PanelTimeout(Exception):
+    pass
+
+
+def _alarm_handler(signum, frame):
+    raise _PanelTimeout()
+
+
+def _guard(fn, seconds=PANEL_TIMEOUT_S):
+    """Run a hardware-blocking call with a hard timeout. True = ok, False =
+    timed out. A no-op guard on platforms without SIGALRM (so --dry-run on a
+    Mac/Windows dev box still works)."""
+    if not _HAS_ALARM:
+        fn()
+        return True
+    old = signal.signal(signal.SIGALRM, _alarm_handler)
+    signal.alarm(max(1, int(seconds)))
+    try:
+        fn()
+        return True
+    except _PanelTimeout:
+        return False
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+
+
 def run(panel, once=False):
     """Main poll loop: drives the panel and/or the buzzer from the live config.
 
@@ -121,9 +158,10 @@ def run(panel, once=False):
     in the browser Settings — with the panel off but the buzzer on, we keep
     polling (for the beeps) and leave the screen cleared.
     """
-    panel.init_full()
+    _guard(panel.init_full)   # don't let a wedged panel hang us at startup
 
     last_full = 0.0          # monotonic time of the last full refresh
+    panel_fail = 0           # consecutive panel-update timeouts (for back-off)
     last_conn_ok = None      # connectivity state, logged only on change
     idle_drawn = False       # so the cleared/idle screen is drawn just once
     display_cfg = dict(config.DEFAULTS)
@@ -200,12 +238,21 @@ def run(panel, once=False):
             img = (render.render_state(state, display_cfg, source_url=source_url)
                    if conn_ok else render.render_offline(source_url, reason))
             need_full = (last_full == 0.0) or (now - last_full >= long_s) or recovered
-            if need_full:
-                panel.show_full(img)
-                last_full = now
+            # Drive the panel under the watchdog so a wedged BUSY-wait can't
+            # freeze the whole client. On timeout, re-init and force a clean full
+            # refresh next loop; back off so we don't hammer a struggling panel.
+            ok = _guard(lambda: panel.show_full(img) if need_full else panel.show_partial(img))
+            if ok:
+                if need_full:
+                    last_full = now
+                idle_drawn = False
+                panel_fail = 0
             else:
-                panel.show_partial(img)
-            idle_drawn = False
+                panel_fail += 1
+                _log("panel update timed out (>%ds) — recovering [%d]" % (PANEL_TIMEOUT_S, panel_fail))
+                last_full = 0.0                       # force a full re-init next loop
+                _guard(panel.init_full)               # try to un-wedge the controller now
+                time.sleep(min(30, 2 * panel_fail))   # back off a struggling panel
         elif not idle_drawn:
             # Buzzer-only mode: clear the panel once and leave it.
             panel.show_full(render.render_disabled())
