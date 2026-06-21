@@ -1600,7 +1600,10 @@ export async function runService({
       if (typeof af.enabled === 'boolean') config.aircraftFilter.enabled = af.enabled;
       if ('classes' in af) {
         if (!Array.isArray(af.classes)) throw new Error('aircraftFilter.classes must be an array');
-        const valid = ['military', 'ga', 'commercial'];
+        // 'unknown' (no usable call-sign / category yet) is selectable so the
+        // user can opt to INCLUDE no-call-sign traffic when hunting military —
+        // see filterAircraft: unknown is only kept when explicitly listed.
+        const valid = ['military', 'ga', 'commercial', 'unknown'];
         const clean = [...new Set(af.classes.map((c) => String(c).toLowerCase()))]
           .filter((c) => valid.includes(c));
         config.aircraftFilter.classes = clean;

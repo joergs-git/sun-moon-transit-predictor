@@ -826,7 +826,10 @@
           <label class="checkbox-row">
             <input class="acf-class" type="checkbox" value="commercial"> 🛫 Commercial
             <small class="field-hint">Airline flight numbers (DLH2AB…) or large/heavy ADS-B category.</small></label>
-          <small class="field-hint">Heuristic from each plane's call-sign + ADS-B category — no extra lookup. Military jets flying a civilian or tactical call-sign may not be caught; aircraft with no call-sign yet (class “unknown”) are excluded while a specific class is selected.</small>
+          <label class="checkbox-row">
+            <input class="acf-class" type="checkbox" value="unknown"> ❔ No call-sign yet (unknown)
+            <small class="field-hint">No usable call-sign/category yet — <b>mostly</b> warm-up or GA without a Flight-ID, but also where a position-only military jet hides. Tick it together with <b>Military</b> if you'd rather not miss those (you'll also pull in some ordinary GA).</small></label>
+          <small class="field-hint">Heuristic from each plane's call-sign + ADS-B category — no extra lookup. Military jets flying a civilian or tactical call-sign may not be caught; the strongest military signal is the ICAO address block (already used). Aircraft with no call-sign are only included if you tick “unknown” above.</small>
         </fieldset>
 
         <fieldset data-tab="general">

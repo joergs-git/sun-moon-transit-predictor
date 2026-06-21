@@ -71,6 +71,11 @@ describe('filterAircraft', () => {
     expect(kept.map((a) => a.callsign).sort()).toEqual(['DEKLM', 'DLH88']);
   });
 
+  it('includes no-call-sign traffic when "unknown" is explicitly selected (military hunt)', () => {
+    const { kept } = filterAircraft(sample(), { enabled: true, classes: ['military', 'unknown'] });
+    expect(kept.map((a) => a.callsign).sort()).toEqual(['', 'GAF777']);
+  });
+
   it('treats an empty class list as no-op (pass through)', () => {
     const { kept, dropped } = filterAircraft(sample(), { enabled: true, classes: [] });
     expect(dropped).toBe(0);
