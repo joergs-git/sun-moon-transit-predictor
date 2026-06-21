@@ -37,6 +37,7 @@ import { SharpCapTrigger } from './sharpcap.js';
 import { HistoryStore } from './store.js';
 import { buildReport } from './stats.js';
 import { extrapolate, findTransits } from './tracker.js';
+import { filterAircraft } from './aircraftclass.js';
 import {
   loadIssTle, predictIssTransits, predictSkyTargetTransits, nextIssVisiblePass,
 } from './iss.js';
@@ -118,11 +119,13 @@ export const DEFAULT_CONFIG = {
   // Optical setup for the FOV sketch popup. Editable from the web Settings
   // panel; persisted into config/service.json so a restart preserves it.
   optics: {
+    // ── Active rig — what the FOV sketch + appulse threshold actually read ──
+    // Only the focal length and the sensor's physical size (mm) enter the FOV
+    // maths; sensor pixel counts were dropped in v0.48.0 because nothing
+    // computed with them. sensorName is a free-text label for the rig.
     telescopeFocalMm: 500,
     sensorWmm: 11.34,
     sensorHmm: 7.13,
-    sensorPxW: 1936,
-    sensorPxH: 1216,
     sensorName: 'ZWO ASI174MM',
     // Camera orientation for the FOV "Sensor view" (v0.43.0). driftWest = the
     // screen direction the body drifts with tracking OFF ('right'|'left'|'up'|
@@ -131,6 +134,29 @@ export const DEFAULT_CONFIG = {
     // sensor view disabled.
     driftWest: '',
     mirror: false,
+    // ── Scope presets (v0.48.0) ──────────────────────────────────────────────
+    // A small library of saved rigs so the user can switch the "main scope"
+    // for the FOV with one pick instead of retyping focal length + sensor size.
+    // Each preset also carries its camera orientation (driftWest/mirror) because
+    // swapping the scope usually swaps the camera/orientation too. Selecting a
+    // preset (activePresetId) copies its values into the active fields above.
+    activePresetId: 'default',
+    presets: [
+      {
+        id: 'default', name: 'ZWO ASI174MM @ 500 mm',
+        telescopeFocalMm: 500, sensorWmm: 11.34, sensorHmm: 7.13,
+        sensorName: 'ZWO ASI174MM', driftWest: '', mirror: false,
+      },
+    ],
+  },
+  // Optional operator-class filter for the WHOLE transit pipeline (v0.48.0).
+  // When enabled, only aircraft whose classified operator class is in `classes`
+  // are considered for candidates / display / SharpCap arming / Pushover.
+  // Classification is heuristic (see src/aircraftclass.js). OFF by default so
+  // the predictor tracks all traffic unless the user opts in.
+  aircraftFilter: {
+    enabled: false,
+    classes: ['military', 'ga', 'commercial'],
   },
   // Where to write the periodic lifecycle snapshot used to repopulate the
   // tracking panel after a service restart. Set to '' to disable persistence.
@@ -467,6 +493,7 @@ function mergeConfig(user) {
     lifecyclePersist: { ...DEFAULT_CONFIG.lifecyclePersist, ...(user.lifecyclePersist ?? {}) },
     driftPersist: { ...DEFAULT_CONFIG.driftPersist, ...(user.driftPersist ?? {}) },
     diag: { ...DEFAULT_CONFIG.diag, ...(user.diag ?? {}) },
+    aircraftFilter: { ...DEFAULT_CONFIG.aircraftFilter, ...(user.aircraftFilter ?? {}) },
   };
 }
 
@@ -1272,6 +1299,7 @@ export async function runService({
         hasToken: Boolean(config.airnav.token),
       },
       optics: { ...config.optics },
+      aircraftFilter: { ...config.aircraftFilter },
       tracker: { ...config.tracker },
       sharpcap: {
         enabled: config.sharpcap.enabled,
@@ -1495,7 +1523,8 @@ export async function runService({
 
     if (patch.optics && typeof patch.optics === 'object') {
       const o = patch.optics;
-      const numKeys = ['telescopeFocalMm', 'sensorWmm', 'sensorHmm', 'sensorPxW', 'sensorPxH'];
+      // Sensor pixel counts were removed in v0.48.0 (unused in the FOV maths).
+      const numKeys = ['telescopeFocalMm', 'sensorWmm', 'sensorHmm'];
       for (const k of numKeys) {
         if (k in o) {
           const v = Number(o[k]);
@@ -1504,13 +1533,79 @@ export async function runService({
         }
       }
       if (typeof o.sensorName === 'string') config.optics.sensorName = o.sensorName;
+      const driftOk = (v) => !v || ['right', 'left', 'up', 'down'].includes(v);
       if ('driftWest' in o) {
         const v = String(o.driftWest ?? '').toLowerCase();
-        if (v && !['right', 'left', 'up', 'down'].includes(v)) throw new Error("optics.driftWest must be '', 'right', 'left', 'up' or 'down'");
+        if (!driftOk(v)) throw new Error("optics.driftWest must be '', 'right', 'left', 'up' or 'down'");
         config.optics.driftWest = v;
       }
       if (typeof o.mirror === 'boolean') config.optics.mirror = o.mirror;
+
+      // Scope presets (v0.48.0). The UI sends the whole presets[] array on any
+      // add/edit/delete; validate each entry strictly so a malformed payload
+      // never corrupts the saved library.
+      if ('presets' in o) {
+        if (!Array.isArray(o.presets)) throw new Error('optics.presets must be an array');
+        const seen = new Set();
+        const clean = o.presets.map((p, i) => {
+          if (!p || typeof p !== 'object') throw new Error(`optics.presets[${i}] must be an object`);
+          const id = String(p.id ?? '').trim();
+          if (!id) throw new Error(`optics.presets[${i}].id is required`);
+          if (seen.has(id)) throw new Error(`optics.presets[${i}].id "${id}" is duplicated`);
+          seen.add(id);
+          const num = (k) => {
+            const v = Number(p[k]);
+            if (!Number.isFinite(v) || v <= 0) throw new Error(`optics.presets[${i}].${k} must be a positive number`);
+            return v;
+          };
+          const dw = String(p.driftWest ?? '').toLowerCase();
+          if (!driftOk(dw)) throw new Error(`optics.presets[${i}].driftWest is invalid`);
+          return {
+            id,
+            name: String(p.name ?? '').trim() || id,
+            telescopeFocalMm: num('telescopeFocalMm'),
+            sensorWmm: num('sensorWmm'),
+            sensorHmm: num('sensorHmm'),
+            sensorName: String(p.sensorName ?? '').trim(),
+            driftWest: dw,
+            mirror: p.mirror === true,
+          };
+        });
+        config.optics.presets = clean;
+      }
+      // Selecting a preset (the "main scope") copies its full setup — optics +
+      // camera orientation — into the active fields the FOV sketch reads.
+      if ('activePresetId' in o) {
+        const id = String(o.activePresetId ?? '').trim();
+        const preset = (config.optics.presets ?? []).find((p) => p.id === id);
+        if (id && !preset) throw new Error(`optics.activePresetId "${id}" not found in presets`);
+        config.optics.activePresetId = id;
+        if (preset) {
+          config.optics.telescopeFocalMm = preset.telescopeFocalMm;
+          config.optics.sensorWmm = preset.sensorWmm;
+          config.optics.sensorHmm = preset.sensorHmm;
+          config.optics.sensorName = preset.sensorName;
+          config.optics.driftWest = preset.driftWest;
+          config.optics.mirror = preset.mirror;
+        }
+      }
+      // Drop the dead pixel fields if an old service.json still carries them.
+      delete config.optics.sensorPxW;
+      delete config.optics.sensorPxH;
       applied.optics = { ...config.optics };
+    }
+
+    if (patch.aircraftFilter && typeof patch.aircraftFilter === 'object') {
+      const af = patch.aircraftFilter;
+      if (typeof af.enabled === 'boolean') config.aircraftFilter.enabled = af.enabled;
+      if ('classes' in af) {
+        if (!Array.isArray(af.classes)) throw new Error('aircraftFilter.classes must be an array');
+        const valid = ['military', 'ga', 'commercial'];
+        const clean = [...new Set(af.classes.map((c) => String(c).toLowerCase()))]
+          .filter((c) => valid.includes(c));
+        config.aircraftFilter.classes = clean;
+      }
+      applied.aircraftFilter = { ...config.aircraftFilter };
     }
 
     if (patch.diag && typeof patch.diag === 'object') {
@@ -1897,6 +1992,7 @@ export async function runService({
           iss:           { ...(existing.iss ?? {}), skyTargets: config.iss?.skyTargets },
           appulse:       { ...(existing.appulse ?? {}), ...config.appulse },
           diag:          { ...(existing.diag ?? {}), ...config.diag },
+          aircraftFilter: { ...(existing.aircraftFilter ?? {}), ...config.aircraftFilter },
         };
         await fsp.writeFile(configPaths.service, JSON.stringify(merged, null, 2), 'utf8');
       } catch (e) {
@@ -2095,6 +2191,17 @@ export async function runService({
       logger.warn?.('aircraft fetch failed:', e?.message ?? e);
     }
     state.aircraftCount = aircraft.length;
+    // Operator-class filter (v0.48.0): tag every aircraft with its classified
+    // class and, when the filter is enabled, drop classes the user excluded
+    // BEFORE findTransits runs — so the restriction propagates through the
+    // WHOLE pipeline (candidates → lifecycle → SharpCap arming → Pushover →
+    // e-paper), exactly like the Sun/Moon body pulldown. Disabled = tag only.
+    {
+      const fr = filterAircraft(aircraft, config.aircraftFilter);
+      aircraft = fr.kept;
+      state.aircraftFilterActive = config.aircraftFilter?.enabled === true;
+      state.aircraftFilteredOut = fr.dropped;
+    }
     // Tracker-skip diagnostic: only emit for currently-followed ICAOs so
     // the log doesn't drown in distant-traffic skips. "Followed" = the
     // lifecycle map has an active (not stale/planned) entry for it. The

@@ -21,8 +21,6 @@ const OPTICS = {
   TELESCOPE_FOCAL_MM: 500,
   SENSOR_W_MM: 11.34,
   SENSOR_H_MM: 7.13,
-  SENSOR_PX_W: 1936,
-  SENSOR_PX_H: 1216,
   SENSOR_NAME: 'ZWO ASI174MM',
   // Camera orientation for the "Sensor view" (v0.43.0). DRIFT_WEST = the screen
   // direction the body drifts with tracking OFF ('right'|'left'|'up'|'down') =
@@ -69,8 +67,6 @@ export function setOptics(patch) {
     telescopeFocalMm: 'TELESCOPE_FOCAL_MM',
     sensorWmm: 'SENSOR_W_MM',
     sensorHmm: 'SENSOR_H_MM',
-    sensorPxW: 'SENSOR_PX_W',
-    sensorPxH: 'SENSOR_PX_H',
   };
   for (const [src, dst] of Object.entries(map)) {
     if (src in patch) {

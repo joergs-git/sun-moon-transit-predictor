@@ -660,6 +660,13 @@
 
         <fieldset data-tab="scopes">
           <legend>Telescope &amp; sensor (FOV sketch)</legend>
+          <label>Main scope (preset)
+            <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <select id="scope-preset-select" style="flex:1 1 auto"></select>
+              <button type="button" class="btn" id="scope-preset-save" title="Save the fields below as a preset (overwrites the selected one, or adds a new one)">💾 Save</button>
+              <button type="button" class="btn" id="scope-preset-delete" title="Delete the selected preset">✕</button>
+            </span>
+            <small class="field-hint">Pick the rig the FOV sketch should use. Selecting a preset loads its focal length, sensor size <b>and</b> camera orientation into the fields below. Edit the fields then <b>Save</b> to update it or add a new one.</small></label>
           <label>Focal length (mm)<input name="optics.telescopeFocalMm" type="number" step="any" min="1" required>
             <small class="field-hint">Telescope effective focal length — sets the FOV-sketch scale (your reducer/Barlow included).</small></label>
           <label>Sensor model<input name="optics.sensorName" type="text" placeholder="ZWO ASI174MM">
@@ -668,10 +675,6 @@
             <small class="field-hint">Sensor active-area width (mm) — sets the FOV box width.</small></label>
           <label>Sensor H (mm)<input name="optics.sensorHmm" type="number" step="any" min="0.01" required>
             <small class="field-hint">Sensor active-area height (mm) — sets the FOV box height.</small></label>
-          <label>Sensor W (px)<input name="optics.sensorPxW" type="number" step="1" min="1">
-            <small class="field-hint">Horizontal resolution — informational only, not used in the geometric FOV.</small></label>
-          <label>Sensor H (px)<input name="optics.sensorPxH" type="number" step="1" min="1">
-            <small class="field-hint">Vertical resolution — informational only.</small></label>
           <label>Camera orientation — Sun drifts toward
             <select name="optics.driftWest">
               <option value="">Off (sky view only)</option>
@@ -807,6 +810,23 @@
             <small class="field-hint">Bearer token from airnavradar.com/api/dashboard. Masked (••••) after save; leave the mask to keep it. Stays server-side — never sent to the browser.</small></label>
           <label>Base URL<input name="airnav.baseUrl" type="text" autocomplete="off" placeholder="https://api.airnavradar.com/v2">
             <small class="field-hint">On-Demand API v2 base. Change only if AirNav moves the host.</small></label>
+        </fieldset>
+
+        <fieldset data-tab="data">
+          <legend>Aircraft class filter</legend>
+          <label class="checkbox-row">
+            <input name="aircraftFilter.enabled" type="checkbox"> Restrict the pipeline to selected classes
+            <small class="field-hint">When on, only the ticked classes are tracked — they alone become candidates, fire SharpCap, send Pushover and show on the e-paper (same reach as the Sun/Moon pulldown). Off = all traffic.</small></label>
+          <label class="checkbox-row">
+            <input class="acf-class" type="checkbox" value="military"> ✈ Military
+            <small class="field-hint">Known military call-signs (GAF, NATO, RRR…) or military ICAO address blocks.</small></label>
+          <label class="checkbox-row">
+            <input class="acf-class" type="checkbox" value="ga"> 🛩 General aviation (private)
+            <small class="field-hint">All-letter registration call-signs (D-E…, PH-…) or light/small ADS-B category.</small></label>
+          <label class="checkbox-row">
+            <input class="acf-class" type="checkbox" value="commercial"> 🛫 Commercial
+            <small class="field-hint">Airline flight numbers (DLH2AB…) or large/heavy ADS-B category.</small></label>
+          <small class="field-hint">Heuristic from each plane's call-sign + ADS-B category — no extra lookup. Military jets flying a civilian or tactical call-sign may not be caught; aircraft with no call-sign yet (class “unknown”) are excluded while a specific class is selected.</small>
         </fieldset>
 
         <fieldset data-tab="general">
