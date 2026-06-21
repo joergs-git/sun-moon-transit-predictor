@@ -601,19 +601,24 @@ export async function runService({
     // main rig no longer cascades to the extras and vice-versa — matches
     // user expectation that one checkbox per rig means exactly that.
     //
-    // Address-collision check (from v0.30.1) still guards against
-    // duplicate listener hits: if a target claims the same host:port as
-    // the base, the auto-promoted main is suppressed (the user's intent
-    // was clearly to replace the base via the targets[] entry).
+    // Address-collision check (from v0.30.1) still guards against duplicate
+    // listener hits: if a target claims the same host:port as the base, the
+    // auto-promoted main is suppressed (the user's intent was to replace the
+    // base via the targets[] entry). v0.48.3 — but ONLY an *enabled* target
+    // shadows the base. A disabled same-address target must never silence an
+    // enabled main rig: double-firing is the only reason to suppress, and a
+    // disabled target can't double-fire. (Previously a disabled "rasa" sharing
+    // the main's host:port left the whole site unable to arm despite the main
+    // switch being on — a real Moon transit was lost to it.)
     const port = (x) => Number.isInteger(x?.port) ? x.port : (base.port ?? 9999);
     const addr = (x) => `${String(x?.host ?? base.host ?? '').toLowerCase()}:${port(x)}`;
-    const targetAddrs = new Set(targets.map(addr));
+    const enabledTargetAddrs = new Set(targets.filter((t) => t.enabled !== false).map(addr));
     const out = [];
     // Auto-promoted main: exists as long as a host is configured AND no
-    // target shadows it. Its on/off lives in base.enabled directly — so a
-    // disabled-but-configured main rig stays present but never fires.
+    // ENABLED target shadows it. Its on/off lives in base.enabled directly — so
+    // a disabled-but-configured main rig stays present but never fires.
     const baseHasHost = typeof base?.host === 'string' && base.host.trim();
-    if (baseHasHost && !targetAddrs.has(addr(base))) {
+    if (baseHasHost && !enabledTargetAddrs.has(addr(base))) {
       const merged = { ...base };
       delete merged.targets;
       out.push({

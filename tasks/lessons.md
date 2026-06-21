@@ -8,6 +8,21 @@
 - **Rule:** <what to always/never do instead>
 - **Applies to:** <context>
 
+## [2026-06-21] — A disabled override must never silence an enabled fallback
+- **Mistake:** A disabled multi-rig target (`rasa`) that shared the main rig's
+  host:port shadowed the *enabled* base rig, so the whole site could not arm
+  SharpCap despite the main switch being on — a real 0.24° Moon transit was lost.
+  I initially framed it as "working as designed" and offered only a warning.
+- **Root cause:** The address-collision suppression treated ANY same-address
+  target as a replacement of the base, including disabled ones. But suppression
+  exists solely to prevent double-firing the same listener — which a disabled
+  target cannot do.
+- **Rule:** An OFF override must never override an ON thing to OFF. Collision/
+  shadow suppression should consider only *enabled* entries. When the user calls
+  a behaviour "Schwachsinn," fix the behaviour — don't just add a warning around it.
+- **Applies to:** buildSharpcapTargets in src/service.js; any "specific config
+  shadows the general one" precedence rule.
+
 ## [2026-06-21] — A class `display:` rule defeats the UA `[hidden]` rule
 - **Mistake:** The active-target pulldown showed visible-but-empty when SharpCap
   was disabled. `renderActiveTarget` set `bar.hidden = true` then returned before
