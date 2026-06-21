@@ -2204,6 +2204,102 @@ if ($('#catalog-add')) {
   $('#catalog-add').addEventListener('click', () => $('#catalog-rows')?.appendChild(catalogRow()));
 }
 
+// ── Scope presets (v0.48.0) ─────────────────────────────────────────────────
+// A small client-side library of saved rigs. Picking one loads its optics +
+// camera orientation into the live fields; "Save" stores the current fields as
+// a preset; both the list and the active id ride along in the config patch.
+// Editing any optics field by hand flips the selection to "— custom —" so the
+// server doesn't overwrite the typed values from a stale preset on save.
+let scopePresets = [];
+let activePresetId = '';
+const presetSelect = $('#scope-preset-select');
+// The active optics inputs this preset machinery reads/writes.
+const opticsFieldNames = ['optics.telescopeFocalMm', 'optics.sensorWmm', 'optics.sensorHmm',
+                          'optics.sensorName', 'optics.driftWest', 'optics.mirror'];
+function opticsEl(name) { return settingsForm.elements[name]; }
+
+function renderPresetSelect() {
+  if (!presetSelect) return;
+  presetSelect.innerHTML = '';
+  for (const p of scopePresets) {
+    const opt = document.createElement('option');
+    opt.value = p.id; opt.textContent = p.name || p.id;
+    presetSelect.appendChild(opt);
+  }
+  const custom = document.createElement('option');
+  custom.value = ''; custom.textContent = '— custom (unsaved) —';
+  presetSelect.appendChild(custom);
+  presetSelect.value = scopePresets.some((p) => p.id === activePresetId) ? activePresetId : '';
+}
+
+// Copy a preset's saved values into the live optics fields.
+function loadPresetIntoFields(id) {
+  const p = scopePresets.find((x) => x.id === id);
+  if (!p) return;
+  const set = (name, val) => { const el = opticsEl(name); if (el) el.value = val ?? ''; };
+  set('optics.telescopeFocalMm', p.telescopeFocalMm);
+  set('optics.sensorWmm', p.sensorWmm);
+  set('optics.sensorHmm', p.sensorHmm);
+  set('optics.sensorName', p.sensorName);
+  const dw = opticsEl('optics.driftWest'); if (dw) dw.value = p.driftWest ?? '';
+  const mir = opticsEl('optics.mirror'); if (mir) mir.checked = p.mirror === true;
+}
+
+// Read the current live fields into a preset object (id/name supplied).
+function presetFromFields(id, name) {
+  const num = (n) => Number(opticsEl(n)?.value);
+  return {
+    id, name,
+    telescopeFocalMm: num('optics.telescopeFocalMm'),
+    sensorWmm: num('optics.sensorWmm'),
+    sensorHmm: num('optics.sensorHmm'),
+    sensorName: (opticsEl('optics.sensorName')?.value ?? '').trim(),
+    driftWest: opticsEl('optics.driftWest')?.value ?? '',
+    mirror: opticsEl('optics.mirror')?.checked === true,
+  };
+}
+
+function slugify(s) {
+  return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'scope';
+}
+
+if (presetSelect) {
+  presetSelect.addEventListener('change', () => {
+    activePresetId = presetSelect.value;
+    if (activePresetId) loadPresetIntoFields(activePresetId);
+  });
+}
+// Hand-editing any optics field → drop to "custom" so a saved preset's values
+// don't clobber the edit on the server side.
+for (const name of opticsFieldNames) {
+  const el = opticsEl(name);
+  if (el) el.addEventListener('input', () => { activePresetId = ''; if (presetSelect) presetSelect.value = ''; });
+}
+if ($('#scope-preset-save')) {
+  $('#scope-preset-save').addEventListener('click', () => {
+    const selected = scopePresets.find((p) => p.id === presetSelect?.value);
+    const suggested = selected?.name || (opticsEl('optics.sensorName')?.value ?? 'Scope');
+    const name = (window.prompt('Preset name:', suggested) || '').trim();
+    if (!name) return;
+    // Overwrite the selected preset if its name is unchanged, else add a new one.
+    const id = selected && selected.name === name ? selected.id : slugify(name);
+    const next = presetFromFields(id, name);
+    const idx = scopePresets.findIndex((p) => p.id === id);
+    if (idx >= 0) scopePresets[idx] = next; else scopePresets.push(next);
+    activePresetId = id;
+    renderPresetSelect();
+  });
+}
+if ($('#scope-preset-delete')) {
+  $('#scope-preset-delete').addEventListener('click', () => {
+    const id = presetSelect?.value;
+    if (!id) return;
+    scopePresets = scopePresets.filter((p) => p.id !== id);
+    if (activePresetId === id) activePresetId = '';
+    renderPresetSelect();
+  });
+}
+
 function setNested(obj, dottedKey, value) {
   const parts = dottedKey.split('.');
   let cur = obj;
@@ -2238,6 +2334,13 @@ function fillSettingsForm(cfg) {
   // Dynamic multi-rig list (not part of the named-element loop).
   fillSharpcapTargets(cfg.sharpcap?.targets);
   fillCatalog(cfg.skyTargets?.objects);
+  // Scope presets + active selection (not named elements).
+  scopePresets = Array.isArray(cfg.optics?.presets) ? cfg.optics.presets.map((p) => ({ ...p })) : [];
+  activePresetId = cfg.optics?.activePresetId ?? '';
+  renderPresetSelect();
+  // Aircraft-class filter checkboxes (.acf-class, not named elements).
+  const allow = new Set(Array.isArray(cfg.aircraftFilter?.classes) ? cfg.aircraftFilter.classes : []);
+  for (const el of document.querySelectorAll('.acf-class')) el.checked = allow.has(el.value);
 }
 
 async function openSettings() {
@@ -2294,6 +2397,12 @@ settingsForm.addEventListener('submit', async (ev) => {
   // Multi-rig list → sharpcap.targets (empty array = single-rig mode).
   setNested(patch, 'sharpcap.targets', collectSharpcapTargets());
   setNested(patch, 'skyTargets.objects', collectCatalog());
+  // Scope presets + the active "main scope" selection.
+  setNested(patch, 'optics.presets', scopePresets);
+  setNested(patch, 'optics.activePresetId', activePresetId);
+  // Aircraft-class filter: collect the ticked classes.
+  setNested(patch, 'aircraftFilter.classes',
+    [...document.querySelectorAll('.acf-class')].filter((el) => el.checked).map((el) => el.value));
   settingsMsg.textContent = 'saving…';
   settingsMsg.className = 'settings-msg';
   try {
