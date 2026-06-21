@@ -1347,6 +1347,9 @@ a.acstats-label.hex-link:hover { text-decoration: underline; }
   gap: 5px;
   font-size: 12px;
 }
+/* Without this the flex display above beats the UA [hidden] rule, so the bar
+   could never actually hide (it would show an empty pulldown). */
+.active-target-bar[hidden] { display: none; }
 .active-target-bar label { color: var(--muted); font-size: 13px; cursor: default; }
 .active-target-bar select {
   background: var(--bg);

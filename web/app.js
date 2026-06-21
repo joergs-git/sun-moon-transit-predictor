@@ -304,17 +304,21 @@ const CONFIDENCE_BADGE = {
   red:    { dot: '🔴', label: 'uncertain', tip: 'TLE > 6 d old at the event — very tentative.' },
 };
 
-// Active-target pulldown (M83): what the scope is pointed at. Shown only when
-// the SharpCap trigger is enabled (it targets the capture). Options come from
+// Active-target pulldown (M83): what the scope is pointed at. Options come from
 // state.activeTargetOptions (Sun/Moon/Auto + objects with upcoming passes).
+// Shown whenever there are options — the selection filters the WHOLE pipeline
+// (display + Pushover + SharpCap arming), so it is useful even when the
+// SharpCap trigger is OFF (v0.48.2: previously gated on sharpcap.enabled, which
+// left the bar visible-but-empty when capture was disabled).
 let activeTargetBusy = false;   // guard against re-rendering mid-change
 function renderActiveTarget(state) {
   const bar = $('#active-target-bar');
   if (!bar) return;
-  if (!state.sharpcap?.enabled) { bar.hidden = true; return; }
-  bar.hidden = false;
   const sel = $('#active-target-select');
   const opts = Array.isArray(state.activeTargetOptions) ? state.activeTargetOptions : [];
+  // Hide only when there is genuinely nothing to pick (no bodies known yet).
+  if (!opts.length) { bar.hidden = true; return; }
+  bar.hidden = false;
   const cur = state.activeTarget ?? 'auto';
   // Rebuild options only when the set or selection changed (don't stomp an open
   // dropdown every 2 s).

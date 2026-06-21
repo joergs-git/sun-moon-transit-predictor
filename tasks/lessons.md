@@ -8,6 +8,22 @@
 - **Rule:** <what to always/never do instead>
 - **Applies to:** <context>
 
+## [2026-06-21] — A class `display:` rule defeats the UA `[hidden]` rule
+- **Mistake:** The active-target pulldown showed visible-but-empty when SharpCap
+  was disabled. `renderActiveTarget` set `bar.hidden = true` then returned before
+  populating the `<select>`, assuming the element would disappear.
+- **Root cause:** `.active-target-bar { display: flex }` (an author class rule)
+  overrides the user-agent `[hidden] { display: none }`, so the `hidden`
+  attribute had no visual effect — the bar was ALWAYS shown. Plus the visibility
+  was wrongly gated on `sharpcap.enabled`, even though the selection filters the
+  whole display/Pushover pipeline, not just capture.
+- **Rule:** Whenever you set `display:` on a class, also add `&[hidden]{display:none}`
+  (or `.cls[hidden]{display:none}`) so toggling the `hidden` attribute still
+  works. And don't gate a control's visibility on a flag it isn't actually tied
+  to — verify what the control drives before hiding it.
+- **Applies to:** any element toggled via `el.hidden = …` that also has a class
+  setting `display`; web/style.css + web/app.js.
+
 ## [2026-06-08] — Don't assume a PyPI package exists; don't over-sandbox HW services
 - **Mistake (1):** Install script ran `pip install waveshare-epd` — that package
   is not reliably on PyPI, so the driver was missing → `No module named
