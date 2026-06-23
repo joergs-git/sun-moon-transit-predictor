@@ -141,12 +141,12 @@ export function computeSensorMatrix({ azDeg, elDeg, latDeg, driftWest, mirror })
 }
 
 /**
- * Dashed sensor-FOV box centred at (cx,cy), w×h px. With a sensor matrix it is
- * drawn ROTATED into the camera's real sky orientation (a small blue 'W' tick
- * marks the drift/West edge so it maps to the SharpCap drift test); without
- * one it falls back to the axis-aligned dashed rectangle. The box is placed by
- * mapping the sensor's own axis-aligned corners back to the sky frame via Mᵀ
- * (M is orthogonal, so the inverse is the transpose).
+ * Dashed sensor-FOV box centred at (cx,cy), w×h px. With a sensor matrix the
+ * whole sketch is drawn in the camera's sensor frame (see `frameOff` in
+ * buildSketchSvg), so the box is AXIS-ALIGNED here — a small blue 'W' tick marks
+ * the drift/West edge (cardinals.W) and 'R'/'T' mark the image right/top edges,
+ * so the box maps 1:1 to the SharpCap image (orientation incl. mirror). Without
+ * a matrix it falls back to the plain axis-aligned dashed rectangle.
  */
 /**
  * Screen-space rotation {c,s} that brings celestial North to screen-up (and
@@ -181,18 +181,16 @@ function rotOff(rot, ox, oy) {
   return rot ? { x: rot.c * ox - rot.s * oy, y: rot.s * ox + rot.c * oy } : { x: ox, y: oy };
 }
 
-function fovBoxSvg(cx, cy, w, h, m, rot) {
+function fovBoxSvg(cx, cy, w, h, m) {
   if (!m) {
     return `<rect x="${(cx - w / 2).toFixed(1)}" y="${(cy - h / 2).toFixed(1)}" `
       + `width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="none" `
       + `stroke="${COLOURS.fovStroke}" stroke-width="1.2" stroke-dasharray="6 4" rx="2"/>`;
   }
-  // Mᵀ maps a sensor-frame coord back to the sky frame; then the north-up screen
-  // rotation (if any) is applied so the box sits correctly in the N-up view.
-  const inv = (sx, sy) => {
-    const o = rotOff(rot, m.a * sx + m.b * sy, m.c * sx + m.d * sy);
-    return { x: cx + o.x, y: cy + o.y };
-  };
+  // Screen == sensor frame here, so the box is axis-aligned: sensor coord (sx,sy)
+  // lands directly at (cx+sx, cy+sy). Kept a <polygon> (4 corners) so the
+  // dashed-stroke render path and the R/T edge labels stay identical to before.
+  const inv = (sx, sy) => ({ x: cx + sx, y: cy + sy });
   const hw = w / 2; const hh = h / 2;
   const poly = [inv(-hw, -hh), inv(hw, -hh), inv(hw, hh), inv(-hw, hh)]
     .map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
@@ -730,10 +728,30 @@ export function buildSketchSvg(d) {
   // raw alt-az frame. The angle is the parallactic angle (follows the body over
   // the day). Needs the observer latitude; without it we keep the alt-az frame.
   const northRot = northUpScreenRot(d.bodyAt?.az, d.bodyAt?.el, d.obsLat);
-  // Project a (dAz·cosEl, dEl) degree offset to a screen point, with the N-up
-  // rotation applied. Replaces the bare degToPx for all sky content.
+  // Sensor frame (v0.49.0): when a drift-test calibration is configured the
+  // WHOLE sketch is drawn in the camera's sensor frame — exactly what SharpCap
+  // shows (for driftWest='up' celestial West / the drift edge is screen-up). Mᵀ
+  // maps a sky-screen vector (x=+az/East, y-down) into the sensor frame; M is
+  // orthogonal so its inverse is the transpose (a·x+c·y, b·x+d·y) — the very
+  // mapping the sensor-view unit tests use. Without a calibration we keep the
+  // North-up parallactic frame.
+  //   BUGFIX: previously only the FOV box was rotated into the sensor frame
+  //   while the transit path / aircraft / compass stayed North-up, so the plane
+  //   was drawn on the wrong side of the disc relative to the box and SharpCap.
+  //   Now every plotted offset goes through the same frame as the box.
+  const sensorM = computeSensorMatrix({
+    azDeg: d.bodyAt?.az, elDeg: d.bodyAt?.el, latDeg: d.obsLat,
+    driftWest: OPTICS.DRIFT_WEST, mirror: OPTICS.MIRROR,
+  });
+  // Map a raw sky-screen offset (x right = East, y down) into the active frame:
+  // the sensor frame (Mᵀ) when calibrated, else the North-up parallactic frame.
+  const frameOff = sensorM
+    ? (ox, oy) => ({ x: sensorM.a * ox + sensorM.c * oy, y: sensorM.b * ox + sensorM.d * oy })
+    : (ox, oy) => rotOff(northRot, ox, oy);
+  // Project a (dAz·cosEl, dEl) degree offset to a screen point in the active
+  // frame. Replaces the bare degToPx for all sky content.
   const project = (dxDeg, dyDeg) => {
-    const o = rotOff(northRot, dxDeg * pxPerDeg, -dyDeg * pxPerDeg);
+    const o = frameOff(dxDeg * pxPerDeg, -dyDeg * pxPerDeg);
     return { x: cx + o.x, y: cy + o.y };
   };
 
@@ -855,15 +873,11 @@ export function buildSketchSvg(d) {
 
   // Sensor FOV rectangle: dashed outline, no fill — sits ON TOP of the disc so
   // the user sees which slice of the Sun/Moon their sensor will capture. When a
-  // camera orientation is configured (drift-test calibration) the box is drawn
-  // ROTATED + a small 'W' tick marking the drift (West) edge, so it matches how
-  // the sensor actually sits on the sky — no separate view / toggle needed. The
-  // rotation is parallactic-correct and follows the Sun over the day (EQ mount).
-  const sensorM = computeSensorMatrix({
-    azDeg: d.bodyAt?.az, elDeg: d.bodyAt?.el, latDeg: d.obsLat,
-    driftWest: OPTICS.DRIFT_WEST, mirror: OPTICS.MIRROR,
-  });
-  const fovRect = fovBoxSvg(cx, cy, fovPxW, fovPxH, sensorM, northRot);
+  // camera orientation is configured (drift-test calibration) the whole sketch
+  // is already drawn in the sensor frame (see `frameOff` above), so the box is
+  // axis-aligned with a small 'W' tick marking the drift (West) edge — it maps
+  // 1:1 to the SharpCap image, no separate view / toggle needed.
+  const fovRect = fovBoxSvg(cx, cy, fovPxW, fovPxH, sensorM);
 
   // Axis crosshair through the body centre — subtle, helps eye lock to the
   // disc when the aircraft passes off-centre. Spans the whole widget now
@@ -1008,7 +1022,33 @@ export function buildSketchSvg(d) {
   const rose = '#7fd0ff';
   let axisLabels = '';
   let compass = '';
-  if (northRot) {
+  if (sensorM) {
+    // Sensor frame: the cardinals sit at fixed sensor-frame directions
+    // (cardinals.{N,S,E,W}); place each label at the widget edge it points to.
+    // West (the drift reference) is highlighted to match the box's blue 'W'.
+    const lab = (s, x, y, col, anchor = 'middle') => txt(x, y, s, { fill: col, size: LABEL_SIZE, anchor });
+    const edgeLab = (vec, s, col) => {
+      const [vx, vy] = vec;
+      if (Math.abs(vx) >= Math.abs(vy)) {
+        const x = vx >= 0 ? widgetX + widgetW - 8 : widgetX + 8;
+        return lab(s, x, cy + 4, col, 'middle');
+      }
+      const y = vy >= 0 ? widgetY + widgetH - 4 : widgetY + 12;
+      return lab(s, cx, y, col);
+    };
+    compass +=
+      edgeLab(sensorM.cardinals.W, 'W', rose)
+      + edgeLab(sensorM.cardinals.E, 'E', COLOURS.label)
+      + edgeLab(sensorM.cardinals.N, 'N', COLOURS.label)
+      + edgeLab(sensorM.cardinals.S, 'S', COLOURS.label);
+    // Zenith direction (alt-az "up" = +1° elevation) mapped into the sensor frame.
+    const zo = frameOff(0, -1);
+    const zl = bodyR + 16;
+    const zx = cx + zo.x * zl; const zy = cy + zo.y * zl;
+    compass +=
+      `<line x1="${cx}" y1="${cy}" x2="${zx.toFixed(1)}" y2="${zy.toFixed(1)}" stroke="${COLOURS.axis}" stroke-width="1" stroke-dasharray="2 2"/>`
+      + txt(zx + 3, zy + 3, 'Z', { fill: COLOURS.axis, size: 9 });
+  } else if (northRot) {
     const lab = (s, x, y, col, anchor = 'middle') => txt(x, y, s, { fill: col, size: LABEL_SIZE, anchor });
     compass +=
       lab('N', cx, widgetY + 12, rose)

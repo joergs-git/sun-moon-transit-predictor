@@ -337,4 +337,43 @@ describe('sensor-view transform (v0.43.0)', () => {
     expect(rotated).toMatch(/>T</);
     setOptics({ driftWest: '' });   // reset for other tests
   });
+
+  it('plots the transit path/aircraft in the SENSOR frame, not North-up (v0.49.0 bugfix)', () => {
+    // Body at the meridian where the sky-frame West vector is screen-right
+    // ([1,0]); an aircraft a hair to higher azimuth therefore sits to the
+    // celestial WEST of the disc. Same elevation → the offset is pure-West.
+    const base = {
+      body: 'Sun', flight: 'X', closestAtMs: 1.7e12,
+      bodyAt: { az: 180, el: 40 }, obsLat: 52.0,
+      aircraftAt: { az: 180.25, el: 40.0, rangeM: 14000 },
+      sepDeg: 0.19,
+    };
+    // Aircraft silhouette anchor Y (the <g transform="translate(x y) rotate…">)
+    // and the body-disc centre Y (the radial-gradient circle).
+    const acY = (svg) => {
+      const m = svg.match(/translate\(([\-\d.]+) ([\-\d.]+)\) rotate/);
+      return m ? parseFloat(m[2]) : null;
+    };
+    const discY = (svg) => {
+      const m = svg.match(/<circle cx="[\d.]+" cy="([\d.]+)" r="[\d.]+" fill="url\(#bodyGrad\)"/);
+      return m ? parseFloat(m[1]) : null;
+    };
+
+    // driftWest='up' → celestial West is screen-UP, so a West aircraft is ABOVE
+    // the disc centre. The blue 'W' tick must likewise sit above the centre.
+    setOptics({ driftWest: 'up', mirror: false });
+    const up = buildSketchSvg(base);
+    expect(acY(up)).toBeLessThan(discY(up));
+
+    // driftWest='down' → West is screen-DOWN, so the same aircraft is BELOW.
+    setOptics({ driftWest: 'down', mirror: false });
+    const down = buildSketchSvg(base);
+    expect(acY(down)).toBeGreaterThan(discY(down));
+
+    // The plane MOVED when only the camera orientation changed — the exact
+    // thing the old code got wrong (it always drew the path North-up, ignoring
+    // the sensor calibration the FOV box was already using).
+    expect(Math.abs(acY(up) - acY(down))).toBeGreaterThan(5);
+    setOptics({ driftWest: '' });   // reset for other tests
+  });
 });

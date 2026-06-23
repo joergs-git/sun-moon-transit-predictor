@@ -8,6 +8,25 @@
 - **Rule:** <what to always/never do instead>
 - **Applies to:** <context>
 
+## [2026-06-23] — Overlay and plotted content must share ONE coordinate frame
+- **Mistake:** In the FOV sketch the sensor-FOV box was rotated into the camera
+  frame (via `computeSensorMatrix`), but the transit path, aircraft silhouette,
+  anchor and compass were still plotted in the North-up sky frame (`project` used
+  only `northUpScreenRot`). With a non-North-up camera (user's RASA: driftWest=
+  'up' → West is screen-up) the plane was drawn on the WRONG side of the disc
+  relative to the box and to SharpCap — left/E→W instead of right/bottom→top.
+- **Root cause:** Two transforms for the same picture. The box answered "where
+  does the sensor sit on the sky?" while everything else answered "where is N-up?"
+  — so any camera rotation desynced the box from the content it framed.
+- **Rule:** When ONE element of a composite view is transformed into a special
+  frame (camera/sensor/rotated overlay), EVERY positional element in that view
+  must go through the SAME frame map. Here: a single `frameOff` (Mᵀ when a sensor
+  matrix exists, else the N-up rotation) feeds `project`, the box and the compass.
+  Mᵀ = sky→sensor was already proven by the unit tests' `apply()` helper — reuse
+  the verified transform, don't invent a parallel one.
+- **Applies to:** web/sketch.js buildSketchSvg/fovBoxSvg; any overlay drawn on
+  top of independently-projected content.
+
 ## [2026-06-21] — A disabled override must never silence an enabled fallback
 - **Mistake:** A disabled multi-rig target (`rasa`) that shared the main rig's
   host:port shadowed the *enabled* base rig, so the whole site could not arm
