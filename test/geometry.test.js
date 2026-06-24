@@ -10,7 +10,7 @@ import {
   sunAzEl,
   targetAzEl,
 } from '../src/geometry.js';
-import { nextHorizonCrossing } from '../src/service.js';
+import { nextHorizonCrossing, nextMeridianTransit } from '../src/service.js';
 
 const RHEINE = {
   name: 'Rheine',
@@ -236,5 +236,22 @@ describe('nextHorizonCrossing (M85 — Sun/Moon next rise/set)', () => {
     expect(ev.atMs).toBeGreaterThan(midnight);
     expect(sunAzEl(RHEINE, new Date(ev.atMs - 60_000)).elevationDeg).toBeLessThan(0);
     expect(sunAzEl(RHEINE, new Date(ev.atMs + 60_000)).elevationDeg).toBeGreaterThan(0);
+  });
+});
+
+describe('nextMeridianTransit (v0.50.1 — Sun/Moon culmination)', () => {
+  it('returns an instant where the Sun is due south and at its daily peak', () => {
+    const morning = Date.UTC(2026, 5, 21, 6, 0, 0);   // before local noon
+    const tr = nextMeridianTransit(RHEINE, 'Sun', morning);
+    expect(tr).not.toBeNull();
+    expect(tr.atMs).toBeGreaterThan(morning);
+    // Due south: azimuth within a hair of 180°.
+    const at = sunAzEl(RHEINE, new Date(tr.atMs));
+    expect(Math.abs(at.azimuthDeg - 180)).toBeLessThan(0.2);
+    // Upper culmination: higher than half an hour either side.
+    const before = sunAzEl(RHEINE, new Date(tr.atMs - 1_800_000)).elevationDeg;
+    const after = sunAzEl(RHEINE, new Date(tr.atMs + 1_800_000)).elevationDeg;
+    expect(at.elevationDeg).toBeGreaterThan(before);
+    expect(at.elevationDeg).toBeGreaterThan(after);
   });
 });

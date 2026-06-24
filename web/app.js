@@ -165,11 +165,17 @@ const VIS_GREEN_DEG = 45;
 // Real Sun/Moon disc-overlap proxy (matches store.js rangeStats onDisc).
 const DISC_DEG = 0.27;
 
+// Elevation quality (v0.50.1): a green → dark-green → orange ramp, NOT a
+// green/amber/RED traffic light. A low transit is still a real, catalogued
+// event — red + "poor" framed it as a failure, which confused the read. Orange
+// just means "lower / longer slant path", never "bad". `glyph` encodes the
+// elevation as an inclination (│ high · ╱ mid · ─ low) for the neutral,
+// colour-free History variant.
 function visInfo(elDeg) {
   if (!Number.isFinite(elDeg)) return null;
-  if (elDeg >= VIS_GREEN_DEG) return { cls: 'vis-green', word: 'ideal' };
-  if (elDeg >= VIS_AMBER_DEG) return { cls: 'vis-amber', word: 'workable' };
-  return { cls: 'vis-red', word: 'poor' };
+  if (elDeg >= VIS_GREEN_DEG) return { cls: 'vis-green', word: 'ideal', glyph: '│' };
+  if (elDeg >= VIS_AMBER_DEG) return { cls: 'vis-mid', word: 'good', glyph: '╱' };
+  return { cls: 'vis-low', word: 'low', glyph: '─' };
 }
 // One leftmost <td> for both tables. Neutral dot when elevation is unknown
 // (e.g. ISS visible-pass entries without an aircraftAtClosest sample).
@@ -200,9 +206,24 @@ function visCell(elDeg, armed = false) {
     return '<td class="td-icon vis-cell" title="elevation at closest approach unknown">'
       + `<span class="vis-dot vis-unknown">·</span>${bolt}</td>`;
   }
-  const t = `${elDeg.toFixed(0)}° elevation — visibility ${v.word} `
-    + `(red <${VIS_AMBER_DEG}° · amber ${VIS_AMBER_DEG}–${VIS_GREEN_DEG}° · green ≥${VIS_GREEN_DEG}°)`;
+  const t = `${elDeg.toFixed(0)}° elevation — ${v.word} `
+    + `(≥${VIS_GREEN_DEG}° ideal · ${VIS_AMBER_DEG}–${VIS_GREEN_DEG}° good · <${VIS_AMBER_DEG}° low; orange = lower, not bad)`;
   return `<td class="td-icon vis-cell" title="${t}"><span class="vis-dot ${v.cls}">●</span>${bolt}</td>`;
+}
+
+// History variant (v0.50.1): NO traffic-light colour. The red/amber/green dots
+// read as pass/fail in the log, but a low transit is still a real recorded
+// event — so History shows a neutral, muted ANGLE glyph that encodes the
+// elevation by inclination (│ high · ╱ mid · ─ low) instead of a colour.
+function visCellNeutral(elDeg, armed = false) {
+  const bolt = armedBolt(armed);
+  const v = visInfo(elDeg);
+  if (!v) {
+    return '<td class="td-icon vis-cell" title="elevation at closest approach unknown">'
+      + `<span class="vis-angle vis-unknown">·</span>${bolt}</td>`;
+  }
+  const t = `${elDeg.toFixed(0)}° elevation at closest approach`;
+  return `<td class="td-icon vis-cell" title="${t}"><span class="vis-angle">${v.glyph}</span>${bolt}</td>`;
 }
 
 // Unified row highlight (v0.15.0). GREEN only = a *real* Sun/Moon disc
@@ -327,14 +348,18 @@ function renderActiveTarget(state) {
     sel.innerHTML = opts.map((o) => `<option value="${o.id}"${o.id === cur ? ' selected' : ''}>${o.label}</option>`).join('');
     sel.dataset.sig = sig;
   }
-  // Sun & Moon readout next to the pulldown (v0.50.0): current elevation + the next
-  // horizon event — sunset/moonset while up, sunrise/moonrise while down. Bigger
-  // (.active-target-sky) so it reads at a glance during a session.
+  // Sun & Moon readout next to the pulldown (v0.50.1): a fixed 5-column grid,
+  // one row per body, so the ticking values stay column-aligned and never
+  // reflow or collapse. Columns: body · elevation · ⌀ apparent diameter ·
+  // ↥ meridian transit · next rise(↑)/set(↓).
   const skyEl = $('#active-target-sky');
   if (skyEl) {
     const bodies = state.bodies ?? {};
-    skyEl.innerHTML = ['Sun', 'Moon']
-      .map((n) => bodyEventReadout(n, bodies[n])).filter(Boolean).join(' ');
+    // Stable Sun-then-Moon order; any other tracked body trails.
+    const order = ['Sun', 'Moon'];
+    const names = order.filter((n) => bodies[n])
+      .concat(Object.keys(bodies).filter((n) => !order.includes(n)));
+    skyEl.innerHTML = names.map((n) => bodySkyRow(n, bodies[n])).join('');
   }
   // Next pass for the currently-selected sky object (if any).
   const nextEl = $('#active-target-next');
@@ -344,23 +369,36 @@ function renderActiveTarget(state) {
   }
 }
 
-// One body's header readout: "☀ +15° · ↓ 18:42" (sets at 18:42, currently up)
-// or "🌙 −3° · ↑ 21:05" (rises at 21:05, currently down). The arrow + word come
-// from the server's nextEvent.kind ('rise'/'set'), so day/night is implicit.
-function bodyEventReadout(name, body) {
-  if (!body || !Number.isFinite(body.elevationDeg)) return '';
+/** Local HH:MM for a ms timestamp, or null when not finite. */
+function hhmm(ms) {
+  return Number.isFinite(ms)
+    ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null;
+}
+
+// One body's row in the header Sun/Moon grid — exactly five cells so it fills
+// one grid row with the others' columns aligned. Every cell is always emitted
+// (a missing value shows '—') so the layout never shifts or loses a field.
+//   ☀  +57°  ⌀0.53°  ↥13:12  ↓21:34
+//   🌙  −4°   ⌀0.50°  ↥02:18  ↑22:07
+function bodySkyRow(name, body) {
   const icon = name === 'Sun' ? '☀' : name === 'Moon' ? '🌙' : name;
-  const el = `${body.elevationDeg >= 0 ? '+' : '−'}${Math.abs(Math.round(body.elevationDeg))}°`;
-  let ev = '';
-  let tip = name;
-  const e = body.nextEvent;
-  if (e && Number.isFinite(e.atMs)) {
-    const arrow = e.kind === 'rise' ? '↑' : '↓';
-    const t = new Date(e.atMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    ev = ` <span class="at-evt">${arrow} ${t}</span>`;
-    tip = `${name} ${e.kind === 'rise' ? 'rises' : 'sets'} at ${t}`;
-  }
-  return `<span class="body-${name}" title="${tip}">${icon} ${el}${ev}</span>`;
+  const cell = (cls, html, title) =>
+    `<span class="${cls}"${title ? ` title="${title}"` : ''}>${html}</span>`;
+  const el = (body && Number.isFinite(body.elevationDeg))
+    ? `${body.elevationDeg >= 0 ? '+' : '−'}${Math.abs(Math.round(body.elevationDeg))}°` : '—';
+  const dia = (body && Number.isFinite(body.apparentDiameterDeg))
+    ? `⌀${body.apparentDiameterDeg.toFixed(2)}°` : '—';
+  const merT = body ? hhmm(body.meridianAtMs) : null;
+  const e = body?.nextEvent;
+  const evT = e ? hhmm(e.atMs) : null;
+  return cell(`ats-icon body-${name}`, icon, name)
+    + cell('ats-el', el, `${name} elevation now`)
+    + cell('ats-dia', dia, `${name} apparent disc diameter (live, from range) — the FOV the disc fills`)
+    + cell('ats-mer', merT ? `↥${merT}` : '—',
+      merT ? `${name} meridian transit — highest, due south, at ${merT}` : `${name} meridian transit`)
+    + cell('ats-evt', (e && evT) ? `${e.kind === 'rise' ? '↑' : '↓'}${evT}` : '—',
+      (e && evT) ? `${name} ${e.kind === 'rise' ? 'rises' : 'sets'} at ${evT}` : `${name} next rise/set`);
 }
 
 async function setActiveTarget(target) {
@@ -759,7 +797,7 @@ function historyTr(e, absIdx) {
   const bodyIcon = e.body === 'Sun' ? '☀' : '🌙';
   const elDeg = e.payload?.candidate?.aircraftAtClosest?.elevationDeg;
   tr.innerHTML = `
-    ${visCell(elDeg, isArmed(e.icao, e.body, e.closest_at_ms))}
+    ${visCellNeutral(elDeg, isArmed(e.icao, e.body, e.closest_at_ms))}
     <td class="body-${e.body} td-icon" title="${e.body}">${bodyIcon}</td>
     <td class="stage-${e.stage}">${fmtDateTime(e.closest_at_ms)}</td>
     <td>${fmtDateTime(e.recorded_at_ms)}</td>
@@ -1503,7 +1541,7 @@ function isQualifyingLifecycle(entry) {
   return entryHasGeometry(entry);
 }
 
-// Visibility band of an entry (3=green ≥45°, 2=amber 30–45°, 1=red, 0=?) —
+// Visibility band of an entry (3=ideal ≥45°, 2=good 30–45°, 1=low, 0=?) —
 // same thresholds as the row dot / side view / notify gate.
 function visScore(entry) {
   const el = entry?.candidate?.aircraftAtClosest?.elevationDeg;
