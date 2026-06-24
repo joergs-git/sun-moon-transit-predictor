@@ -717,22 +717,39 @@ def _qr_url(url):
     return url
 
 
-def _draw_qr(draw, url):
-    """Draw a tiny QR of the data-source URL in the very bottom-right corner.
+def _draw_ap_banner(draw, ap):
+    """Bottom-left banner shown while the Pi hosts its off-road onboarding AP
+    (v0.51.0): the WiFi name + password to join. The QR to its right encodes the
+    same WIFI: payload, so a phone can join with one tap instead of typing."""
+    ssid = ap.get("ssid") or ""
+    pw = ap.get("password") or ""
+    by0 = HEIGHT - 40
+    bx1 = WIDTH - 40                 # stop short of the bottom-right QR
+    draw.rectangle((0, by0, bx1, HEIGHT - 1), fill=WHITE)
+    draw.rectangle((0, by0, bx1, HEIGHT - 1), outline=BLACK, width=1)
+    draw.text((3, by0 + 2), "WIFI AP — join to set up", font=_font(11, bold=True), fill=BLACK)
+    draw.text((3, by0 + 15), "SSID: %s" % ssid, font=_font(12, bold=True), fill=BLACK)
+    draw.text((3, by0 + 27), "Pass: %s   (scan QR →)" % pw, font=_font(12, bold=True), fill=BLACK)
 
-    As small as the data allows — one panel pixel per QR module (a ~24-char
-    `http://ip:port` URL is a 25×25-module code → ~25 px). A white quiet zone is
-    painted behind it so a phone can read it off the e-paper. No-op if the qrcode
-    lib is missing or no usable URL could be derived."""
+
+def _draw_qr(draw, data, is_wifi=False):
+    """Draw a tiny QR in the very bottom-right corner — by default the data-source
+    URL (so a phone opens the web UI), or, when `is_wifi`, a WIFI: join payload
+    passed through verbatim (one-tap join of the onboarding AP).
+
+    As small as the data allows — one panel pixel per QR module. A white quiet
+    zone is painted behind it so a phone can read it off the e-paper. No-op if the
+    qrcode lib is missing or no usable data could be derived."""
     if not _HAVE_QR:
         return
-    url = _qr_url(url)
-    if not url:
+    if not is_wifi:
+        data = _qr_url(data)
+    if not data:
         return
     try:
         qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L,
                            box_size=1, border=0)
-        qr.add_data(url)
+        qr.add_data(data)
         qr.make(fit=True)
         m = qr.get_matrix()
     except Exception:
@@ -770,7 +787,14 @@ def render_state(state, display_cfg=None, source_url=None):
     _header(draw, state)
     _primary(draw, state, pool[0] if pool else None)
     _sky_and_list(draw, state, pool)
-    _draw_qr(draw, source_url)
+    # Off-road AP mode (v0.51.0): when the Pi hosts its onboarding access point,
+    # overlay the join banner + a WiFi-join QR instead of the web-URL QR.
+    ap = state.get("wifiAp") or {}
+    if ap.get("active") and ap.get("qr"):
+        _draw_ap_banner(draw, ap)
+        _draw_qr(draw, ap["qr"], is_wifi=True)
+    else:
+        _draw_qr(draw, source_url)
     return img
 
 

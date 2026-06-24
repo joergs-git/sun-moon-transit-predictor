@@ -1188,6 +1188,7 @@ async function pollState() {
     // Refresh the armed-episode list BEFORE rendering the tables so the ⚡
     // markers reflect the latest tick.
     sharpcapArmedLog = Array.isArray(state.sharpcap?.armed) ? state.sharpcap.armed : [];
+    lastWifiAp = state.wifiAp ?? null;    // for the Settings → Network pane (v0.51.0)
     renderSky(state);
     renderActiveTarget(state);
     renderSkyPlan(state);
@@ -2552,6 +2553,7 @@ function activateSettingsTab(name, { focusTab = false } = {}) {
   // a single fieldset stays full width.
   const fieldsBox = settingsForm.querySelector('.settings-fields');
   if (fieldsBox) fieldsBox.classList.toggle('multi', visible > 1);
+  if (name === 'network') refreshWifiPane();
   try { localStorage.setItem(SETTINGS_TAB_KEY, name); } catch { /* private mode */ }
 }
 
@@ -2588,6 +2590,89 @@ function settingsFieldForError(errStr) {
   }
   return best;
 }
+
+// ---- Off-road WiFi onboarding (v0.51.0) -----------------------------------
+// HTML-escape — nearby SSID names are attacker-controllable, so they must never
+// be injected raw into innerHTML.
+function escHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+let lastWifiAp = null;   // mirror of state.wifiAp (set in pollState)
+const wifiEls = {
+  scanBtn: $('#wifi-scan-btn'), connectBtn: $('#wifi-connect-btn'),
+  list: $('#wifi-list'), join: $('#wifi-join'), ssid: $('#wifi-ssid'),
+  psk: $('#wifi-psk'), msg: $('#wifi-msg'), status: $('#wifi-status'),
+  apInfo: $('#wifi-ap-info'),
+};
+function wifiMsg(text, kind = '') {
+  if (wifiEls.msg) { wifiEls.msg.textContent = text; wifiEls.msg.className = `wifi-msg ${kind}`; }
+}
+function renderWifiAp(ap) {
+  if (!wifiEls.apInfo) return;
+  if (ap?.active && ap.ssid) {
+    wifiEls.apInfo.hidden = false;
+    wifiEls.apInfo.innerHTML = `📡 Access point active — SSID <b>${escHtml(ap.ssid)}</b>`
+      + `, password <b>${escHtml(ap.password ?? '')}</b>. Scan the QR on the e-paper to join, then pick a network below.`;
+  } else { wifiEls.apInfo.hidden = true; }
+}
+async function refreshWifiPane() {
+  if (!wifiEls.status) return;
+  renderWifiAp(lastWifiAp);
+  try {
+    const r = await fetch('/api/wifi/status');
+    if (r.status === 404) {
+      wifiEls.status.textContent = 'WiFi control is available on the Pi only (install with --with-wifi-ap).';
+      if (wifiEls.scanBtn) wifiEls.scanBtn.disabled = true;
+      return;
+    }
+    const s = await r.json();
+    if (wifiEls.scanBtn) wifiEls.scanBtn.disabled = false;
+    wifiEls.status.textContent = s.mode === 'client' ? `✓ Connected: ${s.ssid ?? ''}`
+      : s.mode === 'ap' ? `📡 Hosting access point ${s.ap?.ssid ?? ''}`
+      : s.mode === 'offline' ? 'Offline — host AP or scan to join a network'
+      : '';
+  } catch { wifiEls.status.textContent = ''; }
+}
+async function scanWifi() {
+  wifiMsg('Scanning…');
+  try {
+    const r = await fetch('/api/wifi/scan', { method: 'POST' });
+    const b = await r.json();
+    if (!r.ok) throw new Error(b.error ?? r.status);
+    wifiEls.list.innerHTML = (b.networks ?? []).map((n) =>
+      `<li class="wifi-item" data-ssid="${escHtml(n.ssid)}" data-secured="${n.secured ? 'true' : 'false'}">`
+      + `<span class="wifi-ssid">${escHtml(n.ssid)}</span>`
+      + `<span class="wifi-meta">${n.secured ? '🔒' : '📶'} ${Number.isFinite(n.signal) ? n.signal + '%' : '–'}`
+      + `${n.active ? ' · connected' : ''}</span></li>`).join('');
+    wifiMsg((b.networks ?? []).length ? '' : 'No networks found — try again.');
+  } catch (e) { wifiMsg(`Scan failed: ${e.message ?? e}`, 'err'); }
+}
+async function connectWifi() {
+  const ssid = wifiEls.ssid.value.trim();
+  if (!ssid) { wifiMsg('Pick or type a network first.', 'err'); return; }
+  wifiMsg(`Requesting join to "${ssid}"…`);
+  try {
+    const r = await fetch('/api/wifi/connect', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ssid, psk: wifiEls.psk.value }),
+    });
+    const b = await r.json();
+    if (!r.ok || b.ok === false) throw new Error(b.error ?? r.status);
+    wifiEls.psk.value = '';
+    wifiMsg(`${b.message ?? 'Join requested'} — the Pi will switch networks; if you were on its access point, reconnect to the new one.`, 'ok');
+  } catch (e) { wifiMsg(`Join failed: ${e.message ?? e}`, 'err'); }
+}
+wifiEls.list?.addEventListener('click', (ev) => {
+  const li = ev.target.closest('.wifi-item');
+  if (!li) return;
+  wifiEls.ssid.value = li.dataset.ssid;
+  wifiEls.psk.value = '';
+  wifiEls.join.hidden = false;
+  (li.dataset.secured === 'true' ? wifiEls.psk : wifiEls.connectBtn)?.focus();
+});
+wifiEls.scanBtn?.addEventListener('click', scanWifi);
+wifiEls.connectBtn?.addEventListener('click', connectWifi);
 
 // Initial consistent state (modal is hidden, but keep the DOM coherent).
 activateSettingsTab('general');

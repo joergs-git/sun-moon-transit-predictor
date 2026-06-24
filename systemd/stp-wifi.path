@@ -1,0 +1,16 @@
+[Unit]
+Description=Watch for a web-UI WiFi join request and run stp-wifi.service
+Documentation=https://github.com/joergs-git/sun-moon-transit-predictor
+
+[Path]
+# The stp.service web endpoint (POST /api/wifi/connect) drops this file with the
+# chosen { ssid, psk } — it never runs nmcli itself. systemd watches the path
+# and fires the privileged (root) stp-wifi.service, so the unauthenticated LAN
+# HTTP layer gains no nmcli/sudo of its own — same trust boundary as the
+# click-to-update path. wifi-apply.sh deletes the file on start, clearing this
+# PathExists= so it does not re-fire in a loop.
+PathExists=__INSTALL_DIR__/data/wifi-connect.request
+Unit=stp-wifi.service
+
+[Install]
+WantedBy=multi-user.target

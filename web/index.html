@@ -642,6 +642,7 @@
           <button type="button" class="settings-tab" role="tab" data-tab="data" aria-selected="false" tabindex="-1">Data</button>
           <button type="button" class="settings-tab" role="tab" data-tab="sky" aria-selected="false" tabindex="-1">Sky targets</button>
           <button type="button" class="settings-tab" role="tab" data-tab="catalog" aria-selected="false" tabindex="-1">Catalog</button>
+          <button type="button" class="settings-tab" role="tab" data-tab="network" aria-selected="false" tabindex="-1">Network</button>
         </div>
         <div class="settings-fields">
         <fieldset data-tab="general">
@@ -987,6 +988,25 @@
             </div>
             <div id="catalog-rows"></div>
             <button type="button" id="catalog-add" class="btn">+ Add object</button>
+          </div>
+        </fieldset>
+
+        <fieldset data-tab="network">
+          <legend>WiFi / Network (off-road)</legend>
+          <small class="field-hint">Zero-terminal onboarding. If the Pi finds no saved WiFi in range it hosts its own access point — join it from a phone/iPad (scan the QR on the e-paper), open this page, then pick a real network below. Connecting saves it, so next time the Pi joins it automatically. Available on the Pi only (enable with <code>--with-wifi-ap</code> at install).</small>
+          <div id="wifi-pane" class="wifi-pane">
+            <div id="wifi-ap-info" class="wifi-ap-info" hidden></div>
+            <div class="wifi-actions">
+              <button type="button" id="wifi-scan-btn" class="btn">↻ Scan networks</button>
+              <span id="wifi-status" class="wifi-status"></span>
+            </div>
+            <ul id="wifi-list" class="wifi-list"></ul>
+            <div class="wifi-join" id="wifi-join" hidden>
+              <label>Network <input type="text" id="wifi-ssid" autocomplete="off" spellcheck="false"></label>
+              <label>Password <input type="password" id="wifi-psk" autocomplete="off"></label>
+              <button type="button" id="wifi-connect-btn" class="btn btn-primary">Join</button>
+            </div>
+            <p id="wifi-msg" class="wifi-msg"></p>
           </div>
         </fieldset>
 

@@ -54,6 +54,10 @@ ENABLE_AUTO_UPDATE=1
 # Optional e-paper panel: off by default (minority hardware). Opt in with
 # --with-display, or STP_WITH_DISPLAY=1 for non-interactive/bootstrap runs.
 WITH_DISPLAY="${STP_WITH_DISPLAY:-0}"
+# Off-road WiFi failover AP (v0.51.0). Opt-in: it installs NetworkManager and a
+# failover AP, which changes the network stack — never do that to a working
+# remote box implicitly. STP_WITH_WIFI_AP=1 for non-interactive runs.
+WITH_WIFI_AP="${STP_WITH_WIFI_AP:-0}"
 
 for arg in "$@"; do
   case "$arg" in
@@ -61,6 +65,7 @@ for arg in "$@"; do
     --non-interactive)   NONINTERACTIVE=1 ;;
     --no-auto-update)    ENABLE_AUTO_UPDATE=0 ;;
     --with-display)      WITH_DISPLAY=1 ;;
+    --with-wifi-ap)      WITH_WIFI_AP=1 ;;
     -h|--help)           sed -n '2,36p' "$0"; exit 0 ;;
     *) echo "Unknown arg: $arg" >&2; exit 2 ;;
   esac
@@ -85,6 +90,7 @@ log "Target user:    $TARGET_USER"
 log "Mode:           $( [ "$NONINTERACTIVE" -eq 1 ] && echo non-interactive || echo interactive )"
 log "Auto-update:    $( [ "$ENABLE_AUTO_UPDATE" -eq 1 ] && echo enabled || echo disabled )"
 log "E-paper panel:  $( [ "$WITH_DISPLAY" -eq 1 ] && echo "setup (--with-display)" || echo "skipped (use --with-display)" )"
+log "WiFi AP:        $( [ "$WITH_WIFI_AP" -eq 1 ] && echo "setup (--with-wifi-ap)" || echo "skipped (use --with-wifi-ap)" )"
 
 # ---------------------------------------------------------------------------
 # 1. Node.js >= 22
@@ -324,6 +330,59 @@ if [ "$WITH_DISPLAY" -eq 1 ]; then
   log "then enable the panel in the web UI: Settings > E-paper display > Enabled."
 else
   log "Skipping e-paper display setup (pass --with-display to set it up)."
+fi
+
+# ---------------------------------------------------------------------------
+# 5d. Optional off-road WiFi failover AP (only with --with-wifi-ap /
+#     STP_WITH_WIFI_AP=1). Installs NetworkManager, a self-hosted AP profile,
+#     and the failover + privileged-join units, so the box stays reachable in
+#     the field with no terminal. Opt-in because it changes the network stack.
+# ---------------------------------------------------------------------------
+if [ "$WITH_WIFI_AP" -eq 1 ]; then
+  log "Setting up off-road WiFi failover AP (--with-wifi-ap) ..."
+  if ! command -v nmcli >/dev/null 2>&1; then
+    log "Installing NetworkManager ..."
+    sudo_run apt-get install -y network-manager || log "WARN: network-manager install failed"
+  fi
+  sudo_run systemctl enable --now NetworkManager || log "WARN: could not enable NetworkManager"
+
+  AP_SSID="${STP_AP_SSID:-sunmoontransits}"
+  # Device-unique, readable password via the SAME code the app shows on screen.
+  AP_PASS="$(cd "$REPO_DIR" && node -e 'import("./src/wifi.js").then(m=>console.log(m.deriveApCredentials({serial:m.readMachineSerial()}).password)).catch(()=>process.exit(1))' 2>/dev/null || true)"
+  if [ -z "$AP_PASS" ]; then AP_PASS="sunmoon12"; log "WARN: password derivation failed — using a weak fallback; change it in Settings"; fi
+
+  # Idempotent AP profile: shared IPv4 (DHCP+gateway 10.42.0.1), WPA2.
+  if nmcli -t -f NAME connection show 2>/dev/null | grep -qx "$AP_SSID"; then
+    sudo_run nmcli connection modify "$AP_SSID" wifi-sec.psk "$AP_PASS" || true
+  else
+    sudo_run nmcli connection add type wifi ifname wlan0 con-name "$AP_SSID" autoconnect no \
+      ssid "$AP_SSID" 802-11-wireless.mode ap 802-11-wireless.band bg ipv4.method shared \
+      wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$AP_PASS" \
+      || log "WARN: AP profile create failed (check the WiFi device name)"
+  fi
+
+  # Turn the feature on in config + record the credentials the app surfaces.
+  ( cd "$REPO_DIR" && AP_SSID="$AP_SSID" AP_PASS="$AP_PASS" node --input-type=module -e \
+    'import fs from "node:fs";const f="./config/service.json";let c={};try{c=JSON.parse(fs.readFileSync(f))}catch{};c.wifi={...(c.wifi||{}),enabled:true,apSsid:process.env.AP_SSID,apPassword:process.env.AP_PASS};fs.writeFileSync(f,JSON.stringify(c,null,2));' ) \
+    || log "WARN: could not write wifi config — enable it in Settings > Network"
+
+  # Install the three units (trigger .path, privileged join, failover monitor).
+  for u in stp-wifi.path stp-wifi.service stp-wifi-failover.service; do
+    TMP_WIFI="$(mktemp)"
+    sed -e "s|__USER__|$TARGET_USER|g" -e "s|__INSTALL_DIR__|$REPO_DIR|g" -e "s|__AP_SSID__|$AP_SSID|g" \
+      "$REPO_DIR/systemd/$u" > "$TMP_WIFI"
+    sudo_run install -m 0644 "$TMP_WIFI" "/etc/systemd/system/$u"
+    rm -f "$TMP_WIFI"
+  done
+  sudo_run systemctl daemon-reload
+  sudo_run systemctl enable --now stp-wifi.path || true
+  sudo_run systemctl enable --now stp-wifi-failover.service || true
+  sudo_run systemctl restart stp.service || true   # pick up the new wifi config
+
+  log "WiFi failover AP ready. SSID '$AP_SSID', password '$AP_PASS' (also on the e-paper)."
+  log "Off-road: if no home WiFi is found it hosts '$AP_SSID' → join it, open http://10.42.0.1:8081, scan + connect."
+else
+  log "Skipping WiFi failover AP (pass --with-wifi-ap to set it up)."
 fi
 
 # ---------------------------------------------------------------------------

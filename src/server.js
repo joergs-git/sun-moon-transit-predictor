@@ -129,6 +129,7 @@ export function createHttpServer(opts) {
     port, host = '0.0.0.0', getState, store, webRoot,
     getConfig, updateConfig, requestUpdate, requestAcInfo, requestRoute,
     requestSharpcapTest, requestBuzzerTest, setActiveTarget, getNextOpportunity,
+    requestWifiScan, requestWifiConnect, requestWifiStatus,
   } = opts;
 
   const server = createServer(async (req, res) => {
@@ -334,6 +335,38 @@ export function createHttpServer(opts) {
           return jsonResponse(res, result.ok ? 200 : 400, result);
         } catch (e) {
           return jsonResponse(res, 500, { error: String(e?.message ?? e) });
+        }
+      }
+      // Off-road WiFi onboarding (v0.51.0). Scan + status are read-only nmcli
+      // reads; connect only DROPS A TRIGGER FILE that the privileged stp-wifi
+      // .path unit consumes — the HTTP layer never runs a privileged nmcli (same
+      // trust boundary as /api/update).
+      if (url.pathname === '/api/wifi/scan' && (req.method === 'POST' || req.method === 'GET')) {
+        if (!requestWifiScan) return jsonResponse(res, 404, { error: 'wifi api disabled' });
+        try {
+          return jsonResponse(res, 200, { networks: await requestWifiScan() });
+        } catch (e) {
+          return jsonResponse(res, 500, { error: String(e?.message ?? e) });
+        }
+      }
+      if (url.pathname === '/api/wifi/status' && req.method === 'GET') {
+        if (!requestWifiStatus) return jsonResponse(res, 404, { error: 'wifi api disabled' });
+        try {
+          return jsonResponse(res, 200, await requestWifiStatus());
+        } catch (e) {
+          return jsonResponse(res, 500, { error: String(e?.message ?? e) });
+        }
+      }
+      if (url.pathname === '/api/wifi/connect' && req.method === 'POST') {
+        if (!requestWifiConnect) return jsonResponse(res, 404, { error: 'wifi api disabled' });
+        let body;
+        try { body = await readJsonBody(req); }
+        catch (e) { return jsonResponse(res, 400, { error: `bad json: ${e.message}` }); }
+        try {
+          const result = await requestWifiConnect(body?.ssid, body?.psk ?? body?.password);
+          return jsonResponse(res, result.ok ? 200 : 400, result);
+        } catch (e) {
+          return jsonResponse(res, 400, { error: String(e?.message ?? e) });
         }
       }
       if (url.pathname === '/api/sky-next-opportunity' && req.method === 'GET') {
