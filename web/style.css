@@ -1397,7 +1397,7 @@ a.acstats-label.hex-link:hover { text-decoration: underline; }
      body · elevation · ⌀ diameter · ↥ meridian · next rise/set */
 .active-target-sky {
   display: grid;
-  grid-template-columns: auto 3.4em 4.7em 4.4em 4.4em;
+  grid-template-columns: auto 5.8em 4.7em 4.4em 4.4em;
   column-gap: 8px;
   row-gap: 0;
   align-items: center;
@@ -1407,7 +1407,7 @@ a.acstats-label.hex-link:hover { text-decoration: underline; }
   line-height: 1.3;
 }
 .active-target-sky .ats-icon { text-align: center; }
-.active-target-sky .ats-el,
+.active-target-sky .ats-azel,
 .active-target-sky .ats-dia,
 .active-target-sky .ats-mer,
 .active-target-sky .ats-evt { text-align: right; white-space: nowrap; }
@@ -1493,18 +1493,10 @@ a.acstats-label.hex-link:hover { text-decoration: underline; }
 .appulse-table td { padding: 5px 10px; }
 .appulse-planet { color: var(--accent); white-space: nowrap; }
 
-/* ===== Sky now header line + unified Sky-plan cells (v0.39.0) ============ */
-.sky-line {
-  font-size: 11.5px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  display: flex;
-  gap: 5px;
-  flex-wrap: wrap;
-  margin-top: 2px;
-}
-.sky-line .sky-ok { color: var(--ok); }
-.sky-line .sky-sep { color: var(--line); }
+/* ===== Unified Sky-plan cells (v0.39.0) ================================= */
+/* (The old #sky-line Sun/Moon Az·El header line was removed in v0.51.1 — the
+   active-target readout next to the pulldown now shows az/el + diameter +
+   meridian + rise/set.) */
 .skyplan-detail { color: var(--muted); font-size: 11.5px; }
 .skyplan-tentative { color: var(--accent); }
 .skyplan-vis { color: var(--muted); font-style: italic; }

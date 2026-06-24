@@ -302,21 +302,6 @@ function statsLabelLink(key, kind, tooltip) {
   return `<span class="acstats-label flight-cell" ${attr} title="${tip.trim()}">${up}</span>`;
 }
 
-// Sky now — Sun/Moon Az·El as a compact header one-liner (was a table block).
-function renderSky(state) {
-  const line = $('#sky-line');
-  if (!line) return;
-  if (!state.bodies) { line.innerHTML = ''; return; }
-  const parts = [];
-  for (const [name, body] of Object.entries(state.bodies)) {
-    if (!body) continue;
-    const icon = name === 'Sun' ? '☀' : name === 'Moon' ? '🌙' : name;
-    const ok = body.observable ? '✓' : '✗';
-    parts.push(`<span class="body-${name}">${icon} ${body.azimuthDeg.toFixed(0)}°/${body.elevationDeg.toFixed(0)}° <span class="sky-ok">${ok}</span></span>`);
-  }
-  line.innerHTML = parts.join('<span class="sky-sep"> · </span>');
-}
-
 // Sky-target plan confidence badge (mirrors src/skyplan.js confidenceFor).
 const CONFIDENCE_BADGE = {
   green:  { dot: '🟢', label: 'sure',      tip: 'TLE fresh at the event (< 1 d) — reliable.' },
@@ -379,21 +364,23 @@ function hhmm(ms) {
 // One body's row in the header Sun/Moon grid — exactly five cells so it fills
 // one grid row with the others' columns aligned. Every cell is always emitted
 // (a missing value shows '—') so the layout never shifts or loses a field.
-//   ☀  +57°  ⌀0.53°  ↥13:12  ↓21:34
-//   🌙  −4°   ⌀0.50°  ↥02:18  ↑22:07
+//   ☀  224°/+57°  ⌀0.53°  ↥13:12  ↓21:34
+//   🌙  100°/−4°   ⌀0.50°  ↥02:18  ↑22:07
 function bodySkyRow(name, body) {
   const icon = name === 'Sun' ? '☀' : name === 'Moon' ? '🌙' : name;
   const cell = (cls, html, title) =>
     `<span class="${cls}"${title ? ` title="${title}"` : ''}>${html}</span>`;
+  const az = (body && Number.isFinite(body.azimuthDeg)) ? `${Math.round(body.azimuthDeg)}°` : '—';
   const el = (body && Number.isFinite(body.elevationDeg))
     ? `${body.elevationDeg >= 0 ? '+' : '−'}${Math.abs(Math.round(body.elevationDeg))}°` : '—';
+  const azel = (az === '—' && el === '—') ? '—' : `${az}/${el}`;   // azimuth / elevation now
   const dia = (body && Number.isFinite(body.apparentDiameterDeg))
     ? `⌀${body.apparentDiameterDeg.toFixed(2)}°` : '—';
   const merT = body ? hhmm(body.meridianAtMs) : null;
   const e = body?.nextEvent;
   const evT = e ? hhmm(e.atMs) : null;
   return cell(`ats-icon body-${name}`, icon, name)
-    + cell('ats-el', el, `${name} elevation now`)
+    + cell('ats-azel', azel, `${name} azimuth / elevation now`)
     + cell('ats-dia', dia, `${name} apparent disc diameter (live, from range) — the FOV the disc fills`)
     + cell('ats-mer', merT ? `↥${merT}` : '—',
       merT ? `${name} meridian transit — highest, due south, at ${merT}` : `${name} meridian transit`)
@@ -1189,7 +1176,6 @@ async function pollState() {
     // markers reflect the latest tick.
     sharpcapArmedLog = Array.isArray(state.sharpcap?.armed) ? state.sharpcap.armed : [];
     lastWifiAp = state.wifiAp ?? null;    // for the Settings → Network pane (v0.51.0)
-    renderSky(state);
     renderActiveTarget(state);
     renderSkyPlan(state);
     renderAppulses(state);
