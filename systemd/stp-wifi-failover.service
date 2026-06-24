@@ -1,0 +1,21 @@
+[Unit]
+Description=Sun-Moon Transit Predictor — WiFi failover access point (off-road)
+Documentation=https://github.com/joergs-git/sun-moon-transit-predictor
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+# Long-running monitor: when no saved home WiFi is in range, bring up the
+# self-hosted AP (the pre-created `__AP_SSID__` profile) so the web UI stays
+# reachable in the field; tear it back down once a real network connects. Root,
+# because it activates/deactivates NetworkManager connection profiles.
+Type=simple
+User=root
+ExecStart=/usr/bin/bash __INSTALL_DIR__/scripts/wifi-failover.sh __AP_SSID__
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

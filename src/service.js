@@ -43,6 +43,10 @@ import {
   skyTargetToTransitCandidate,
 } from './iss.js';
 import { buildSkyTargetPlan, CONFIDENCE_RANK } from './skyplan.js';
+import {
+  readMachineSerial, deriveApCredentials, wifiQrPayload,
+  scanNetworks, getWifiStatus, requestConnect as wifiRequestConnect,
+} from './wifi.js';
 import { DEFAULT_SKY_TARGETS } from './skycatalog.js';
 
 export const DEFAULT_CONFIG = {
@@ -282,6 +286,25 @@ export const DEFAULT_CONFIG = {
     // refresh entirely when nothing changed. The periodic full refresh still
     // clears any localised ghosting. Opt-in (panel-dependent).
     regionPartial: false,
+  },
+  // Off-road WiFi onboarding (v0.51.0). When the Pi finds no saved home WiFi in
+  // range, a failover unit hosts its own access point (`apSsid`) so the web UI
+  // stays reachable from a phone/iPad with no terminal. From there the user
+  // scans + joins a real network. The password is left blank here and derived
+  // device-uniquely from the Pi serial at runtime (printed on the e-paper);
+  // set a fixed string to override. `triggerPath` is the file the privileged
+  // stp-wifi.path unit watches for a join request (read-only HTTP never runs a
+  // privileged nmcli itself — same boundary as update.triggerPath).
+  wifi: {
+    enabled: false,
+    apSsid: 'sunmoontransits',
+    apPassword: '',
+    // Join-request trigger file. The service (as the unprivileged user) writes
+    // it; the root-owned stp-wifi.path unit observes it and runs the actual
+    // nmcli join, then deletes it — same boundary + data/ location as
+    // update.triggerPath, so the file is user-writable and root-readable.
+    triggerPath: './data/wifi-connect.request',
+    statusPollMs: 15000,
   },
   // Piezo buzzer audio alerts (display/buzzer.py on the same Pi as the e-paper
   // client; wired between a GPIO pin and GND). Like `display`, these knobs are
@@ -1177,6 +1200,17 @@ export async function runService({
   // re-using them between recomputes is correct; the lifecycle ages them out.
   let skyTargetCandidates = [];
   let lastSkyComputeMs = 0;
+  // WiFi onboarding (v0.51.0): device-unique AP credentials (the password is
+  // derived from the Pi serial unless config pins one) + the WiFi-join QR
+  // payload + a slow-polled nmcli link-state cache exposed to the UI/e-paper.
+  const apCreds = (() => {
+    const ssid = config.wifi?.apSsid || 'sunmoontransits';
+    const password = config.wifi?.apPassword
+      || deriveApCredentials({ serial: readMachineSerial(), ssid }).password;
+    return { ssid, password, qr: wifiQrPayload({ ssid, password }) };
+  })();
+  let wifiStatusCache = { mode: 'unknown', ssid: null };
+  let lastWifiPollMs = 0;
   // Sun/Moon next rise/set cache (v0.50.0) — recomputed only when the cached event
   // has passed (rise/set times barely move tick-to-tick), so the 24 h scan
   // doesn't run twice a second. Keyed by body → { kind, atMs }.
@@ -2223,6 +2257,17 @@ export async function runService({
       nextOpportunityCache = computeNextOpportunity();
       return { ...nextOpportunityCache, cached: false };
     },
+    // WiFi onboarding (v0.51.0). Scan/status are read-only nmcli reads; connect
+    // only drops the trigger file the privileged stp-wifi.path unit consumes.
+    // Disabled (404) unless config.wifi.enabled, so a non-Pi host never offers it.
+    requestWifiScan: config.wifi?.enabled
+      ? () => scanNetworks({ apProfile: apCreds.ssid }) : null,
+    requestWifiStatus: config.wifi?.enabled ? async () => {
+      const st = await getWifiStatus({ apProfile: apCreds.ssid });
+      return { ...st, ap: { ssid: apCreds.ssid } };   // never expose the AP psk here
+    } : null,
+    requestWifiConnect: config.wifi?.enabled ? (ssid, psk) =>
+      wifiRequestConnect({ ssid, psk, triggerPath: config.wifi.triggerPath }) : null,
   });
   if (httpServer) await httpServer.start();
 
@@ -2301,6 +2346,31 @@ export async function runService({
     // banner ("Sun/Moon below the observable limit") can quote the
     // real number instead of a hardcoded 20°.
     state.observabilityMinElevDeg = effectiveMinBodyElevDeg;
+
+    // WiFi onboarding status (v0.51.0): poll nmcli on a slow cadence (default
+    // 15 s — the link state barely changes) and surface it + the AP credentials
+    // and join-QR so the web UI and e-paper can show "AP mode → scan to join".
+    // Wrapped so a missing nmcli (dev box) or any error never disturbs the tick.
+    if (config.wifi?.enabled) {
+      if (nowMs - lastWifiPollMs >= (config.wifi.statusPollMs ?? 15000)) {
+        lastWifiPollMs = nowMs;
+        try {
+          wifiStatusCache = await getWifiStatus({ apProfile: apCreds.ssid });
+        } catch { wifiStatusCache = { mode: 'unknown', ssid: null }; }
+      }
+      const apActive = wifiStatusCache.mode === 'ap';
+      state.wifiAp = {
+        enabled: true,
+        mode: wifiStatusCache.mode,                 // 'ap' | 'client' | 'offline' | 'unknown'
+        active: apActive,                           // hosting the AP right now
+        ssid: apActive ? apCreds.ssid : null,       // AP name (only while hosting)
+        password: apActive ? apCreds.password : null,
+        qr: apActive ? apCreds.qr : null,           // WIFI: join payload for the QR
+        connectedSsid: wifiStatusCache.mode === 'client' ? wifiStatusCache.ssid : null,
+      };
+    } else {
+      state.wifiAp = { enabled: false };
+    }
 
     let aircraft = [];
     try {

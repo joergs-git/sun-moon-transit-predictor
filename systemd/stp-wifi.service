@@ -1,0 +1,19 @@
+[Unit]
+Description=Sun-Moon Transit Predictor — apply a web-requested WiFi join (nmcli)
+Documentation=https://github.com/joergs-git/sun-moon-transit-predictor
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+# Runs as root: joining a network with nmcli creates a system connection profile
+# and switches the radio. The web layer only drops the trigger file (above); this
+# unit is the single privileged step, kept tiny + auditable in wifi-apply.sh.
+User=root
+WorkingDirectory=__INSTALL_DIR__
+ExecStart=/usr/bin/bash __INSTALL_DIR__/scripts/wifi-apply.sh __INSTALL_DIR__/data/wifi-connect.request
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
