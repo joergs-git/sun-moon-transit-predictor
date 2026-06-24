@@ -299,6 +299,9 @@ export function fromLifecycleEntry(entry) {
     destination: route?.destination?.iata ?? route?.destination?.icao ?? null,
     icao: entry.icao ?? null,
     isISS: c.isISS === true || c.aircraft?.typeCode === 'ISS',
+    // Sky-target pass (v0.50.0): the disc is the framed object, sized by its own
+    // apparent diameter rather than the Sun/Moon default.
+    bodyDiameterDeg: Number.isFinite(c.objectDiameterDeg) ? c.objectDiameterDeg : null,
     ...dimsFromType(c.aircraft?.typeCode),
     transitPath: Array.isArray(c.transitPath) ? c.transitPath : [],
     initialAircraftAt,
@@ -681,7 +684,12 @@ export function buildSketchSvg(d) {
   const innerH = SVG_H - HEADER_H - FOOTER_H - 2 * PAD;
 
   // Body disc — sized first because the widget scale is built around it.
-  const bodyDiameterDeg = BODY_DIAMETER_DEG[d.body] ?? 0.53;
+  // Disc size: an explicit per-target diameter (sky-targets carry the framed
+  // object's apparent size — planets tiny, DSOs degrees) wins; else the Sun/Moon
+  // table; else a sensible default. Floored so a point-like planet still draws.
+  const bodyDiameterDeg = Number.isFinite(d.bodyDiameterDeg) && d.bodyDiameterDeg > 0
+    ? d.bodyDiameterDeg
+    : (BODY_DIAMETER_DEG[d.body] ?? 0.53);
   const bodyFill = d.body === 'Sun' ? COLOURS.Sun : COLOURS.Moon;
   const bodyRim  = d.body === 'Sun' ? COLOURS.SunRim : COLOURS.MoonRim;
 

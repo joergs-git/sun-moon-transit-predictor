@@ -517,6 +517,71 @@ function buildSkyTargetCandidate(
 }
 
 /**
+ * Adapt a sky-target candidate (from {@link predictSkyTargetTransits}) into the
+ * SAME shape the aircraft/ISS pipeline uses, so a satellite × Venus/Mars/DSO
+ * pass can ride the lifecycle, the FOV sketch, the live list and the buzzer with
+ * NO special-casing downstream (v0.50.0). The satellite plays the "aircraft" role,
+ * the framed object plays the "body" role.
+ *
+ * Deliberately a DISPLAY/lifecycle adapter only — these candidates are fed to
+ * the lifecycle but NOT to the SharpCap arming list, so sky-targets never
+ * auto-arm a rig (arming stays gated on the active target; see service.js).
+ *
+ * `level` mirrors the aircraft semantics: a true through-the-object transit is a
+ * 'candidate' (it shows as a real candidate + drives the buzzer/counter), a
+ * looser within-the-field pass is 'radio' (visible, but not a "real candidate").
+ *
+ * @param {object} c A sky-target candidate from predictSkyTargetTransits.
+ * @returns {object} An aircraft/ISS-shaped candidate (body = the sky object).
+ */
+export function skyTargetToTransitCandidate(c) {
+  return {
+    icao: c.satTag,
+    callsign: c.satName,
+    body: c.targetName ?? c.body,
+    level: c.throughObject ? 'candidate' : 'radio',
+    isISS: true,                 // orbiting satellite → 🛰 glyph + elevation-gate exemption
+    isSky: true,                 // NEW: "the body is a sky target, not Sun/Moon"
+    source: 'skyTarget',
+    kind: c.kind,
+    targetId: c.targetId,
+    closestApproachAtMs: c.closestApproachAtMs,
+    closestApproachSepDeg: c.closestApproachSepDeg,
+    entersAtMs: c.entersFieldAtMs,
+    leavesAtMs: c.leavesFieldAtMs,
+    durationMs: c.timeInFieldMs,
+    // Disc size for the FOV sketch — the framed object's apparent diameter
+    // (planets tiny, DSOs degrees) instead of the Sun/Moon default.
+    objectDiameterDeg: c.objectDiameterDeg ?? null,
+    aircraftAtClosest: c.satAtClosest,
+    bodyAtClosest: c.targetAtClosest,
+    aircraft: {
+      icao: c.satTag,
+      callsign: c.satName,
+      altMmsl: null,
+      groundSpeedMs: c.satAtClosest && c.angularRateDegPerSec
+        ? (c.angularRateDegPerSec * Math.PI / 180) * c.satAtClosest.rangeM
+        : null,
+      trackDeg: null,
+      typeCode: c.satTag,
+      registration: null,
+      typeDesc: c.satTypeDesc ?? null,
+      verticalRateMs: 0,
+    },
+    // Remap the object-centred path to the aircraft/body field names the sketch
+    // expects (aircraft = satellite, body = the framed object).
+    transitPath: Array.isArray(c.transitPath)
+      ? c.transitPath.map((p) => ({
+        tOffsetMs: p.tOffsetMs,
+        aircraftAz: p.satAz, aircraftEl: p.satEl,
+        bodyAz: p.targetAz, bodyEl: p.targetEl,
+      }))
+      : [],
+    route: null,
+  };
+}
+
+/**
  * Next *visible* ISS pass for the observer: the station climbs above
  * `minElevationDeg`, the sky is dark enough (Sun below `sunBelowDeg`, i.e.
  * after dusk / before dawn) and the ISS itself is sunlit (not in Earth's

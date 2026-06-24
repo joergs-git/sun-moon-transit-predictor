@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   loadIssTle, predictIssTransits, predictSkyTargetTransits, nextIssVisiblePass,
+  skyTargetToTransitCandidate,
 } from '../src/iss.js';
 import { observerEcef, targetEcefAzEl } from '../src/geometry.js';
+import { fromLifecycleEntry, buildSketchSvg } from '../web/sketch.js';
 
 // A valid, well-formed ISS (ZARYA) element set. SGP4 correctness itself is
 // gated by the official 88888 verification vectors in sgp4.test.js — here we
@@ -211,5 +213,68 @@ describe('nextIssVisiblePass', () => {
       expect(pass.startAzDeg).toBeGreaterThanOrEqual(0);
       expect(pass.startAzDeg).toBeLessThan(360);
     }
+  });
+});
+
+describe('skyTargetToTransitCandidate (M84 — sky-targets as candidates)', () => {
+  // A representative sky-target candidate as predictSkyTargetTransits emits it.
+  const skyCand = {
+    satTag: 'ISS', satName: 'ISS', satTypeDesc: 'Space station',
+    isISS: true, source: 'skyTarget',
+    targetId: 'm42', targetName: 'M42', body: 'M42',
+    kind: 'transit', throughObject: true,
+    closestApproachAtMs: 1_700_000_000_000,
+    closestApproachSepDeg: 0.12, missArcmin: 7.2,
+    objectDiameterDeg: 1.0, angularRateDegPerSec: 0.7,
+    entersFieldAtMs: 1_699_999_998_000, leavesFieldAtMs: 1_700_000_002_000,
+    timeInFieldMs: 4000,
+    satAtClosest: { azimuthDeg: 130, elevationDeg: 42, rangeM: 520000 },
+    targetAtClosest: { azimuthDeg: 130.1, elevationDeg: 42.05 },
+    transitPath: [
+      { tOffsetMs: -100, satAz: 129.9, satEl: 41.9, targetAz: 130.1, targetEl: 42.05 },
+      { tOffsetMs: 0, satAz: 130.0, satEl: 42.0, targetAz: 130.1, targetEl: 42.05 },
+      { tOffsetMs: 100, satAz: 130.1, satEl: 42.1, targetAz: 130.1, targetEl: 42.05 },
+    ],
+  };
+
+  it('maps a through-object pass to an aircraft/ISS-shaped candidate at level=candidate', () => {
+    const c = skyTargetToTransitCandidate(skyCand);
+    expect(c.icao).toBe('ISS');
+    expect(c.body).toBe('M42');          // the framed object plays the "body" role
+    expect(c.isISS).toBe(true);          // 🛰 glyph + elevation-gate exemption
+    expect(c.isSky).toBe(true);          // distinguishes sky-targets downstream
+    expect(c.level).toBe('candidate');   // through-object → real candidate
+    expect(c.closestApproachSepDeg).toBe(0.12);
+    expect(c.objectDiameterDeg).toBe(1.0);
+    // The satellite is the "aircraft", the object is the "body".
+    expect(c.aircraftAtClosest).toEqual(skyCand.satAtClosest);
+    expect(c.bodyAtClosest).toEqual(skyCand.targetAtClosest);
+    // The path is remapped to the aircraft/body field names the sketch reads.
+    expect(c.transitPath[1]).toMatchObject({
+      tOffsetMs: 0, aircraftAz: 130.0, aircraftEl: 42.0, bodyAz: 130.1, bodyEl: 42.05,
+    });
+  });
+
+  it('a within-field (not through-object) pass is level=radio, not a real candidate', () => {
+    const fieldPass = { ...skyCand, kind: 'field', throughObject: false, closestApproachSepDeg: 0.4 };
+    expect(skyTargetToTransitCandidate(fieldPass).level).toBe('radio');
+  });
+
+  it('the adapted candidate renders a FOV sketch with its own disc diameter', () => {
+    const c = skyTargetToTransitCandidate(skyCand);
+    // Shape it like a lifecycle entry (the live-list source the FOV pane uses).
+    const entry = {
+      body: c.body, icao: c.icao, flight: c.callsign, callsign: c.callsign,
+      closestApproachAtMs: c.closestApproachAtMs,
+      closestApproachSepDeg: c.closestApproachSepDeg,
+      candidate: c,
+    };
+    const input = fromLifecycleEntry(entry);
+    expect(input).not.toBeNull();
+    expect(input.bodyDiameterDeg).toBe(1.0);   // the sky-target's apparent size
+    expect(input.isISS).toBe(true);
+    const svg = buildSketchSvg({ ...input, obsLat: 52.28 });
+    expect(svg.startsWith('<svg')).toBe(true);
+    expect(svg).toContain('M42');              // the framed object label
   });
 });
