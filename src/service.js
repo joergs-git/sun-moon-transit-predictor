@@ -453,12 +453,23 @@ export const DEFAULT_CONFIG = {
   webRoot: 'web',
 };
 
+// Physical radii (m) for the apparent-diameter readout — Sun & Moon only.
+const BODY_RADIUS_M = { Sun: 6.957e8, Moon: 1.7374e6 };
+
 function snapshotBody(observer, body, nowMs, minElevationDeg) {
   const azel = bodyAzEl(observer, body, new Date(nowMs));
+  // Apparent angular diameter from the live slant range (so it tracks the real
+  // perigee/apogee + Earth–Sun variation: Moon ~0.49–0.55°, Sun ~0.524–0.542°)
+  // — handy because the disc size is hard to remember and drives the FOV fit.
+  const R = BODY_RADIUS_M[body];
+  const apparentDiameterDeg = (R && Number.isFinite(azel.rangeM) && azel.rangeM > 0)
+    ? 2 * Math.atan(R / azel.rangeM) * 180 / Math.PI
+    : null;
   return {
     azimuthDeg: azel.azimuthDeg,
     elevationDeg: azel.elevationDeg,
     rangeM: azel.rangeM,
+    apparentDiameterDeg,
     // v0.30.40: pass the auto-widened threshold through so the API
     // surfaces the SAME observability gate the tracker actually uses.
     // Before this, the snapshot used the hardcoded 20° default, so a
@@ -499,6 +510,42 @@ export function nextHorizonCrossing(observer, body, fromMs) {
       return { kind: el >= 0 ? 'rise' : 'set', atMs: Math.round((lo + hi) / 2) };
     }
     prevEl = el;
+  }
+  return null;
+}
+
+/**
+ * Next meridian transit (upper culmination) for Sun/Moon — the instant it
+ * crosses the local meridian due south (azimuth 180°), where it sits highest
+ * and is best placed for imaging (v0.50.1). Same coarse-scan-then-bisect shape
+ * as nextHorizonCrossing, but on the azimuth=180° crossing. Sun/Moon at mid-
+ * northern latitudes always culminate in the south, so the southern (180°)
+ * crossing is the upper transit; the 360°→0° wrap (lower culmination, due
+ * north) is excluded by the `prev < 180 ≤ az` test. Returns { atMs } or null.
+ *
+ * @param {import('./geometry.js').Observer} observer
+ * @param {string} body 'Sun' | 'Moon'
+ * @param {number} fromMs
+ * @returns {{atMs:number}|null}
+ */
+export function nextMeridianTransit(observer, body, fromMs) {
+  const STEP = 5 * 60_000;
+  const HORIZON = 25 * 3600_000;   // just over a day → always catches the next one
+  const azAt = (t) => bodyAzEl(observer, body, new Date(t)).azimuthDeg;
+  let prev = azAt(fromMs);
+  for (let t = fromMs + STEP; t <= fromMs + HORIZON; t += STEP) {
+    const az = azAt(t);
+    // Azimuth passes up through 180° (due south) = upper culmination. The
+    // (az − prev) < 180 guard rejects the 0°/360° wrap at lower culmination.
+    if (prev < 180 && az >= 180 && (az - prev) < 180) {
+      let lo = t - STEP; let hi = t;
+      for (let i = 0; i < 24; i++) {
+        const mid = (lo + hi) / 2;
+        if (azAt(mid) < 180) lo = mid; else hi = mid;
+      }
+      return { atMs: Math.round((lo + hi) / 2) };
+    }
+    prev = az;
   }
   return null;
 }
@@ -2232,13 +2279,21 @@ export async function runService({
     state.bodies = Object.fromEntries(
       config.tracker.bodies.map((b) => {
         const snap = snapshotBody(observer, b, nowMs, effectiveMinBodyElevDeg);
-        // Next rise/set for the header readout — cached until it elapses.
-        let ev = bodyEventCache.get(b);
-        if (!ev || !Number.isFinite(ev.atMs) || ev.atMs <= nowMs) {
-          ev = nextHorizonCrossing(observer, b, nowMs);
-          bodyEventCache.set(b, ev);
+        // Next rise/set + next meridian transit for the header readout, cached
+        // together until whichever comes first elapses (both barely move tick to
+        // tick, so the 24 h scans don't run twice a second). null stays cached —
+        // `passed(null)` is false — so a polar day/night never thrashes.
+        const passed = (x) => x && Number.isFinite(x.atMs) && x.atMs <= nowMs;
+        let cached = bodyEventCache.get(b);
+        if (!cached || passed(cached.nextEvent) || passed(cached.meridian)) {
+          cached = {
+            nextEvent: nextHorizonCrossing(observer, b, nowMs),
+            meridian: nextMeridianTransit(observer, b, nowMs),
+          };
+          bodyEventCache.set(b, cached);
         }
-        snap.nextEvent = ev;   // { kind:'rise'|'set', atMs } | null
+        snap.nextEvent = cached.nextEvent;          // { kind:'rise'|'set', atMs } | null
+        snap.meridianAtMs = cached.meridian?.atMs ?? null;
         return [b, snap];
       }),
     );
