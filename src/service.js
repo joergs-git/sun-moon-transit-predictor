@@ -40,6 +40,7 @@ import { extrapolate, findTransits } from './tracker.js';
 import { filterAircraft } from './aircraftclass.js';
 import {
   loadIssTle, predictIssTransits, predictSkyTargetTransits, nextIssVisiblePass,
+  skyTargetToTransitCandidate,
 } from './iss.js';
 import { buildSkyTargetPlan, CONFIDENCE_RANK } from './skyplan.js';
 import { DEFAULT_SKY_TARGETS } from './skycatalog.js';
@@ -467,6 +468,39 @@ function snapshotBody(observer, body, nowMs, minElevationDeg) {
     // banner in the UI said "below 20°" indefinitely.
     observable: isObservable(azel, minElevationDeg),
   };
+}
+
+/**
+ * Next horizon crossing (rise or set) for Sun/Moon, for the header readout
+ * (v0.50.0). Coarse 5-min forward scan over the next 24 h to find the first
+ * elevation sign change at the true horizon (0°), then bisection to the
+ * second. Returns { kind:'rise'|'set', atMs } or null if none within 24 h
+ * (e.g. polar day/night). Cheap enough to memoise per tick (see bodyEventCache).
+ *
+ * @param {import('./geometry.js').Observer} observer
+ * @param {string} body 'Sun' | 'Moon'
+ * @param {number} fromMs
+ * @returns {{kind:'rise'|'set', atMs:number}|null}
+ */
+export function nextHorizonCrossing(observer, body, fromMs) {
+  const STEP = 5 * 60_000;
+  const HORIZON = 24 * 3600_000;
+  const elAt = (t) => bodyAzEl(observer, body, new Date(t)).elevationDeg;
+  let prevEl = elAt(fromMs);
+  for (let t = fromMs + STEP; t <= fromMs + HORIZON; t += STEP) {
+    const el = elAt(t);
+    if ((prevEl < 0) !== (el < 0)) {
+      // Sign change in [t-STEP, t] → bisect to the crossing instant.
+      let lo = t - STEP; let hi = t;
+      for (let i = 0; i < 24; i++) {
+        const mid = (lo + hi) / 2;
+        if ((elAt(mid) < 0) === (prevEl < 0)) lo = mid; else hi = mid;
+      }
+      return { kind: el >= 0 ? 'rise' : 'set', atMs: Math.round((lo + hi) / 2) };
+    }
+    prevEl = el;
+  }
+  return null;
 }
 
 function mergeConfig(user) {
@@ -1088,7 +1122,18 @@ export async function runService({
   // Sky-target plan cache (M83): the merged satellite × sky-target timeline,
   // recomputed on its own slow cadence (config.iss.skyTargets.recomputeMs).
   let skyTargetPlan = [];
+  // Raw sky-target candidates from the same slow recompute (v0.50.0). Persisted
+  // between recomputes so every tick can feed them into the LIFECYCLE (for the
+  // FOV sketch, live list, real-candidate counter and buzzer) — but NEVER into
+  // the SharpCap arming list, so sky-targets get the full aircraft treatment
+  // without ever auto-arming a rig. The transit time is fixed at prediction, so
+  // re-using them between recomputes is correct; the lifecycle ages them out.
+  let skyTargetCandidates = [];
   let lastSkyComputeMs = 0;
+  // Sun/Moon next rise/set cache (v0.50.0) — recomputed only when the cached event
+  // has passed (rise/set times barely move tick-to-tick), so the 24 h scan
+  // doesn't run twice a second. Keyed by body → { kind, atMs }.
+  const bodyEventCache = new Map();
   // On-demand "next opportunity" cache: { rows, computedAtMs, scanDays }. The
   // long (90-day) coarse scan runs ONLY when the client asks for it (checkbox),
   // and the result is reused for a few minutes so re-opening the view doesn't
@@ -2185,7 +2230,17 @@ export async function runService({
     if (effectiveMinBodyElevDeg < 5) effectiveMinBodyElevDeg = 5;
 
     state.bodies = Object.fromEntries(
-      config.tracker.bodies.map((b) => [b, snapshotBody(observer, b, nowMs, effectiveMinBodyElevDeg)]),
+      config.tracker.bodies.map((b) => {
+        const snap = snapshotBody(observer, b, nowMs, effectiveMinBodyElevDeg);
+        // Next rise/set for the header readout — cached until it elapses.
+        let ev = bodyEventCache.get(b);
+        if (!ev || !Number.isFinite(ev.atMs) || ev.atMs <= nowMs) {
+          ev = nextHorizonCrossing(observer, b, nowMs);
+          bodyEventCache.set(b, ev);
+        }
+        snap.nextEvent = ev;   // { kind:'rise'|'set', atMs } | null
+        return [b, snap];
+      }),
     );
     // Surface the effective threshold to the UI so the empty-state
     // banner ("Sun/Moon below the observable limit") can quote the
@@ -2817,12 +2872,16 @@ export async function runService({
         reslewMinGapMin: skyCfg.reslewMinGapMin ?? 5,
       };
       skyTargetPlan = buildSkyTargetPlan(candidates, { ...planOpts, planHorizonDays });
+      // Keep the raw candidates too (v0.50.0) — the plan rows drop the per-pass
+      // geometry the lifecycle/FOV need; these carry it.
+      skyTargetCandidates = candidates;
       // Edge-triggered Pushover plan-alerts off the fresh plan (no-op unless
       // skyTargets.planAlerts.enabled + Pushover configured).
       runPlanAlerts(skyTargetPlan, nowMs);
       lastSkyComputeMs = nowMs;
     } else if (!skyCfg?.enabled && skyTargetPlan.length) {
       skyTargetPlan = [];   // feature turned off → clear the stale plan
+      skyTargetCandidates = [];
       nextOpportunityCache = null;
     }
 
@@ -2927,6 +2986,21 @@ export async function runService({
     for (const { events } of satCache.values()) satEvents.push(...events);
     const issForLifecycle = issEvents.concat(satEvents).filter(withinTrust);
 
+    // The aircraft + ISS/satellite Sun/Moon candidates. This SAME list feeds the
+    // notifier (Pushover) and the SharpCap arming list below — sky-targets must
+    // NOT join it, or they'd push mislabeled Pushovers and (worse) auto-arm.
+    const baseCandidates = issForLifecycle.length
+      ? enriched.concat(issForLifecycle) : enriched;
+
+    // Sky-target passes (satellite × Venus/Mars/DSO) adapted to the aircraft
+    // shape, gated by the same trust window (v0.50.0). These join ONLY the lifecycle
+    // — so they get the full aircraft treatment (live list, FOV sketch, real-
+    // candidate counter, buzzer) but never reach the notifier or the arming
+    // list. Result: same as aircraft, just without auto-arming.
+    const skyForLifecycle = skyTargetCandidates
+      .map(skyTargetToTransitCandidate)
+      .filter(withinTrust);
+
     // Unified lifecycle state — merges live tracker + watchlist + previous
     // tick's contacts. The notifier still drives Pushover; the lifecycle
     // adds visibility for 'planned' and 'stale' states which never push but
@@ -2935,7 +3009,8 @@ export async function runService({
     lifecycleMap = updateLifecycle({
       prev: lifecycleMap,
       nowMs,
-      trackerCandidates: issForLifecycle.length ? enriched.concat(issForLifecycle) : enriched,
+      trackerCandidates: skyForLifecycle.length
+        ? baseCandidates.concat(skyForLifecycle) : baseCandidates,
       expected: state.expected,
       liveAircraft: aircraft,
       imminentWindowMs: config.lifecycle.imminentWindowMs,
@@ -3105,10 +3180,8 @@ export async function runService({
     try {
       // ISS rides the same notifier path as aircraft → Pushover the moment a
       // transit is predicted, plus the History row(s) via its onEvent hook.
-      await notifier.tick(
-        issForLifecycle.length ? enriched.concat(issForLifecycle) : enriched,
-        nowMs,
-      );
+      // baseCandidates excludes sky-targets on purpose (no mislabeled pushes).
+      await notifier.tick(baseCandidates, nowMs);
     } catch (e) {
       logger.error?.('notifier tick failed:', e);
     }
@@ -3158,9 +3231,10 @@ export async function runService({
         fallbackCandidates.push(e.candidate);
       }
     }
-    const armList = (issForLifecycle.length
-      ? enriched.concat(issForLifecycle)
-      : enriched).concat(fallbackCandidates);
+    // baseCandidates (aircraft + ISS/sat Sun/Moon) + stale fallbacks. Sky-target
+    // candidates are intentionally absent → they never auto-arm a rig; sky-target
+    // arming stays gated on the active target (armSharpcapForSkyTargets below).
+    const armList = baseCandidates.concat(fallbackCandidates);
     // Route arming by the active target. A sky-object id → arm on its satellite
     // passes and DON'T arm on Sun/Moon aircraft transits (the scope is pointed
     // elsewhere). 'Sun'/'Moon' narrow the aircraft arming to that body; 'auto'

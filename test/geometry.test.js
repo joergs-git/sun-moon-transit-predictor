@@ -10,6 +10,7 @@ import {
   sunAzEl,
   targetAzEl,
 } from '../src/geometry.js';
+import { nextHorizonCrossing } from '../src/service.js';
 
 const RHEINE = {
   name: 'Rheine',
@@ -206,5 +207,34 @@ describe('apparentDiameterDeg', () => {
   it('uses the descriptor diameter for a fixed DSO, 0 for a point source', () => {
     expect(apparentDiameterDeg({ raHours: 5.588, decDeg: -5.391, diameterDeg: 1.0 }, when)).toBe(1.0);
     expect(apparentDiameterDeg({ raHours: 18.6, decDeg: 38.8 }, when)).toBe(0);
+  });
+});
+
+describe('nextHorizonCrossing (M85 — Sun/Moon next rise/set)', () => {
+  // Midsummer noon at Rheine: the Sun is well up, so the next event is a SET
+  // later the same day, and it must be consistent with the Sun being above the
+  // horizon now and below it just after the returned instant.
+  it('returns the next SET (with a future time) when the Sun is currently up', () => {
+    const noon = Date.UTC(2026, 5, 21, 11, 0, 0);   // ~13:00 local, Sun high
+    expect(sunAzEl(RHEINE, new Date(noon)).elevationDeg).toBeGreaterThan(0);
+    const ev = nextHorizonCrossing(RHEINE, 'Sun', noon);
+    expect(ev).not.toBeNull();
+    expect(ev.kind).toBe('set');
+    expect(ev.atMs).toBeGreaterThan(noon);
+    // Bracket the crossing: above the horizon a minute before, below a minute after.
+    expect(sunAzEl(RHEINE, new Date(ev.atMs - 60_000)).elevationDeg).toBeGreaterThan(0);
+    expect(sunAzEl(RHEINE, new Date(ev.atMs + 60_000)).elevationDeg).toBeLessThan(0);
+  });
+
+  // Local midnight: the Sun is down, so the next event is a RISE.
+  it('returns the next RISE when the Sun is currently below the horizon', () => {
+    const midnight = Date.UTC(2026, 5, 21, 23, 0, 0);   // ~01:00 local, Sun down
+    expect(sunAzEl(RHEINE, new Date(midnight)).elevationDeg).toBeLessThan(0);
+    const ev = nextHorizonCrossing(RHEINE, 'Sun', midnight);
+    expect(ev).not.toBeNull();
+    expect(ev.kind).toBe('rise');
+    expect(ev.atMs).toBeGreaterThan(midnight);
+    expect(sunAzEl(RHEINE, new Date(ev.atMs - 60_000)).elevationDeg).toBeLessThan(0);
+    expect(sunAzEl(RHEINE, new Date(ev.atMs + 60_000)).elevationDeg).toBeGreaterThan(0);
   });
 });

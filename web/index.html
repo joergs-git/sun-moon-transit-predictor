@@ -38,6 +38,7 @@
         <div id="active-target-bar" class="active-target-bar" hidden>
           <label for="active-target-select">🔭</label>
           <select id="active-target-select" title="What your telescope is pointed at. Auto = both discs. Pick Sun or Moon to focus the WHOLE view on that disc — only its candidates are shown, captured and pushed; the other disc is hidden. Pick a sky object (only those with an upcoming pass appear) to arm the capture on that object's satellite crossing instead."></select>
+          <span id="active-target-sky" class="active-target-sky" title="Sun & Moon: current elevation and the next horizon event — ↑ rise (when below the horizon) or ↓ set (when up)."></span>
           <span id="active-target-next" class="active-target-next"></span>
         </div>
         <time id="clock" class="clock" title="Local wall-clock time, ticking once per second.">--:--:--</time>
@@ -182,6 +183,7 @@
       <section id="total-live-section" class="total-live-section">
         <h2>
           Total live trackings
+          <span class="th-count" id="total-live-count" title="Real transit candidates (status candidate/imminent) out of total live aircraft in range — same counter as the e-paper AIRCRAFT block."></span>
           <span class="th-sub">all in range · sorted by SEP</span>
         </h2>
         <p class="hint">Everything dump1090 currently sees, with each contact's current angular distance to the nearest body. Scrollable when more than ~20 aircraft are in view.</p>

@@ -327,12 +327,40 @@ function renderActiveTarget(state) {
     sel.innerHTML = opts.map((o) => `<option value="${o.id}"${o.id === cur ? ' selected' : ''}>${o.label}</option>`).join('');
     sel.dataset.sig = sig;
   }
+  // Sun & Moon readout next to the pulldown (v0.50.0): current elevation + the next
+  // horizon event — sunset/moonset while up, sunrise/moonrise while down. Bigger
+  // (.active-target-sky) so it reads at a glance during a session.
+  const skyEl = $('#active-target-sky');
+  if (skyEl) {
+    const bodies = state.bodies ?? {};
+    skyEl.innerHTML = ['Sun', 'Moon']
+      .map((n) => bodyEventReadout(n, bodies[n])).filter(Boolean).join(' ');
+  }
   // Next pass for the currently-selected sky object (if any).
   const nextEl = $('#active-target-next');
   if (nextEl) {
     const obj = opts.find((o) => o.id === cur && o.nextAtMs);
     nextEl.textContent = obj ? `next pass ${fmtDateTime(obj.nextAtMs)}` : '';
   }
+}
+
+// One body's header readout: "☀ +15° · ↓ 18:42" (sets at 18:42, currently up)
+// or "🌙 −3° · ↑ 21:05" (rises at 21:05, currently down). The arrow + word come
+// from the server's nextEvent.kind ('rise'/'set'), so day/night is implicit.
+function bodyEventReadout(name, body) {
+  if (!body || !Number.isFinite(body.elevationDeg)) return '';
+  const icon = name === 'Sun' ? '☀' : name === 'Moon' ? '🌙' : name;
+  const el = `${body.elevationDeg >= 0 ? '+' : '−'}${Math.abs(Math.round(body.elevationDeg))}°`;
+  let ev = '';
+  let tip = name;
+  const e = body.nextEvent;
+  if (e && Number.isFinite(e.atMs)) {
+    const arrow = e.kind === 'rise' ? '↑' : '↓';
+    const t = new Date(e.atMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    ev = ` <span class="at-evt">${arrow} ${t}</span>`;
+    tip = `${name} ${e.kind === 'rise' ? 'rises' : 'sets'} at ${t}`;
+  }
+  return `<span class="body-${name}" title="${tip}">${icon} ${el}${ev}</span>`;
 }
 
 async function setActiveTarget(target) {
@@ -632,19 +660,29 @@ function renderTracking(state) {
       statusLabel = `stale · ${r.short}`;
       statusTip = `Stale — ${r.tip}`;
     }
-    const eta = e.etaMs > 0 ? fmtCountdownLong(e.etaMs)
+    // Under 2 min to go, switch the ETA to a plain seconds countdown and flag it
+    // bold+red (the .eta-soon class) — the final-approach window where the exact
+    // seconds matter most (user request). The window also covers the 'now' peak
+    // and the first minute just past so the row stays highlighted through it.
+    const etaSoon = Number.isFinite(e.etaMs) && e.etaMs < 120_000 && e.etaMs > -60_000;
+    const etaSecMode = etaSoon && e.etaMs > 0;
+    const eta = e.etaMs > 0
+              ? (etaSecMode ? `${Math.round(e.etaMs / 1000)}s` : fmtCountdownLong(e.etaMs))
               : Math.abs(e.etaMs) < 60_000 ? 'now'
               : `−${fmtCountdownLong(-e.etaMs)}`;
     const ac = e.candidate?.aircraft;
     const route = e.route ?? e.candidate?.route;
     const rangeM = e.candidate?.aircraftAtClosest?.rangeM ?? null;
-    const bodyIcon = e.body === 'Sun' ? '☀' : '🌙';
+    // Sky-target passes (satellite × Venus/Mars/DSO) carry the framed object as
+    // `body` — a deep-sky glyph, not the Sun/Moon disc symbols (v0.50.0).
+    const isSky = e.candidate?.isSky === true;
+    const bodyIcon = isSky ? '✦' : (e.body === 'Sun' ? '☀' : '🌙');
     const elDeg = e.candidate?.aircraftAtClosest?.elevationDeg;
     tr.innerHTML = `
       ${visCell(elDeg, isArmed(e.icao, e.body, e.closestApproachAtMs))}
       <td class="body-${e.body} td-icon" title="${e.body}">${bodyIcon}</td>
       <td><span class="status status-${e.status}" title="${statusTip}">${meta.icon} ${statusLabel}</span></td>
-      <td>${eta}</td>
+      <td class="${etaSoon ? 'eta-soon' : ''}">${eta}</td>
       <td>${fmtTime(e.closestApproachAtMs)}</td>
       <td>${sepCellLive(e)}</td>
       <td>${fmtDistance(rangeM)}</td>
@@ -1064,6 +1102,17 @@ function renderTotalLive(state) {
   const rows = Array.isArray(state.totalLive) ? state.totalLive : [];
   lastTotalLive = rows;                 // for pin-from-row (v0.45.1)
   lastBodies = state.bodies ?? null;    // current body az/el for the sketch
+  // Header counter "(real/total)" — mirrors the e-paper AIRCRAFT block (v0.49.1).
+  // real = lifecycle entries that reached an actual transit candidacy
+  // (status candidate/imminent — the same "is_real" test the e-paper uses);
+  // total = live aircraft dump1090 currently sees (state.aircraftCount).
+  const countEl = document.getElementById('total-live-count');
+  if (countEl) {
+    const real = (state.lifecycle ?? []).filter(
+      (e) => e.status === 'candidate' || e.status === 'imminent').length;
+    const total = Number.isFinite(state.aircraftCount) ? state.aircraftCount : rows.length;
+    countEl.textContent = `(${real}/${total})`;
+  }
   const tbody = section.querySelector('tbody');
   if (!tbody) return;
   if (rows.length === 0) {

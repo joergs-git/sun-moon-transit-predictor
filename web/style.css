@@ -70,9 +70,12 @@ h1 { font-size: 18px; margin: 0; }
    jitter as the seconds tick over. */
 .clock {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  color: var(--fg);
+  /* Bigger, bold and red so the live wall-clock (with seconds) reads at a
+     glance during the final countdown to a transit (user request). */
+  color: #ff5d5d;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
-  font-size: 13px;
+  font-size: 17px;
   padding: 2px 8px;
   border: 1px solid var(--line);
   border-radius: 3px;
@@ -794,6 +797,25 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
 
 /* I — small clarifying sub-label under a column header. Lower-case, lighter
    and not uppercased so it reads as a caption, not a second header. */
+/* ETA under 2 min to closest approach — bold + red seconds countdown, so the
+   final-approach window jumps out of the live list (user request). */
+.eta-soon {
+  color: #ff5d5d;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Header "(real/total)" candidate counter next to the section title — bold
+   and slightly highlighted so the real-candidate count stands out, matching
+   the e-paper AIRCRAFT block. Inline, right after the title text. */
+.th-count {
+  font-size: 13px;
+  font-weight: 700;
+  margin-left: 4px;
+  color: var(--accent, #7fd0ff);
+  font-variant-numeric: tabular-nums;
+}
+
 .th-sub {
   display: block;
   margin-top: 2px;
@@ -1363,6 +1385,17 @@ a.acstats-label.hex-link:hover { text-decoration: underline; }
 }
 .active-target-bar select:focus { outline: none; border-color: var(--accent); }
 .active-target-next { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 11px; }
+/* Sun & Moon readout next to the pulldown — deliberately a touch bigger than
+   the rest of the bar so elevation + next rise/set read at a glance (v0.50.0). */
+.active-target-sky {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.active-target-sky .at-evt { color: var(--accent); font-weight: 700; margin-left: 1px; }
 
 /* ===== Per-satellite next-pass table (ISS / Tiangong / HST, M83) ========= */
 .sat-passes { margin-top: 8px; }
