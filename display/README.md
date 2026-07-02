@@ -18,9 +18,11 @@ It shows, updating in near-real time, a fixed three-paragraph layout:
    when it has reached candidate/imminent, else *NEAREST PLANE*.)
 3. **Recent + aircraft** — on the left, **RECENT** learned transits: the last
    few real (candidate/imminent) passes that were recorded, each with flight,
-   **how long ago**, and the achieved **SEP**. On the right, the live tracked
-   **aircraft** with big **SEP** / **ETA** payloads and a **(near-body tracked /
-   total live)** counter.
+   **how long ago**, and the achieved **SEP**. Next to the RECENT header a
+   compact **TLE-age marker** (v0.52.0): `TLE N.Nd` when fresh, bold **`! TLE
+   Nd`** once the ISS element crosses ~3 days (a refresh is due — SGP4 timing
+   drifts ~1–3 km/day). On the right, the live tracked **aircraft** with big
+   **SEP** / **ETA** payloads and a **(near-body tracked / total live)** counter.
 
 The planes come from the unified live-tracking list, so the panel keeps showing
 nearby traffic even when nothing currently qualifies as a Real candidate.

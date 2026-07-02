@@ -55,6 +55,10 @@ What it does:
 - On every SharpCap launch the bootstrap downloads the latest
   `trigger_listener.py` from GitHub and runs it in-process. **Updating = just
   restart SharpCap.** Re-running `install.ps1` refreshes the bootstrap itself.
+- On start, the listener logs its bind line **and this PC's real LAN IP** in the
+  SharpCap scripting console, e.g. `→ set the predictor's sharpcap.host to:
+  192.168.1.99:9999` — use that value for the predictor's SharpCap host, no
+  `ipconfig` needed (v0.52.1).
 
 Switches:
 

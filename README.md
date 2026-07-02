@@ -66,6 +66,7 @@ Predictive 24 h watchlist · OpenSky schedule augmentation · SharpCap capture t
 `observer.json` / `service.json` config · HTTP API · file locations & project layout · development & tests · assumptions & limitations · statistical trivia.
 
 ### In-repo docs
+- **[scripts/sharpcap/README.md](scripts/sharpcap/README.md)** — 🪟 **SharpCap capture trigger — Windows install** (one-line PowerShell installer, auto-update bootstrap, folder/transfer config, manual install, troubleshooting).
 - **[display/README.md](display/README.md)** — e-paper panel + buzzer (layout, wiring, signals).
 - **[3D-Prints/README.md](3D-Prints/README.md)** — printable Pi 5 / e-paper stand + buzzer wiring + parts list.
 - **[MILESTONES.md](MILESTONES.md)** — version history.
