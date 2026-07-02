@@ -74,7 +74,12 @@ export function buildSkyTargetPlan(candidates, opts = {}) {
     const elevationDeg = c.satAtClosest?.elevationDeg ?? null;
     if (minElevationDeg && elevationDeg != null && elevationDeg < minElevationDeg) continue;
 
-    const epochMs = tleEpochMsByTag[c.satTag];
+    // Epoch may be a fixed ms value (single TLE) or a function of the event
+    // time (a segmented supplemental ephemeris resolves the nearest segment),
+    // so the confidence reflects the age of the segment ACTUALLY used to
+    // propagate this event — near-zero for a covered SUP-GP pass → green.
+    const epochRaw = tleEpochMsByTag[c.satTag];
+    const epochMs = typeof epochRaw === 'function' ? epochRaw(atMs) : epochRaw;
     const ageAtEventDays = Number.isFinite(epochMs) ? (atMs - epochMs) / MS_PER_DAY : null;
 
     rows.push({

@@ -529,17 +529,26 @@ function renderSkyPlan(state) {
   // still be 🟡 (the newest element Celestrak has is already N days old). The
   // prediction can never be fresher than its input TLE.
   const issAge = Number.isFinite(state.iss?.tleAgeDays) ? state.iss.tleAgeDays : null;
-  const tleNote = issAge != null ? ` · ISS TLE ${issAge.toFixed(1)} d old` : '';
+  const segCount = Number.isFinite(state.iss?.tleSegments) ? state.iss.tleSegments : 1;
+  const segmented = segCount > 1;
+  // Segmented (SUP-GP) ephemeris: the age shown is the SET age, but each event
+  // is rated from its own nearest 6-hourly segment — so label it distinctly.
+  const tleNote = issAge != null
+    ? (segmented
+      ? ` · ISS ephemeris ${issAge.toFixed(1)} d · ${segCount} seg`
+      : ` · ISS TLE ${issAge.toFixed(1)} d old`)
+    : '';
   if (sub) {
     sub.textContent = computing
       ? `computing ${meta.nextOpportunityDays ?? 90} d scan…`
       : `${rows.length} event${rows.length === 1 ? '' : 's'} · ${dsoNote}${tleNote}`;
-    sub.title = issAge != null
-      ? `Current ISS TLE is ${issAge.toFixed(1)} days old. Confidence is rated from the TLE age AT each event `
+    sub.title = issAge == null ? '' : segmented
+      ? `Segmented supplemental (SUP-GP) ISS ephemeris: ${segCount} operator element sets ~6 h apart, `
+        + `including planned maneuvers. Each event is predicted from — and its confidence rated on — the `
+        + `nearest segment (typically < 3 h old → 🟢 green), even though the whole set started ${issAge.toFixed(1)} d ago.`
+      : `Current ISS TLE is ${issAge.toFixed(1)} days old. Confidence is rated from the TLE age AT each event `
         + `(🟢 < 1 d · 🟡 1–3 d · 🟠 3–6 d · 🔴 > 6 d; ISS never better than 🟡 beyond 2 d for reboost risk). `
-        + `A soon event can still be 🟡 if the newest element Celestrak has published is already ≥ 1 day old — `
-        + `the prediction can only be as fresh as its input TLE.`
-      : '';
+        + `A soon event can still be 🟡 if the newest element Celestrak has published is already ≥ 1 day old.`;
   }
 
   tbody.innerHTML = '';

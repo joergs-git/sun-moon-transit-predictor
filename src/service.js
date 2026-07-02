@@ -40,7 +40,7 @@ import { extrapolate, findTransits } from './tracker.js';
 import { filterAircraft } from './aircraftclass.js';
 import {
   loadIssTle, predictIssTransits, predictSkyTargetTransits, nextIssVisiblePass,
-  skyTargetToTransitCandidate,
+  skyTargetToTransitCandidate, tleEpochMsAt,
 } from './iss.js';
 import { buildSkyTargetPlan, CONFIDENCE_RANK } from './skyplan.js';
 import {
@@ -1008,7 +1008,10 @@ export async function runService({
     const candidates = [];
     const tleEpochMsByTag = {};
     for (const s of sats) {
-      tleEpochMsByTag[s.tag] = (s.satrec.jdsatepoch - 2440587.5) * 86400000;
+      // Per-event epoch: a segmented supplemental ephemeris resolves the nearest
+      // segment at the event time, so the confidence reflects the segment we
+      // actually propagate from (near-zero age when covered → green).
+      tleEpochMsByTag[s.tag] = (atMs) => tleEpochMsAt(s.satrec, atMs);
       try {
         candidates.push(...predictSkyTargetTransits(observer, s.satrec, {
           fromMs: nowMs,
@@ -3000,7 +3003,10 @@ export async function runService({
       for (const s of sats) {
         // TLE epoch (Julian date → ms) so the plan can rate confidence by the
         // element-set age at the event time.
-        tleEpochMsByTag[s.tag] = (s.satrec.jdsatepoch - 2440587.5) * 86400000;
+        // Per-event epoch: a segmented supplemental ephemeris resolves the nearest
+      // segment at the event time, so the confidence reflects the segment we
+      // actually propagate from (near-zero age when covered → green).
+      tleEpochMsByTag[s.tag] = (atMs) => tleEpochMsAt(s.satrec, atMs);
         try {
           candidates.push(...predictSkyTargetTransits(observer, s.satrec, {
             fromMs: nowMs,
@@ -3061,6 +3067,9 @@ export async function runService({
       active: Boolean(issTle),
       name: issTle?.name ?? null,
       tleAgeDays: issTleAgeDays != null ? Math.round(issTleAgeDays * 10) / 10 : null,
+      // >1 when a segmented supplemental (SUP-GP) ephemeris is loaded, so the UI
+      // can show that per-event confidence uses the nearest segment, not this age.
+      tleSegments: issTle?.segments?.length ?? null,
       upcoming: issEvents.length,
       nextAtMs: nextTransit?.closestApproachAtMs ?? null,
       // Full next-transit summary so Sky-now can preview body + separation
