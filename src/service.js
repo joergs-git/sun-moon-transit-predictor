@@ -2269,7 +2269,20 @@ export async function runService({
     requestWifiConnect: config.wifi?.enabled ? (ssid, psk) =>
       wifiRequestConnect({ ssid, psk, triggerPath: config.wifi.triggerPath }) : null,
   });
-  if (httpServer) await httpServer.start();
+  if (httpServer) {
+    const addr = await httpServer.start();
+    // Print the reachable web-UI URL(s) on startup so the user doesn't have to
+    // hunt for the Pi's IP (v0.52.0). The server binds 0.0.0.0, so it is
+    // reachable on whichever interface has a lease — show the LAN IP (works
+    // over WiFi or Ethernet) alongside localhost. lanIPv4() returns '' offline,
+    // in which case only localhost is shown.
+    const uiPort = addr?.port ?? config.server.port;
+    const lanIp = lanIPv4();
+    logger.info?.(
+      `web UI ready → http://localhost:${uiPort}/`
+      + (lanIp ? `   ·   http://${lanIp}:${uiPort}/   ← open this on your phone/PC` : ''),
+    );
+  }
 
   let stopping = false;
   let intervalHandle = null;
@@ -2301,11 +2314,25 @@ export async function runService({
     // looseThresholdDeg auto-widen logic.
     let effectiveMinBodyElevDeg = 20;     // OBSERVABILITY_MIN_ELEVATION_DEG default
     for (const { trigger } of sharpcapTargets) {
-      if (!trigger.enabled) continue;
-      const m = Number(trigger.config.maxSepDeg);
-      if (Number.isFinite(m) && m > effectiveLooseDeg) effectiveLooseDeg = m;
-      const e = Number(trigger.config.minElevationDeg);
-      if (Number.isFinite(e) && e >= 0 && e < effectiveMinBodyElevDeg) effectiveMinBodyElevDeg = e;
+      // maxSepDeg widens the RECORDING panel band — only a rig that will
+      // actually fire a capture (enabled) should widen it.
+      if (trigger.enabled) {
+        const m = Number(trigger.config.maxSepDeg);
+        if (Number.isFinite(m) && m > effectiveLooseDeg) effectiveLooseDeg = m;
+      }
+      // v0.52.0: the body-observability floor is the lowest elevation the user
+      // cares to TRACK — a configured preference that is INDEPENDENT of whether
+      // SharpCap auto-capture is enabled. A user who set the scope floor to 10°
+      // but left capture off must still see 10-20° bodies as observable (no
+      // misleading "< 20°" banner) and have the tracker emit candidates for
+      // them. Honour every configured rig's minElevationDeg regardless of its
+      // capture toggle. The default stays 20° (the sharpcap.minElevationDeg
+      // default), so an unconfigured install is unchanged.
+      const rawE = trigger.config.minElevationDeg;
+      const e = Number(rawE);
+      if (rawE != null && Number.isFinite(e) && e >= 0 && e < effectiveMinBodyElevDeg) {
+        effectiveMinBodyElevDeg = e;
+      }
     }
     // Honour the global tracker.minBodyElevationDeg override too (set via
     // Settings) so the threshold is consistent whether the user adjusts

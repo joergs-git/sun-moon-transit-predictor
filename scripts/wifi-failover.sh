@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WiFi failover for off-road use (v0.51.0). Keeps the box reachable with zero
+# WiFi failover for off-road use (v0.52.0). Keeps the box reachable with zero
 # terminal config:
 #   - On boot, give NetworkManager a grace period to autoconnect a saved home
 #     WiFi.
@@ -8,6 +8,9 @@
 #   - While hosting the AP, periodically drop it briefly to probe for a known
 #     network (so driving back into home-WiFi range auto-rejoins) and re-raise
 #     the AP if none appears.
+#   - If a wired Ethernet link is up (the box is already reachable over the
+#     cable), never host the AP — and tear it down if it was up (v0.52.0). Set
+#     STP_WIFI_IGNORE_ETH=1 to restore the old WiFi-only behaviour.
 #
 # Single radio = either client OR AP at a time, which is exactly the failover
 # model. Runs as root from stp-wifi-failover.service.
@@ -17,9 +20,20 @@ AP="${1:-sunmoontransits}"
 GRACE="${STP_WIFI_GRACE_S:-45}"     # boot grace for NM autoconnect
 POLL="${STP_WIFI_POLL_S:-10}"       # offline re-check cadence
 RECHECK="${STP_WIFI_RECHECK_S:-180}" # how often to probe for a known net while hosting AP
+IGNORE_ETH="${STP_WIFI_IGNORE_ETH:-0}" # 1 = ignore Ethernet, host AP on WiFi loss anyway
 
 iface() { nmcli -t -f DEVICE,TYPE device 2>/dev/null | awk -F: '$2=="wifi"{print $1; exit}'; }
 IFACE="$(iface)"; IFACE="${IFACE:-wlan0}"
+
+# Is a wired Ethernet link up with an active NM connection? When the box is
+# reachable over the cable there is no point hosting the WiFi AP. NM reports
+# STATE 'connected' only once the device has carrier + an IP, so this is a
+# reliable "reachable over eth" signal. Honoured unless STP_WIFI_IGNORE_ETH=1.
+eth_online() {
+  [ "$IGNORE_ETH" = "1" ] && return 1
+  nmcli -t -f DEVICE,TYPE,STATE device 2>/dev/null \
+    | awk -F: '$2=="ethernet" && $3=="connected"{found=1} END{exit !found}'
+}
 
 # Active connection name on the WiFi device ('' when offline).
 active_conn() {
@@ -31,10 +45,17 @@ ap_up()   { echo "[stp-wifi-failover] activating AP '$AP'"; nmcli connection up 
               || echo "[stp-wifi-failover] AP up failed — is the '$AP' profile installed?"; }
 ap_down() { nmcli connection down "$AP" >/dev/null 2>&1 || true; }
 
-echo "[stp-wifi-failover] iface=$IFACE ap='$AP' — ${GRACE}s boot grace"
+echo "[stp-wifi-failover] iface=$IFACE ap='$AP' eth-aware=$([ "$IGNORE_ETH" = 1 ] && echo no || echo yes) — ${GRACE}s boot grace"
 sleep "$GRACE"
 
 while true; do
+  if eth_online; then
+    # Reachable over the cable — never host the WiFi AP. Drop it if it was up
+    # (e.g. Ethernet was just plugged in while hosting), then just poll.
+    [ "$(active_conn)" = "$AP" ] && ap_down
+    sleep "$POLL"
+    continue
+  fi
   ACTIVE="$(active_conn)"
   if [ -z "$ACTIVE" ]; then
     # Offline → host the AP.
