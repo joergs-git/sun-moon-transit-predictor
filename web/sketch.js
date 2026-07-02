@@ -684,12 +684,23 @@ export function buildSketchSvg(d) {
   const innerH = SVG_H - HEADER_H - FOOTER_H - 2 * PAD;
 
   // Body disc — sized first because the widget scale is built around it.
+  // A sky-target STAR (or a sub-arcminute planet) has no meaningful angular size
+  // — objectDiameterDeg is 0/absent — so it must be drawn as a POINT, not a disc.
+  // Otherwise it falls back to the 0.53° Sun/Moon default and is rendered
+  // Moon-sized, which wrecks the ISS-pass proportions (a 0.30° miss then looks
+  // like it grazes a huge "Vega"). v0.54.1. Sun/Moon and extended objects
+  // (planets/DSOs with a real diameter ≥ POINT_MAX_DEG) still get a real disc.
+  const POINT_MAX_DEG = 0.02;
+  const isPoint = d.body !== 'Sun' && d.body !== 'Moon'
+    && !(Number.isFinite(d.bodyDiameterDeg) && d.bodyDiameterDeg > POINT_MAX_DEG);
   // Disc size: an explicit per-target diameter (sky-targets carry the framed
-  // object's apparent size — planets tiny, DSOs degrees) wins; else the Sun/Moon
-  // table; else a sensible default. Floored so a point-like planet still draws.
-  const bodyDiameterDeg = Number.isFinite(d.bodyDiameterDeg) && d.bodyDiameterDeg > 0
-    ? d.bodyDiameterDeg
-    : (BODY_DIAMETER_DEG[d.body] ?? 0.53);
+  // object's apparent size — DSOs degrees) wins; else the Sun/Moon table; else a
+  // sensible default. A point target carries 0 (drawn as a star marker below).
+  const bodyDiameterDeg = isPoint
+    ? 0
+    : (Number.isFinite(d.bodyDiameterDeg) && d.bodyDiameterDeg > 0
+      ? d.bodyDiameterDeg
+      : (BODY_DIAMETER_DEG[d.body] ?? 0.53));
   const bodyFill = d.body === 'Sun' ? COLOURS.Sun : COLOURS.Moon;
   const bodyRim  = d.body === 'Sun' ? COLOURS.SunRim : COLOURS.MoonRim;
 
@@ -708,24 +719,35 @@ export function buildSketchSvg(d) {
   // leaves room either side for aircraft at sep up to ≈ half the widget
   // half-width in degrees before they fall off the canvas.
   const widgetMinSide = Math.min(innerW, innerH);
-  const discScale = (widgetMinSide * 0.5) / bodyDiameterDeg;
-  // Dynamic zoom-to-fit (v0.45.0): for a wide pass the aircraft sits far from
-  // the disc, so scale DOWN until that separation fits inside the widget — the
-  // disc, the sensor box and the aircraft all shrink together, keeping their
-  // true relative proportions (a 3° pass → small disc + small box + the plane
-  // still visible at a sensible distance). `showDeg` is the offset we must keep
-  // on-canvas: the closest-approach separation (≈ the plane's distance to the
-  // disc centre), floored at the disc itself. Never zoom IN past the disc-
-  // centred scale, and keep the disc ≥ a few px so it never vanishes.
-  const showDeg = Math.max(Number.isFinite(d.sepDeg) ? d.sepDeg : 0, bodyDiameterDeg * 0.75);
-  const fitScale = (widgetMinSide * 0.42) / showDeg;
-  const minScale = 6 / (bodyDiameterDeg / 2);            // disc radius ≥ 6 px
-  const pxPerDeg = Math.max(minScale, Math.min(discScale, fitScale));
+  let pxPerDeg;
+  if (isPoint) {
+    // No disc to centre on — frame the sensor FOV and the pass instead, so the
+    // ISS miss reads at its TRUE proportion to the field (not to a fake disc).
+    // Reference span = the larger of the FOV diagonal (show the whole framed
+    // field) and ~2.2× the miss (keep the pass clearly inside), floored so a
+    // tiny sep never over-zooms.
+    const fovDiagDeg = Math.hypot(fovWDeg, fovHDeg) || 0;
+    const sepDeg = Number.isFinite(d.sepDeg) ? d.sepDeg : 0;
+    const refSpanDeg = Math.max(fovDiagDeg, sepDeg * 2.2, 0.1);
+    pxPerDeg = (widgetMinSide * 0.82) / refSpanDeg;
+  } else {
+    // Disc-centred (v0.20.0): fix the disc to ≈ half the widget and derive
+    // pxPerDeg; the FOV rectangle + aircraft draw at the SAME pxPerDeg so their
+    // proportions relative to the disc are physically accurate. Dynamic
+    // zoom-to-fit (v0.45.0): for a wide pass, scale DOWN until the separation
+    // fits — disc, box and aircraft shrink together. Never zoom IN past the
+    // disc-centred scale; keep the disc ≥ a few px so it never vanishes.
+    const discScale = (widgetMinSide * 0.5) / bodyDiameterDeg;
+    const showDeg = Math.max(Number.isFinite(d.sepDeg) ? d.sepDeg : 0, bodyDiameterDeg * 0.75);
+    const fitScale = (widgetMinSide * 0.42) / showDeg;
+    const minScale = 6 / (bodyDiameterDeg / 2);            // disc radius ≥ 6 px
+    pxPerDeg = Math.max(minScale, Math.min(discScale, fitScale));
+  }
 
-  // Disc sits at the widget centre; FOV rectangle is centred on the disc.
+  // Body sits at the widget centre; FOV rectangle is centred on it.
   const cx = SVG_W / 2;
   const cy = HEADER_H + PAD + innerH / 2;
-  const bodyR = (bodyDiameterDeg / 2) * pxPerDeg;
+  const bodyR = (bodyDiameterDeg / 2) * pxPerDeg;        // 0 for a point target
   const fovPxW = fovWDeg * pxPerDeg;
   const fovPxH = fovHDeg * pxPerDeg;
   const fovX = cx - fovPxW / 2;
@@ -900,13 +922,20 @@ export function buildSketchSvg(d) {
   // applied here is gone; "what the sensor captures" is now shown by the
   // dashed FOV rectangle layered on top of the disc, not by hiding the
   // off-sensor part of the disc.
-  const bodyDisc =
-    `<defs><radialGradient id="bodyGrad" cx="35%" cy="35%" r="65%">` +
-    `<stop offset="0%" stop-color="${bodyRim}" stop-opacity="0.95"/>` +
-    `<stop offset="100%" stop-color="${bodyFill}" stop-opacity="1"/>` +
-    `</radialGradient></defs>` +
-    `<circle cx="${cx}" cy="${cy}" r="${bodyR}" fill="url(#bodyGrad)" ` +
-    `stroke="${bodyRim}" stroke-width="0.5"/>`;
+  // A point target (star/planet) is drawn as a small marker with diffraction
+  // spikes — a truthful "this is a point, not a disc" cue — so the ISS pass line
+  // reads at its real scale beside it. Everything else is a gradient disc.
+  const bodyDisc = isPoint
+    ? `<g stroke="${COLOURS.star ?? '#dfe7ff'}" stroke-width="1" stroke-linecap="round" opacity="0.95">`
+      + `<line x1="${(cx - 6).toFixed(1)}" y1="${cy}" x2="${(cx + 6).toFixed(1)}" y2="${cy}"/>`
+      + `<line x1="${cx}" y1="${(cy - 6).toFixed(1)}" x2="${cx}" y2="${(cy + 6).toFixed(1)}"/>`
+      + `</g><circle cx="${cx}" cy="${cy}" r="2.2" fill="${COLOURS.star ?? '#dfe7ff'}"/>`
+    : `<defs><radialGradient id="bodyGrad" cx="35%" cy="35%" r="65%">`
+      + `<stop offset="0%" stop-color="${bodyRim}" stop-opacity="0.95"/>`
+      + `<stop offset="100%" stop-color="${bodyFill}" stop-opacity="1"/>`
+      + `</radialGradient></defs>`
+      + `<circle cx="${cx}" cy="${cy}" r="${bodyR}" fill="url(#bodyGrad)" `
+      + `stroke="${bodyRim}" stroke-width="0.5"/>`;
 
   // Motion line + tick marks at each sample, arrowhead at the latest one.
   // Uses visiblePathPts so the polyline never connects through wild-distance

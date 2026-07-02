@@ -102,6 +102,22 @@ describe('sketch renderer', () => {
     expect(svg).toContain('Sun');
   });
 
+  it('draws a sky-target STAR as a point marker, not a Sun/Moon-sized disc (v0.54.1)', () => {
+    const base = {
+      bodyAt: { az: 255, el: 62 }, aircraftAt: { az: 255.3, el: 61.7 },
+      sepDeg: 0.30, isISS: true, transitPath: [], body: 'Vega (α Lyr)',
+    };
+    // A star carries objectDiameterDeg 0 → must render as a POINT, not fall back
+    // to the 0.53° Sun/Moon disc (which made the ISS-pass proportion look wrong).
+    const star = buildSketchSvg({ ...base, bodyDiameterDeg: 0 });
+    const moon = buildSketchSvg({ ...base, body: 'Moon', bodyDiameterDeg: 0.518 });
+    const maxR = (s) => Math.max(...[...s.matchAll(/<circle[^>]*r="([\d.]+)"/g)].map((m) => +m[1]));
+    expect(maxR(star)).toBeLessThan(6);          // small marker, a few px
+    expect(star).not.toContain('radialGradient'); // no gradient body disc
+    expect(maxR(moon)).toBeGreaterThan(20);      // a real disc, order of magnitude bigger
+    expect(moon).toContain('radialGradient');
+  });
+
   it('draws the time-lapse "now" marker only while inside the path window', () => {
     const candidate = syntheticTransitCandidate();
     const entry = {
