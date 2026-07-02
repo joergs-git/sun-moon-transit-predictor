@@ -218,10 +218,16 @@ def run(panel, once=False):
         # Nothing enabled → clear the screen once, then idle cheaply.
         if not display_on and not buzzer_on:
             if not idle_drawn:
-                panel.show_full(render.render_disabled())
+                panel.show_full(render.render_disabled(config.CONFIG_URL))
                 idle_drawn = True
                 last_full = now
-                _log("display + buzzer disabled via Settings — idling")
+                # Name the config host: if it's a remote (not localhost) while
+                # the panel is meant to be on, STP_CONFIG_URL is likely pointed
+                # at the main tracker Pi (display.enabled=false there). See
+                # render_disabled / stp-display.service comments.
+                _log("display + buzzer disabled per config from %s — idling "
+                     "(if unexpected, check STP_CONFIG_URL points at THIS Pi)"
+                     % config.CONFIG_URL)
             if once:
                 break
             time.sleep(2)
@@ -308,7 +314,7 @@ def run(panel, once=False):
                     time.sleep(min(30, 2 * panel_fail))   # back off a struggling panel
         elif not idle_drawn:
             # Buzzer-only mode: clear the panel once and leave it.
-            panel.show_full(render.render_disabled())
+            panel.show_full(render.render_disabled(config.CONFIG_URL))
             idle_drawn = True
             last_full = now
 

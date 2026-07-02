@@ -830,16 +830,30 @@ def render_offline(source_url, reason=""):
     return img
 
 
-def render_disabled():
-    """Render a minimal 'display off' screen (drawn once, then idle)."""
+def render_disabled(config_url=None):
+    """Render a minimal 'display off' screen (drawn once, then idle).
+
+    The `enabled` flag is read from config_url (STP_CONFIG_URL), NOT from the
+    data source — a common multi-Pi footgun is pointing STP_CONFIG_URL at the
+    main tracker Pi (which has no panel, so display.enabled=false) instead of
+    localhost. Showing the config host here makes that misconfiguration obvious
+    from the panel itself: if it reads "config: http://<main-pi>:8081" the fix
+    is to point STP_CONFIG_URL back at 127.0.0.1 and set the Data-source URL in
+    Settings instead (v0.52.2)."""
     img = Image.new("1", (WIDTH, HEIGHT), WHITE)
     draw = ImageDraw.Draw(img)
     msg = "display disabled"
     f = _font(18)
     w = draw.textlength(msg, font=f)
-    draw.text(((WIDTH - w) / 2, 130), msg, font=f, fill=BLACK)
+    draw.text(((WIDTH - w) / 2, 122), msg, font=f, fill=BLACK)
     sub = "enable in web Settings > E-paper display"
     fs = _font(11)
     ws = draw.textlength(sub, font=fs)
-    draw.text(((WIDTH - ws) / 2, 158), sub, font=fs, fill=BLACK)
+    draw.text(((WIDTH - ws) / 2, 150), sub, font=fs, fill=BLACK)
+    # Which host the enabled flag was read from — the key diagnostic when the
+    # panel is "disabled" despite the local service having it enabled.
+    if config_url:
+        src = "config: %s" % config_url
+        wsrc = draw.textlength(src, font=fs)
+        draw.text(((WIDTH - wsrc) / 2, 168), src, font=fs, fill=BLACK)
     return img

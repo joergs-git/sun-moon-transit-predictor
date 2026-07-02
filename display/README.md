@@ -189,6 +189,7 @@ nothing or garbage on first run, switch to the older driver via the unit's
 | `failed to init panel driver` | SPI not enabled, driver not installed, or wrong `STP_EPD_DRIVER`. See logs. |
 | Nothing / garbage on screen | Try `STP_EPD_DRIVER=epd4in2` (older board) vs `epd4in2_V2`. |
 | `SERVER OFFLINE` | The **Data source URL** host is unreachable. Check the predictor is up and the IP/port are right. |
+| **`display disabled`** even though it's enabled in Settings | The `enabled` flag is read from `STP_CONFIG_URL`, **not** from the Data-source host. The panel now prints `config: <url>` on the disabled screen — if that URL is the *main tracker* Pi (which has no panel, so `display.enabled=false`), point `STP_CONFIG_URL` back at **this** Pi (`http://127.0.0.1:8081`) in `stp-display.service` and use the **Data source URL** field in Settings to pull data from the other Pi. `daemon-reload` + restart. |
 | Permission denied on `/dev/spidev0.0` | Service user not in `spi`/`gpio` groups (step 3); re-login or reboot. |
 | Heavy ghosting | Lower **Long refresh** (more frequent full clears). |
 | Text feels laggy | Raise **Quick refresh** toward 2–3 s; the panel can't partial-refresh faster than ~1 s. |
