@@ -1,0 +1,21 @@
+[Unit]
+Description=Sun-Moon Transit Predictor — event-driven pre-run ISS TLE refresh
+Documentation=https://github.com/joergs-git/sun-moon-transit-predictor
+After=network-online.target stp.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+Group=__USER__
+WorkingDirectory=__INSTALL_DIR__
+# Asks the local service which ISS runs are coming up and fetches a fresh TLE
+# ONLY when a run is imminent and the current TLE is not fresh enough — so an
+# early-morning ISS pass is predicted with a < 1-day TLE (🟢 green) instead of
+# a stale one (🟡). Does nothing on quiet days (zero Celestrak load). Tunables:
+#   STP_STATE_URL  (default http://127.0.0.1:8081 — set if the web port differs)
+#   STP_TLE_LEAD_H (default 24)   STP_TLE_FRESH_H (default 10)
+Environment=STP_STATE_URL=http://127.0.0.1:8081
+ExecStart=/usr/bin/node __INSTALL_DIR__/scripts/auto-refresh-tle.js
+StandardOutput=journal
+StandardError=journal

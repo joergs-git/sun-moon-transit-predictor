@@ -1,0 +1,17 @@
+[Unit]
+Description=Event-driven pre-run ISS TLE refresh check for stp.service
+
+[Timer]
+# Every 3 h (± 20 min jitter). This is only a CHECK — the guard fetches nothing
+# unless an ISS run is within STP_TLE_LEAD_H and the TLE is older than
+# STP_TLE_FRESH_H, so a 3 h tick keeps the TLE < ~13 h old through the pre-run
+# window (→ < 1-day TLE at the event → 🟢 green) without hammering Celestrak.
+# OnBootSec gives one check shortly after boot; Persistent catches a missed tick.
+OnBootSec=5min
+OnUnitActiveSec=3h
+Persistent=true
+RandomizedDelaySec=20m
+Unit=stp-tle-guard.service
+
+[Install]
+WantedBy=timers.target

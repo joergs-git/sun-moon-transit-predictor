@@ -16,6 +16,7 @@
 
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 // Celestrak's gp.php returns the current public element set in classic 2-line
 // (plus name) form. Catalogue numbers:
@@ -23,7 +24,7 @@ import { dirname, resolve } from 'node:path';
 //   20580 = HST (Hubble)           — a tough ~5″ target
 //   48274 = CSS / Tianhe (Tiangong) — ~20″, the easiest after the ISS
 // Keep this list in sync with config.iss (tlePath) + config.iss.satellites.
-const SATS = [
+export const SATS = [
   { catnr: 25544, out: './data/iss.tle' },
   { catnr: 20580, out: './data/hst.tle' },
   { catnr: 48274, out: './data/tiangong.tle' },
@@ -32,8 +33,9 @@ const TIMEOUT_MS = 15000;
 
 function log(...a) { console.log('[refresh-tle]', ...a); }
 
-/** Fetch one satellite's TLE from Celestrak and write it to disk. */
-async function fetchOne({ catnr, out }) {
+/** Fetch one satellite's TLE from Celestrak and write it to disk. Exported so
+ *  the event-driven guard (auto-refresh-tle.js) reuses the exact same fetch. */
+export async function fetchOne({ catnr, out }) {
   const url = `https://celestrak.org/NORAD/elements/gp.php?CATNR=${catnr}&FORMAT=tle`;
   const outPath = resolve(out);
   const controller = new AbortController();
@@ -88,7 +90,11 @@ async function main() {
   if (ok === 0) process.exit(1);
 }
 
-main().catch((e) => {
-  console.error('[refresh-tle] failed:', e?.message ?? e);
-  process.exit(1);
-});
+// Only run the batch fetch when invoked directly (`node refresh-tle.js`), not
+// when imported by auto-refresh-tle.js for its exported fetchOne/SATS.
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  main().catch((e) => {
+    console.error('[refresh-tle] failed:', e?.message ?? e);
+    process.exit(1);
+  });
+}
