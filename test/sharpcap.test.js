@@ -486,3 +486,36 @@ describe('SharpCapTrigger.armForSkyTarget', () => {
     expect(sky.sent).toBe(true);
   });
 });
+
+describe('SharpCapTrigger.mount (v0.55.0)', () => {
+  it('sends a slew command over the wire and returns the listener reply', async () => {
+    const { netImpl, created } = makeFakeNet({ replyLine: '{"ok":true,"action":"slew","slewing":true}\n' });
+    const t = new SharpCapTrigger(
+      { enabled: true, host: 'pc', port: 9999 },
+      { netImpl, logger: { info() {}, warn() {}, error() {} } },
+    );
+    const res = await t.mount('slew', { raHours: 18.6156, decDeg: 38.7837 });
+    expect(res.sent).toBe(true);
+    const sent = JSON.parse(created[0].writes[0]);
+    expect(sent).toMatchObject({ cmd: 'mount', action: 'slew', raHours: 18.6156, decDeg: 38.7837 });
+    expect(res.response.slewing).toBe(true);
+  });
+
+  it('forwards the shared token + mount ProgID override when configured', async () => {
+    const { netImpl, created } = makeFakeNet({ replyLine: '{"ok":true,"action":"park"}\n' });
+    const t = new SharpCapTrigger(
+      { enabled: true, host: 'pc', token: 'sek', mountProgId: 'ASCOM.DeviceHub.Telescope' },
+      { netImpl, logger: { info() {}, warn() {}, error() {} } },
+    );
+    await t.mount('park');
+    const sent = JSON.parse(created[0].writes[0]);
+    expect(sent).toMatchObject({ cmd: 'mount', action: 'park', token: 'sek', progId: 'ASCOM.DeviceHub.Telescope' });
+  });
+
+  it('is a no-op when the rig is disabled', async () => {
+    const t = new SharpCapTrigger({ enabled: false, host: 'pc' });
+    const res = await t.mount('unpark');
+    expect(res.sent).toBe(false);
+    expect(res.reason).toBe('disabled');
+  });
+});

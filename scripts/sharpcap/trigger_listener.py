@@ -39,6 +39,13 @@ import traceback
 PORT = 9999
 BIND = "0.0.0.0"               # set to "127.0.0.1" to restrict to localhost
 SHARED_TOKEN = ""              # set to a string to require token == this
+# Mount control (v0.55.0). Empty = disabled. Set to your ASCOM Telescope ProgID
+# (e.g. "ASCOM.DeviceHub.Telescope", "ASCOM.tenmicron_mount.Telescope") or via
+# the STP_MOUNT_PROGID env var to let the predictor drive unpark/slew/track/park.
+# The predictor enforces ALL safety gates (never the Sun, night only, elevation)
+# BEFORE any command reaches here. SharpCap keeps the camera; the mount is driven
+# directly over ASCOM, so no Device Hub is needed unless SharpCap also needs it.
+MOUNT_PROGID = os.environ.get("STP_MOUNT_PROGID", "")
 
 
 def _default_log_path():
@@ -844,6 +851,90 @@ def _do_capture(label, pre_roll_s, duration_s, my_gen, cancel_event, meta=None, 
                 _recording = False
 
 
+_mount = None
+_mount_lock = threading.Lock()
+
+
+def _get_mount(prog_id):
+    """Lazily connect the ASCOM Telescope (cached). Uses SharpCap's embedded
+    .NET via pythonnet's `clr` + ASCOM.DriverAccess — no pip install, no Device
+    Hub. Returns the telescope object, or raises. The import is lazy so a
+    camera-only install never touches ASCOM."""
+    global _mount
+    with _mount_lock:
+        if _mount is not None:
+            return _mount
+        pid = (prog_id or MOUNT_PROGID or "").strip()
+        if not pid:
+            return None
+        import clr                                    # pythonnet (in SharpCap)
+        clr.AddReference("ASCOM.DriverAccess")
+        from ASCOM.DriverAccess import Telescope       # noqa: E402
+        t = Telescope(pid)
+        if not t.Connected:
+            t.Connected = True
+        _mount = t
+        return t
+
+
+def _handle_mount(req):
+    """Execute one mount action over ASCOM. The predictor has already enforced
+    the safety gates (never the Sun, night, elevation) — here we only do the
+    mechanical action defensively, honouring the driver's Can* capability flags
+    so a mount that can't unpark/park/set-tracking is never forced."""
+    action = str(req.get("action", "")).lower()
+    try:
+        t = _get_mount(req.get("progId"))
+    except Exception as e:
+        _log("mount: ASCOM init failed: {}".format(e))
+        return {"ok": False, "error": "no-ascom: {}".format(e)}
+    if t is None:
+        return {"ok": False, "error": "mount-not-configured"}
+    try:
+        if action == "status":
+            return {"ok": True, "action": "status", "atPark": bool(t.AtPark),
+                    "tracking": bool(t.Tracking), "slewing": bool(t.Slewing),
+                    "ra": float(t.RightAscension), "dec": float(t.Declination)}
+        if action == "unpark":
+            if t.AtPark and t.CanUnpark:
+                t.Unpark()
+            return {"ok": True, "action": "unpark", "atPark": bool(t.AtPark)}
+        if action == "track":
+            on = bool(req.get("on", True))
+            if t.CanSetTracking:
+                t.Tracking = on
+            return {"ok": True, "action": "track", "tracking": bool(t.Tracking)}
+        if action == "park":
+            if t.CanSetTracking:
+                t.Tracking = False
+            if t.CanPark:
+                t.Park()
+            return {"ok": True, "action": "park", "atPark": bool(t.AtPark)}
+        if action == "slew":
+            try:
+                ra = float(req.get("raHours"))
+                dec = float(req.get("decDeg"))
+            except Exception:
+                return {"ok": False, "error": "bad-coords"}
+            if not (_is_finite(ra) and _is_finite(dec)
+                    and 0.0 <= ra < 24.0 and -90.0 <= dec <= 90.0):
+                return {"ok": False, "error": "bad-coords-range"}
+            if t.AtPark and t.CanUnpark:
+                t.Unpark()
+            if t.CanSetTracking:
+                t.Tracking = True
+            if getattr(t, "CanSlewAsync", False):
+                t.SlewToCoordinatesAsync(ra, dec)
+            else:
+                t.SlewToCoordinates(ra, dec)
+            _log("mount: slew -> RA {:.4f} h Dec {:.3f} deg".format(ra, dec))
+            return {"ok": True, "action": "slew", "slewing": bool(t.Slewing)}
+        return {"ok": False, "error": "unknown-action"}
+    except Exception as e:
+        _log("mount: {} failed: {}".format(action, e))
+        return {"ok": False, "error": "mount-error: {}".format(e)}
+
+
 def _handle_conn(conn, addr):
     global _capture_active, _capture_gen, _active_label, _recording, _cancel_event
     try:
@@ -866,6 +957,17 @@ def _handle_conn(conn, addr):
         if SHARED_TOKEN and req.get("token") != SHARED_TOKEN:
             _log("reject from {}: bad token".format(addr))
             conn.sendall(b'{"ok": false, "error": "unauth"}\n')
+            return
+
+        # Mount control (v0.55.0): unpark / slew / track / park / status over
+        # ASCOM. The predictor enforces the safety gates before sending; here we
+        # only execute. Kept entirely separate from the capture path.
+        if req.get("cmd") == "mount":
+            reply = _handle_mount(req)
+            try:
+                conn.sendall((json.dumps(reply) + "\n").encode("utf-8"))
+            except Exception:
+                pass
             return
 
         # v0.30.33: 'outcome' message handler. Sent by the predictor ~60 s

@@ -21,6 +21,9 @@ import {
   aircraftAzElFromObsEcef,
   angularSeparationDeg,
   bodyAzEl,
+  sunAzEl,
+  targetAzEl,
+  equatorialRaDec,
   isObservable,
   observerEcef,
 } from './geometry.js';
@@ -213,6 +216,20 @@ export const DEFAULT_CONFIG = {
     bodies: ['Sun', 'Moon'],
     dedupMs: 60_000,
     connectTimeoutMs: 2000,
+    // Mount control (v0.55.0) — OFF by default. Lets the predictor point an
+    // ASCOM mount at the active NIGHT object (never the Sun) via the listener,
+    // and optionally run an unattended timed sequence around a transit. The
+    // mount ProgID lives on the LISTENER side (STP_MOUNT_PROGID); if two rigs
+    // share ONE mount, set it on only one listener. All safety gates are
+    // enforced here before any command is sent.
+    mount: {
+      enabled: false,          // master switch for any mount command
+      autoSequence: false,     // opt-in: unpark+slew+track at T-lead, park after
+      leadMinutes: 5,          // slew this long before the pass
+      minElevationDeg: 15,     // never slew to an object below this
+      sunBelowDeg: -6,         // sky must be at least this dark (civil dusk)
+      parkWhenDone: true,      // park + stop tracking once no pass is left tonight
+    },
     // Tick-based arming (the "never miss a transit" path): arm as soon as a
     // candidate's projected closest separation is within maxSepDeg AND the
     // closest approach is near enough that the pre-roll fits the listener cap.
@@ -1245,6 +1262,116 @@ export async function runService({
     catch (e) { logger.warn?.('active-target persist failed:', e?.message ?? e); }
   }
 
+  // ── Mount control (v0.55.0) ────────────────────────────────────────────────
+  // Drive an ASCOM mount (via the listener) to the active NIGHT object. All
+  // safety gates live HERE — the listener only executes. Runtime state for the
+  // opt-in autonomous sequence: `mountArmed` = user armed it for tonight;
+  // `mountSlewedForMs` = the pass time we already slewed for (dedup);
+  // `mountTracking` = we have issued track-on and not yet parked.
+  let mountArmed = false;
+  let mountSlewedForMs = null;
+  let mountTracking = false;
+
+  /** Resolve a target id to its catalogue/body descriptor (or null). */
+  function skyObjectById(id) {
+    if (id === 'Moon') return 'Moon';
+    if (id === 'Sun') return 'Sun';
+    const list = config.iss?.skyTargets?.objects ?? DEFAULT_SKY_TARGETS;
+    return list.find((o) => o.id === id) ?? null;
+  }
+
+  /**
+   * Safety gate for a mount slew to `targetId` at `nowMs`. Returns
+   * { ok, reason } and, on success, the object's { raHours, decDeg, elevationDeg }.
+   * NEVER passes the Sun or a daytime/too-low target.
+   */
+  function mountSlewGate(targetId, nowMs) {
+    const m = config.sharpcap?.mount ?? {};
+    if (!m.enabled) return { ok: false, reason: 'mount-disabled' };
+    if (!targetId || targetId === 'auto') return { ok: false, reason: 'no-target' };
+    if (targetId === 'Sun') return { ok: false, reason: 'sun-blocked' };   // hard block
+    const obj = skyObjectById(targetId);
+    if (!obj) return { ok: false, reason: 'unknown-target' };
+    const when = new Date(nowMs);
+    // Daylight guard: the sky must be at least civil-dusk dark.
+    const sun = sunAzEl(observer, when);
+    if (sun.elevationDeg >= (m.sunBelowDeg ?? -6)) return { ok: false, reason: 'not-dark' };
+    const rd = equatorialRaDec(observer, obj, when);
+    if (!rd) return { ok: false, reason: 'no-radec' };                     // e.g. Sun
+    const ae = targetAzEl(observer, obj, when);
+    if (ae && ae.elevationDeg < (m.minElevationDeg ?? 15)) return { ok: false, reason: 'too-low' };
+    return { ok: true, raHours: rd.raHours, decDeg: rd.decDeg, elevationDeg: ae?.elevationDeg ?? null };
+  }
+
+  /**
+   * Send one mount action to every enabled rig (each forwards to its listener's
+   * configured ASCOM mount; a listener without STP_MOUNT_PROGID simply replies
+   * "mount-not-configured", so a shared mount is driven by exactly one rig). A
+   * 'slew' resolves + gates the target first; other actions pass through.
+   */
+  async function requestMount(action, { targetId, on } = {}) {
+    const m = config.sharpcap?.mount ?? {};
+    if (!m.enabled) return { ok: false, error: 'mount-disabled' };
+    if (!sharpcapAnyEnabled()) return { ok: false, error: 'no-sharpcap-host' };
+    let params = {};
+    if (action === 'slew') {
+      const gate = mountSlewGate(targetId ?? activeTarget, Date.now());
+      if (!gate.ok) return { ok: false, error: gate.reason };
+      params = { raHours: gate.raHours, decDeg: gate.decDeg };
+    } else if (action === 'track') {
+      params = { on: on !== false };
+    } else if (!['unpark', 'park', 'status'].includes(action)) {
+      return { ok: false, error: 'bad-action' };
+    }
+    const results = [];
+    for (const { name, trigger } of sharpcapTargets) {
+      if (!trigger.enabled) continue;
+      const r = await trigger.mount(action, params).catch((e) => ({ sent: false, error: e }));
+      results.push({
+        rig: name, ok: !!r.sent, response: r.response ?? null,
+        error: r.error ? String(r.error?.message ?? r.error) : (r.reason ?? null),
+      });
+    }
+    if (action === 'slew') { mountTracking = true; }
+    if (action === 'park') { mountTracking = false; }
+    const ok = results.some((r) => r.ok);
+    if (ok) logger.info?.(`mount ${action}${params.raHours != null ? ` RA ${params.raHours.toFixed(3)} Dec ${params.decDeg.toFixed(2)}` : ''} → ${results.filter(r => r.ok).map(r => r.rig).join(', ')}`);
+    return { ok, action, results };
+  }
+
+  /** Arm/disarm the autonomous per-night sequence (opt-in, from the UI/API). */
+  function setMountArmed(on) {
+    mountArmed = !!on && !!(config.sharpcap?.mount?.enabled) && !!(config.sharpcap?.mount?.autoSequence);
+    if (!mountArmed) mountSlewedForMs = null;
+    return { armed: mountArmed };
+  }
+
+  /**
+   * Per-tick autonomous sequence (opt-in). At T−leadMinutes before the active
+   * NIGHT object's next pass, slew+unpark+track (once per pass); when no pass is
+   * left, park + disarm. The listener's slew action already unparks + tracks, so
+   * one gated `slew` per pass is enough. Never runs unless enabled+autoSequence+
+   * armed; the mountSlewGate rejects the Sun / daylight / too-low regardless.
+   */
+  async function runMountSequence(nowMs) {
+    const m = config.sharpcap?.mount ?? {};
+    if (!m.enabled || !m.autoSequence || !mountArmed) return;
+    const rows = (skyTargetPlan ?? []).filter((r) => r.targetId === activeTarget && r.atMs >= nowMs - 60_000);
+    const nextMs = rows.length ? Math.min(...rows.map((r) => r.atMs)) : null;
+    const leadMs = (m.leadMinutes ?? 5) * 60_000;
+    if (nextMs != null && nextMs - nowMs <= leadMs && nextMs - nowMs > 0) {
+      if (mountSlewedForMs !== nextMs) {
+        const r = await requestMount('slew', { targetId: activeTarget });
+        if (r.ok) { mountSlewedForMs = nextMs; logger.info?.(`mount auto: slewed to ${activeTarget}, pass in ${Math.round((nextMs - nowMs) / 1000)}s`); }
+        else logger.warn?.(`mount auto: slew blocked (${r.error})`);
+      }
+    } else if (nextMs == null && m.parkWhenDone && mountTracking) {
+      await requestMount('park');
+      mountArmed = false;
+      logger.info?.('mount auto: no more passes for the active target → parked + disarmed');
+    }
+  }
+
   const state = {
     observer,
     version: PKG_VERSION,
@@ -2043,6 +2170,22 @@ export async function runService({
       if (typeof s.token === 'string' && s.token && !s.token.startsWith('••••')) {
         config.sharpcap.token = s.token.trim();
       }
+      // Mount control block (v0.55.0). All fields optional; validated + merged.
+      if (s.mount && typeof s.mount === 'object') {
+        const cur = config.sharpcap.mount ?? {};
+        const m = { ...cur };
+        for (const k of ['enabled', 'autoSequence', 'parkWhenDone']) {
+          if (typeof s.mount[k] === 'boolean') m[k] = s.mount[k];
+        }
+        for (const [k, lo, hi] of [['leadMinutes', 0, 60], ['minElevationDeg', 0, 90], ['sunBelowDeg', -30, 0]]) {
+          if (k in s.mount) {
+            const v = Number(s.mount[k]);
+            if (!Number.isFinite(v) || v < lo || v > hi) throw new Error(`sharpcap.mount.${k} must be ${lo}–${hi}`);
+            m[k] = v;
+          }
+        }
+        config.sharpcap.mount = m;
+      }
       if ('targets' in s) {
         // Multi-rig: an array of { name?, host, port?, bodies?, preBufferS?,
         // postBufferS?, token?, … } overriding the base config per rig. Each
@@ -2248,6 +2391,12 @@ export async function runService({
       return { ok: true, activeTarget };
     },
     getActiveTarget: () => activeTarget,
+    // Mount control (v0.55.0): manual action or arm/disarm the autonomous
+    // sequence. Disabled (404) unless config.sharpcap.mount.enabled.
+    requestMount: config.sharpcap?.mount?.enabled
+      ? (action, opts) => requestMount(action, opts ?? {}) : null,
+    setMountArmed: config.sharpcap?.mount?.enabled
+      ? (on) => setMountArmed(on) : null,
     // On-demand "next opportunity" (M83): runs the long coarse scan, cached for
     // a few minutes so re-opening the view doesn't re-scan. Costs nothing until
     // the client asks (the checkbox defaults off on every reload).
@@ -3410,6 +3559,15 @@ export async function runService({
         : armList;
       armSharpcapForCandidates(list, nowMs);
     }
+    // Autonomous mount sequence (v0.55.0, opt-in) — never blocks the tick.
+    runMountSequence(nowMs).catch((e) => logger.warn?.('mount sequence:', e?.message ?? e));
+    // Surface mount status for the UI.
+    state.mount = {
+      enabled: Boolean(config.sharpcap?.mount?.enabled),
+      autoSequence: Boolean(config.sharpcap?.mount?.autoSequence),
+      armed: mountArmed,
+      tracking: mountTracking,
+    };
 
     // Header status readout: are any rigs live, for which bodies, how many
     // captures armed this session, and a per-rig breakdown for the tooltip.

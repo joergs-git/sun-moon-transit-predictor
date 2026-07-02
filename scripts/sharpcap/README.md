@@ -284,6 +284,38 @@ Didn't fire? The journal says why — `journalctl -u stp.service -f | grep -i sh
 </details>
 
 <details>
+<summary><b>🔭 Mount control (ASCOM) — point the scope at the night object (v0.55.0, opt-in)</b></summary>
+
+The listener can also **drive an ASCOM mount** so the predictor points the scope
+at the active **night** object (star/DSO/planet — **never the Sun**) and, opt-in,
+runs an unattended sequence around a pass (`unpark → slew → track`, then `park`).
+The listener talks **ASCOM Telescope directly** (`ASCOM.DriverAccess`, lazy import),
+so SharpCap keeps only the camera — no Device Hub needed.
+
+**Windows setup:** set your mount's ASCOM **ProgID** for the listener (once):
+
+```powershell
+setx STP_MOUNT_PROGID "ASCOM.DeviceHub.Telescope"   # or your driver's ProgID; then restart SharpCap
+```
+
+If two rigs share **one** mount, set `STP_MOUNT_PROGID` on **only one** listener
+(the other replies `mount-not-configured`, harmless).
+
+**Predictor side:** ⚙ Settings → Scopes → *🔭 Mount control* — tick **Allow mount
+slew**, set Lead/Min-elevation, **Save**, then use **Status / Unpark / Slew to
+target / Park / Arm sequence**. All safety gates are server-enforced: **never the
+Sun, night only, above min elevation, no slew during a capture.** Blind goto —
+**framing accuracy = your polar alignment; PA the mount manually first.**
+
+> ⚠️ **Bench-test before any unattended night:** with someone watching the mount,
+> click **Unpark → Slew to target → Park** once. Only then arm the sequence.
+
+Wire command (server → listener): `{ "cmd": "mount", "action": "slew",
+"raHours": 18.6156, "decDeg": 38.7837, "token": "…" }` → `{ "ok": true,
+"slewing": true }`. Actions: `unpark`, `slew`, `track` (`on`), `park`, `status`.
+</details>
+
+<details>
 <summary><b>🔧 install.ps1 switches & the execution-policy story</b></summary>
 
 `install.ps1` is install + start + update in one. It installs into

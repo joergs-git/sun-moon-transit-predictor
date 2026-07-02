@@ -2245,6 +2245,44 @@ if ($('#sharpcap-add-rig')) {
   $('#sharpcap-add-rig').addEventListener('click', () => scTargetsBox?.appendChild(scRigRow()));
 }
 
+// ── Mount control (v0.55.0) — buttons POST /api/mount; all safety gates are
+// server-side. Deliberate button presses only (bench-test tool + per-night arm).
+(function wireMountControls() {
+  const msg = $('#mount-msg');
+  if (!msg) return;
+  const say = (t) => { msg.textContent = t; };
+  async function mount(action, extra = {}) {
+    say(`${action}…`);
+    try {
+      const res = await fetch('/api/mount', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ...extra }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || j.ok === false) { say(`✗ ${action}: ${j.error ?? res.status}`); return; }
+      if (action === 'status') {
+        say((j.results ?? []).map((x) => x.response
+          ? `${x.rig}: park=${x.response.atPark} track=${x.response.tracking} slew=${x.response.slewing}`
+          : `${x.rig}: ${x.error}`).join(' · ') || 'no rig replied');
+      } else if (action === 'arm' || action === 'disarm') {
+        say(j.armed ? '✓ armed for tonight' : '✓ disarmed');
+      } else {
+        say(`✓ ${action} sent`);
+      }
+    } catch (e) { say(`✗ ${action}: ${e.message}`); }
+  }
+  $('#mount-status-btn')?.addEventListener('click', () => mount('status'));
+  $('#mount-unpark-btn')?.addEventListener('click', () => mount('unpark'));
+  $('#mount-slew-btn')?.addEventListener('click', () => mount('slew'));
+  $('#mount-park-btn')?.addEventListener('click', () => mount('park'));
+  let armed = false;
+  $('#mount-arm-btn')?.addEventListener('click', (ev) => {
+    armed = !armed;
+    mount(armed ? 'arm' : 'disarm');
+    ev.target.textContent = armed ? 'Disarm sequence' : 'Arm sequence';
+  });
+})();
+
 // ── Sky-target catalogue editor (M83) ──────────────────────────────────────
 // One editable row per object: enabled · id · name · RA(h) · Dec(°) · Ø(°) ·
 // planet. Values are set via properties (not innerHTML) so object names with

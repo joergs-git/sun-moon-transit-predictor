@@ -117,3 +117,74 @@ a `slew: true` flag).
   `SharpCap.Mounts.SelectedMount`, or only connect/disconnect? Verify against the
   SharpCap scripting API on the user's version before wiring (fallback: surface
   "mount slew not supported by this SharpCap build").
+
+---
+
+## 9. Extension (v0.55.0) — autonomous timed sequence + direct ASCOM
+
+Requested extension: not just a manual "Slew" button, but an **unattended,
+time-triggered sequence around a transit**, so the user can sleep. The user
+stays responsible for physical safety + activation (a per-night arm).
+
+### 9.1 Route decision — direct ASCOM, not `SharpCap.Mounts`
+`SharpCap.Mounts` scripting is thin/uncertain (open Q in §8) and likely does
+NOT expose unpark/park/tracking-toggle reliably. The full sequence needs the
+**ASCOM Telescope** interface, which has everything: `Unpark()`,
+`SlewToCoordinatesAsync(raHours, decDeg)`, `Tracking` (get/set), `Park()`,
+`Slewing`/`AtPark`/`CanPark`/`CanUnpark`/`CanSetTracking` capability flags.
+
+**Decision: the listener talks ASCOM Telescope DIRECTLY** (via `ASCOM.DriverAccess.Telescope`
+in SharpCap's embedded .NET/Python), and **SharpCap keeps only the camera**.
+No two-clients-on-one-driver conflict → no ASCOM Device Hub required. The mount
+`ProgID` is a listener-side setting (`STP_MOUNT_PROGID`, empty = disabled), with
+an optional per-command override. (This supersedes the §2 "via SharpCap" note —
+the thin API can't do the full sequence.)
+
+### 9.2 Wire protocol (new `cmd: "mount"` command)
+```jsonc
+// server → listener
+{ "cmd": "mount", "action": "unpark",              "token": "…" }
+{ "cmd": "mount", "action": "slew", "raHours": 18.6156, "decDeg": 38.7837, "token": "…" }
+{ "cmd": "mount", "action": "track", "on": true,   "token": "…" }
+{ "cmd": "mount", "action": "park",                "token": "…" }
+{ "cmd": "mount", "action": "status",              "token": "…" }
+// listener → server
+{ "ok": true, "action": "slew", "slewing": true }
+{ "ok": true, "action": "status", "atPark": false, "tracking": true, "slewing": false, "ra": 18.61, "dec": 38.78 }
+{ "ok": false, "error": "mount-not-configured" | "no-ascom" | "bad-coords" | "mount-error: …" }
+```
+ASCOM import is LAZY (only on a mount command) so the stdlib-only listener still
+loads everywhere; a non-mount install is unaffected. Coordinates are J2000 (a
+JNow mount sees ~arcmin precession error — negligible vs the blind-goto PA error;
+a later Transform step can remove it).
+
+### 9.3 Orchestration state machine (on the Pi)
+Per-night opt-in ("arm autonomous sequence"). Driven by `activeTarget` + the
+`skyTargetPlan` (which already carries each pass time + the object RA/Dec):
+1. **T − `leadMinutes` (default 5):** `unpark` → `slew(raHours, decDeg)` → poll
+   `status` until `!slewing` → `track=on`. Once per target (deduped).
+2. **After the pass:** if the next armed night-target's pass is within the same
+   night → `slew` to it. Else → `track=off` → `park` (if `parkWhenDone`).
+3. Never issue a new slew while a capture is in progress; the slew completes +
+   settles well before the capture arming window (T−95 s).
+
+### 9.4 Safety gates (server-enforced, ALL must pass before any mount command)
+Extends §4:
+- **NEVER the Sun / no daytime** — hard block on `Sun` and on sky not dark
+  (`sun.el ≥ sunBelowDeg`, default −6°).
+- **Object above `minElevationDeg`** (default 15°) at slew time AND at the pass.
+- **Feature enabled** (`sharpcap.mount.enabled`) AND a host configured AND, for
+  the autonomous path, the per-night **arm** flag set.
+- **Meridian/pier awareness** — a T−lead slew lands the object on the correct
+  side (the driver picks pier side per its meridian settings); surface the side.
+- **No slew during an in-progress capture**; **abort + timeout** if `slewing`
+  never clears (default 120 s) → stop, log, do NOT proceed to track/capture.
+- **Blind goto** — framing accuracy = the user's polar alignment (PA first).
+
+### 9.5 Status: MVP shipped, autonomous path needs a bench test
+Implemented in v0.55.0: the mount primitives (listener ASCOM handler,
+`sharpcap.js mount()`, `POST /api/mount`), the RA/Dec derivation, the
+server-enforced safety gates, config `sharpcap.mount`, a UI toggle + manual
+Slew/Park, and the autonomous orchestration (opt-in). **The real-hardware ASCOM
+slew path is untested on a mount** — do a SUPERVISED bench test (unpark → slew →
+track → park via `POST /api/mount`) before ever running the unattended sequence.

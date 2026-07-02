@@ -298,6 +298,32 @@ export function targetAzEl(observer, target, whenUtc, opts = {}) {
 }
 
 /**
+ * Equatorial coordinates (RA in hours, Dec in degrees) of a target — used to
+ * slew a mount (v0.55.0). A fixed star/DSO returns its catalogue J2000 RA/Dec
+ * directly; a body (Moon/planet) is computed from the ephemeris (topocentric,
+ * of date). The Sun returns null — it must NEVER be a slew target (safety).
+ *
+ * @param {object} observer
+ * @param {string|object} target
+ * @param {Date|string|number} whenUtc
+ * @returns {{ raHours:number, decDeg:number }|null}
+ */
+export function equatorialRaDec(observer, target, whenUtc) {
+  const t = normaliseTarget(target);
+  if (t.body) {
+    if (t.body === 'Sun') return null;               // never slew to the Sun
+    const aobs = new Astronomy.Observer(observer.latitudeDeg, observer.longitudeDeg, observer.elevationM);
+    const time = Astronomy.MakeTime(whenUtc instanceof Date ? whenUtc : new Date(whenUtc));
+    const equ = Astronomy.Equator(bodyEnumOf(t.body), time, aobs, true, true);
+    return { raHours: equ.ra, decDeg: equ.dec };
+  }
+  if (Number.isFinite(t.raHours) && Number.isFinite(t.decDeg)) {
+    return { raHours: t.raHours, decDeg: t.decDeg };
+  }
+  return null;
+}
+
+/**
  * Apparent angular diameter of a target, in degrees, at a given time.
  * Bodies: computed from physical radius + geocentric distance (so the Sun's
  * ~0.533° and the Moon's ~0.518° fall out naturally, and a planet's disc is
