@@ -16,6 +16,43 @@ src/sharpcap.js TCP        ──▶  RunCapture() after preRoll, then StopCaptu
 The listener listens on TCP `:9999`. The predictor connects, sends one JSON
 line, the listener replies one JSON line, then arms the capture.
 
+## ⚠️ Read first — "running scripts is disabled on this system"
+
+Windows blocks `.ps1` scripts by default, so running **`.\install.ps1`** directly
+fails with:
+
+```
+.\install.ps1 : Die Datei ... kann nicht geladen werden, da die Ausführung von
+Skripts auf diesem System deaktiviert ist. (running scripts is disabled)
+  ... PSSecurityException / UnauthorizedAccess
+```
+
+This is Windows' **Execution Policy**, not an error in the script and **not** an
+admin/rights problem. **Every `install.ps1` command in this README** — including
+`-EnableTransfer`, `-PickFolders` and `-AddInstance` — must be invoked one of two
+ways:
+
+**Per-run bypass (recommended — changes nothing on your system).** Prefix the
+command with `powershell -ExecutionPolicy Bypass -File` and keep your arguments:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -AddInstance -InstanceName rc12 -InstancePort 9998
+```
+
+**Or allow it once for your user**, then `.\install.ps1 …` works directly:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned    # run once, then reopen PowerShell
+```
+
+The `Bypass` form also clears the downloaded-file "Mark of the Web" block. If you
+still get a block after downloading, run `Unblock-File .\install.ps1` once.
+
+> Throughout this README, wherever you see `.\install.ps1 …`, either prefix it
+> with `powershell -ExecutionPolicy Bypass -File` or set the policy once as above.
+
+---
+
 ## Install (automated — recommended)
 
 `install.ps1` is install, start and update in one. It downloads the latest
@@ -29,16 +66,6 @@ In **Windows PowerShell** on the Windows PC (the listener now lives on
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
-
-> **"…kann nicht geladen werden, da die Ausführung von Skripts ... deaktiviert
-> ist" / "running scripts is disabled on this system"?** That is the default
-> execution policy blocking a double-clicked or directly-invoked `.ps1`. Do
-> **not** run `C:\...\install.ps1` on its own — always go through
-> `powershell -ExecutionPolicy Bypass -File <path>` as shown above, which
-> bypasses the policy for that one run only (and also clears the
-> downloaded-file "Mark of the Web" block). If you prefer a persistent
-> setting instead, run once:
-> `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
 You can fetch and run it in one line (no `-Branch` needed — pulls from `main`):
 
@@ -295,10 +322,14 @@ its own listener port (one process can't bind 9999 twice). The installer
 automates this — one command:
 
 ```powershell
-.\install.ps1 -AddInstance
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -AddInstance
 # or pick the name/port yourself:
-.\install.ps1 -AddInstance -InstanceName Moon -InstancePort 9998
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -AddInstance -InstanceName Moon -InstancePort 9998
 ```
+
+> Plain `.\install.ps1 -AddInstance …` fails with *"running scripts is disabled"*
+> unless you set the execution policy once — see the **"Read first"** execution-policy
+> note at the top of this file.
 
 What it does:
 - Copies the base `stp-sharpcap.config.json` to
