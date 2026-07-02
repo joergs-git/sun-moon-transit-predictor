@@ -258,8 +258,21 @@ sed -e "s|__USER__|$TARGET_USER|g" \
 sudo_run install -m 0644 "$TMP_TLE_SVC"                   "$TLE_SERVICE_FILE"
 sudo_run install -m 0644 "$REPO_DIR/systemd/stp-tle.timer" "$TLE_TIMER_FILE"
 rm -f "$TMP_TLE_SVC"
+
+# Event-driven pre-run refresh (v0.53.0): a light guard that fetches a fresh TLE
+# only when an ISS run is imminent, so early-morning passes are predicted with a
+# < 1-day TLE (🟢 green) instead of a stale one — no waiting for the daily cron.
+TMP_TLE_GUARD_SVC="$(mktemp)"
+sed -e "s|__USER__|$TARGET_USER|g" \
+    -e "s|__INSTALL_DIR__|$REPO_DIR|g" \
+    "$REPO_DIR/systemd/stp-tle-guard.service" > "$TMP_TLE_GUARD_SVC"
+sudo_run install -m 0644 "$TMP_TLE_GUARD_SVC"                    "/etc/systemd/system/stp-tle-guard.service"
+sudo_run install -m 0644 "$REPO_DIR/systemd/stp-tle-guard.timer" "/etc/systemd/system/stp-tle-guard.timer"
+rm -f "$TMP_TLE_GUARD_SVC"
+
 sudo_run systemctl daemon-reload
 sudo_run systemctl enable --now stp-tle.timer
+sudo_run systemctl enable --now stp-tle-guard.timer
 
 # One initial fetch so ISS info appears right after install. Best-effort —
 # a box with no network at install time just waits for the daily timer.
