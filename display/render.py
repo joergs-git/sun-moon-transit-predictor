@@ -833,13 +833,11 @@ def render_offline(source_url, reason=""):
 def render_disabled(config_url=None):
     """Render a minimal 'display off' screen (drawn once, then idle).
 
-    The `enabled` flag is read from config_url (STP_CONFIG_URL), NOT from the
-    data source — a common multi-Pi footgun is pointing STP_CONFIG_URL at the
-    main tracker Pi (which has no panel, so display.enabled=false) instead of
-    localhost. Showing the config host here makes that misconfiguration obvious
-    from the panel itself: if it reads "config: http://<main-pi>:8081" the fix
-    is to point STP_CONFIG_URL back at 127.0.0.1 and set the Data-source URL in
-    Settings instead (v0.52.2)."""
+    config_url is the host the `enabled` flag was actually read from (the local
+    service is preferred, STP_CONFIG_URL is the fallback). Showing it makes an
+    unexpected "disabled" self-explaining: if it names THIS Pi, just enable the
+    panel in this Pi's browser Settings; if it names a remote host (a diskless
+    panel), enable it there. No systemd editing needed (v0.52.2/v0.52.3)."""
     img = Image.new("1", (WIDTH, HEIGHT), WHITE)
     draw = ImageDraw.Draw(img)
     msg = "display disabled"

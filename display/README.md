@@ -48,10 +48,12 @@ renders. So the data can come from **the same Pi** or a **remote Pi on the LAN**
 
 ## How it's configured — everything from the browser
 
-There is exactly **one** local setting on the display Pi: `STP_CONFIG_URL` (in
-the systemd unit) — where to read the live config from. **Everything else is set
-in the web Settings panel** (⚙ Settings → *E-paper display*) and applied live
-within a few seconds, no restart:
+**Everything is set in the web Settings panel** (⚙ Settings → *E-paper display*)
+and applied live within a few seconds, no restart — no SSH or systemd editing.
+The client automatically reads its config from the Node service running on the
+**same Pi** (127.0.0.1), so on a standard install there is nothing to configure
+on the command line at all. (`STP_CONFIG_URL` in the systemd unit is only a
+*fallback* for a diskless panel Pi with no local service — see Troubleshooting.)
 
 | Setting | Meaning |
 |---|---|
@@ -189,7 +191,7 @@ nothing or garbage on first run, switch to the older driver via the unit's
 | `failed to init panel driver` | SPI not enabled, driver not installed, or wrong `STP_EPD_DRIVER`. See logs. |
 | Nothing / garbage on screen | Try `STP_EPD_DRIVER=epd4in2` (older board) vs `epd4in2_V2`. |
 | `SERVER OFFLINE` | The **Data source URL** host is unreachable. Check the predictor is up and the IP/port are right. |
-| **`display disabled`** even though it's enabled in Settings | The `enabled` flag is read from `STP_CONFIG_URL`, **not** from the Data-source host. The panel now prints `config: <url>` on the disabled screen — if that URL is the *main tracker* Pi (which has no panel, so `display.enabled=false`), point `STP_CONFIG_URL` back at **this** Pi (`http://127.0.0.1:8081`) in `stp-display.service` and use the **Data source URL** field in Settings to pull data from the other Pi. `daemon-reload` + restart. |
+| **`display disabled`** even though it's enabled in Settings | The client reads its `enabled` flag from a Node service, and prints which host on the disabled screen (`config: <url>`). It prefers this Pi's own service, so normally you just enable it in **this Pi's** browser Settings. If the screen shows a *remote* host (a diskless panel via `STP_CONFIG_URL`), either enable the panel in **that** host's Settings, or unset `STP_CONFIG_URL` so the local service is used. No systemd edit is needed for a standard install. |
 | Permission denied on `/dev/spidev0.0` | Service user not in `spi`/`gpio` groups (step 3); re-login or reboot. |
 | Heavy ghosting | Lower **Long refresh** (more frequent full clears). |
 | Text feels laggy | Raise **Quick refresh** toward 2–3 s; the panel can't partial-refresh faster than ~1 s. |

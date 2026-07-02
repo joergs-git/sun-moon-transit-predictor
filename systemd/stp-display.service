@@ -21,11 +21,12 @@ TimeoutStopSec=15
 StandardOutput=journal
 StandardError=journal
 
-# The single bootstrap value: where to read the live `display` config block
-# from (everything else is configured in the browser Settings panel). Point
-# this at a remote host only if the predictor's web UI itself lives elsewhere;
-# to merely pull DATA from another Pi, leave this as localhost and set the
-# "Data source URL" field in Settings instead.
+# FALLBACK config host only. The client PREFERS the Node service on this Pi
+# (127.0.0.1) for its live `display` config, so a standard install is fully
+# browser-administrable — enable the panel + set the "Data source URL" in the
+# web Settings panel, no SSH needed. This env is used only by a DISKLESS panel
+# Pi that has no local service and must read config from a remote host; leave it
+# as localhost otherwise.
 Environment=STP_CONFIG_URL=http://127.0.0.1:8081
 # For older 4.2" boards that show nothing on first run, switch to: epd4in2
 Environment=STP_EPD_DRIVER=epd4in2_V2
