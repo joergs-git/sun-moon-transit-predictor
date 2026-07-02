@@ -150,7 +150,11 @@ You can also edit the JSON directly:
    `scripts/sharpcap/trigger_listener.py` (copy it onto the Windows PC if the
    predictor runs on a different machine).
 3. Press **Run**. The script log should show
-   `listener thread started; SharpCap is free to be used normally`.
+   `listener thread started; SharpCap is free to be used normally`, and — right
+   after the `bound on 0.0.0.0:9999` line — this machine's actual LAN address,
+   e.g. `-> set the predictor's sharpcap.host to: 192.168.1.99:9999`. Use that
+   IP for the predictor's `service.json` `sharpcap.host` (no need to run
+   `ipconfig`).
 4. (Optional) put the script in SharpCap's "Run on startup" so it comes up
    with SharpCap.
 

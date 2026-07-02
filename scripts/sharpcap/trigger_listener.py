@@ -1015,12 +1015,62 @@ def _handle_conn(conn, addr):
         except Exception: pass
 
 
+def _lan_ips():
+    """Best-effort list of this machine's non-loopback IPv4 addresses, so the
+    startup log can tell the user exactly what to point the predictor at (the
+    bind address 0.0.0.0 is not a routable address the user can type). Stdlib
+    only, so it runs unchanged on CPython/Python.NET AND IronPython. The UDP
+    'connect' sends no packets -- it just asks the OS which local address would
+    route outbound -- so it works offline as long as a default route exists.
+    Falls back to hostname resolution. Returns a de-duplicated list, the primary
+    outbound route first."""
+    ips = []
+    # Primary: the address the OS would use for outbound traffic -- i.e. the one
+    # on the same subnet as a connecting predictor/phone.
+    s = None
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        if ip and not ip.startswith("127."):
+            ips.append(ip)
+    except Exception:
+        pass
+    finally:
+        if s is not None:
+            try: s.close()
+            except Exception: pass
+    # Fallback / extras: every A record the hostname resolves to.
+    try:
+        _, _, addrs = socket.gethostbyname_ex(socket.gethostname())
+        for ip in addrs:
+            if ip and not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+    except Exception:
+        pass
+    return ips
+
+
 def _serve():
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((BIND, PORT))
     srv.listen(4)
     _log("sun-moon-transit-predictor SharpCap listener bound on {}:{}".format(BIND, PORT))
+    # 0.0.0.0 means "all interfaces" -- not an address the user can point the
+    # predictor at. Print the real LAN IP(s) so they can set service.json
+    # sharpcap.host on the predictor box without hunting via ipconfig/ip addr.
+    if BIND in ("0.0.0.0", "::", ""):
+        _ips = _lan_ips()
+        if _ips:
+            _log("  -> set the predictor's sharpcap.host to: "
+                 + ", ".join("{}:{}".format(ip, PORT) for ip in _ips)
+                 + " (this machine's LAN address)")
+        else:
+            _log("  -> could not auto-detect a LAN IP; find it with 'ipconfig' "
+                 "(Windows) / 'ip addr', then use <that-ip>:{}".format(PORT))
+    else:
+        _log("  -> reachable at {}:{}".format(BIND, PORT))
     while True:
         try:
             conn, addr = srv.accept()
