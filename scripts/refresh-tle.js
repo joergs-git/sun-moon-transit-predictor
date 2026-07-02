@@ -24,8 +24,16 @@ import { pathToFileURL } from 'node:url';
 //   20580 = HST (Hubble)           — a tough ~5″ target
 //   48274 = CSS / Tianhe (Tiangong) — ~20″, the easiest after the ISS
 // Keep this list in sync with config.iss (tlePath) + config.iss.satellites.
+//
+// The ISS uses Celestrak's SUPPLEMENTAL (SUP-GP) feed instead of gp.php: the
+// operator publishes a multi-segment ephemeris (6-hourly element sets ~15 days
+// out, INCLUDING planned reboosts). loadIssTle keeps every segment and
+// propagates from the one nearest each event, so a pass is predicted from a
+// near-epoch element (🟢 green) instead of a 1-2 day-old single TLE. gp.php has
+// no future segments, so HST/Tiangong stay on it.
+const SUP_GP = (file) => `https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?FILE=${file}&FORMAT=tle`;
 export const SATS = [
-  { catnr: 25544, out: './data/iss.tle' },
+  { catnr: 25544, out: './data/iss.tle', url: SUP_GP('iss') },
   { catnr: 20580, out: './data/hst.tle' },
   { catnr: 48274, out: './data/tiangong.tle' },
 ];
@@ -35,8 +43,9 @@ function log(...a) { console.log('[refresh-tle]', ...a); }
 
 /** Fetch one satellite's TLE from Celestrak and write it to disk. Exported so
  *  the event-driven guard (auto-refresh-tle.js) reuses the exact same fetch. */
-export async function fetchOne({ catnr, out }) {
-  const url = `https://celestrak.org/NORAD/elements/gp.php?CATNR=${catnr}&FORMAT=tle`;
+export async function fetchOne({ catnr, out, url }) {
+  // Per-sat URL override (ISS → SUP-GP); default to the standard gp.php feed.
+  url = url ?? `https://celestrak.org/NORAD/elements/gp.php?CATNR=${catnr}&FORMAT=tle`;
   const outPath = resolve(out);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -70,7 +79,7 @@ async function main() {
   // Legacy single-path mode: `refresh-tle.js <path>` fetches only the ISS to
   // that path, preserving the original behaviour / any existing cron entry.
   const targets = process.argv[2]
-    ? [{ catnr: 25544, out: process.argv[2] }]
+    ? [{ catnr: 25544, out: process.argv[2], url: SUP_GP('iss') }]
     : SATS;
 
   let ok = 0;

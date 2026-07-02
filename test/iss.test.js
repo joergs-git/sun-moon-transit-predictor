@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   loadIssTle, predictIssTransits, predictSkyTargetTransits, nextIssVisiblePass,
-  skyTargetToTransitCandidate,
+  skyTargetToTransitCandidate, tleEpochMsAt,
 } from '../src/iss.js';
 import { observerEcef, targetEcefAzEl } from '../src/geometry.js';
 import { fromLifecycleEntry, buildSketchSvg } from '../web/sketch.js';
@@ -45,6 +45,56 @@ describe('loadIssTle', () => {
     const bad = join(tmp, 'bad.tle');
     writeFileSync(bad, 'not a tle at all');
     expect(loadIssTle(bad)).toBeNull();
+  });
+
+  it('a single TLE yields exactly one segment (backward compatible)', () => {
+    const p = join(tmp, 'iss1seg.tle');
+    writeFileSync(p, `${NAME}\n${L1}\n${L2}\n`);
+    const tle = loadIssTle(p);
+    expect(tle.segments).toHaveLength(1);
+    expect(tle.satrec).toBe(tle.segments[0]);
+    // A single segment's epoch is used regardless of the query time.
+    const e0 = tleEpochMsAt(tle.satrec, Date.UTC(2024, 0, 1));
+    const e1 = tleEpochMsAt(tle.satrec, Date.UTC(2030, 0, 1));
+    expect(e0).toBe(e1);
+  });
+});
+
+describe('loadIssTle — supplemental multi-segment (SUP-GP)', () => {
+  // Three ISS segments 6 h apart (only the epoch column differs). Column
+  // alignment is preserved so twoline2satrec parses each; checksums are not
+  // validated by the parser. Mirrors Celestrak's segmented ISS ephemeris.
+  const seg = (epoch) => `1 25544U 98067A   ${epoch}  .00016717  00000-0  30074-3 0  9994`;
+  const L1a = seg('24123.00000000');
+  const L1b = seg('24123.25000000');   // +6 h
+  const L1c = seg('24123.50000000');   // +12 h
+  const file = `ISS [Segment 01]\n${L1a}\n${L2}\n`
+    + `ISS [Segment 02]\n${L1b}\n${L2}\n`
+    + `ISS [Segment 03]\n${L1c}\n${L2}\n`;
+
+  it('parses every segment, strips the [Segment] suffix, primary = earliest', () => {
+    const p = join(tmp, 'issmulti.tle');
+    writeFileSync(p, file);
+    const tle = loadIssTle(p);
+    expect(tle.name).toBe('ISS');
+    expect(tle.segments).toHaveLength(3);
+    // Primary is the earliest epoch (drives the set-age / refresh guard).
+    const epochs = tle.segments.map((s) => s.jdsatepoch);
+    expect(tle.satrec.jdsatepoch).toBe(Math.min(...epochs));
+    expect([...epochs]).toEqual([...epochs].sort((a, b) => a - b)); // ascending
+  });
+
+  it('picks the nearest-epoch segment for the confidence epoch', () => {
+    const p = join(tmp, 'issmulti2.tle');
+    writeFileSync(p, file);
+    const tle = loadIssTle(p);
+    const epMs = (i) => (tle.segments[i].jdsatepoch - 2440587.5) * 86400000;
+    // A time 1 h after segment B (6 h from A, 5 h before C) → B is nearest.
+    const near = tleEpochMsAt(tle.satrec, epMs(1) + 3600_000);
+    expect(near).toBeCloseTo(epMs(1), 0);
+    // A time just before segment C → C is nearest, not B.
+    const nearC = tleEpochMsAt(tle.satrec, epMs(2) - 3600_000);
+    expect(nearC).toBeCloseTo(epMs(2), 0);
   });
 });
 

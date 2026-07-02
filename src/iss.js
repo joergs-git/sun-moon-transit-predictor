@@ -53,20 +53,35 @@ export function loadIssTle(path) {
     if (!existsSync(path)) return null;
     const raw = readFileSync(path, 'utf8').trim();
     const lines = raw.split(/\r?\n/).map(l => l.trimEnd()).filter(Boolean);
-    let name = 'ISS';
-    let l1;
-    let l2;
-    if (lines.length >= 3 && !lines[0].startsWith('1 ')) {
-      name = lines[0].replace(/^0 /, '').trim() || 'ISS';
-      [, l1, l2] = lines;
-    } else if (lines.length >= 2) {
-      [l1, l2] = lines;
-    } else {
-      return null;
+    // Name = first non-element line (strip the "0 " prefix and any "[Segment N]"
+    // suffix a supplemental file carries), else 'ISS'.
+    const nameLine = lines.find(l => !l.startsWith('1 ') && !l.startsWith('2 '));
+    const name = (nameLine ?? 'ISS').replace(/^0 /, '').replace(/\s*\[segment.*$/i, '').trim() || 'ISS';
+    // Parse EVERY consecutive (L1, L2) pair. A plain TLE yields one segment; a
+    // Celestrak supplemental (SUP-GP) ISS ephemeris yields many 6-hourly
+    // segments — each an accurate short-window element set that models planned
+    // maneuvers — which issAzEl/issEcef then pick from by nearest epoch.
+    const segments = [];
+    for (let i = 0; i < lines.length - 1; i++) {
+      if (lines[i].startsWith('1 ') && lines[i + 1].startsWith('2 ')) {
+        try {
+          const s = twoline2satrec(lines[i], lines[i + 1]);
+          if (Number.isFinite(s.jdsatepoch)) segments.push(s);
+        } catch { /* skip one malformed pair, keep the rest */ }
+        i += 1;                                    // consume the L2 line
+      }
     }
-    if (!l1?.startsWith('1 ') || !l2?.startsWith('2 ')) return null;
-    const satrec = twoline2satrec(l1, l2);
-    return { satrec, name, loadedAtMs: Date.now(), sourcePath: path, mtimeMs: statSync(path).mtimeMs };
+    if (!segments.length) return null;
+    segments.sort((a, b) => a.jdsatepoch - b.jdsatepoch);
+    // Primary = earliest segment: its epoch is the ephemeris SET's start, so
+    // `tleAgeDays` = how old the whole set is (drives the refresh guard). The
+    // per-time nearest-segment pick (pickSegment) governs actual propagation.
+    const primary = segments[0];
+    primary.segments = segments;
+    return {
+      satrec: primary, segments, name,
+      loadedAtMs: Date.now(), sourcePath: path, mtimeMs: statSync(path).mtimeMs,
+    };
   } catch {
     return null;
   }
@@ -74,10 +89,40 @@ export function loadIssTle(path) {
 
 const EARTH_R_M = 6378137.0;
 
+/**
+ * Pick the element set to propagate for a given time. A plain satrec (single
+ * TLE) is returned as-is; a segmented set (supplemental SUP-GP ephemeris, see
+ * loadIssTle) returns the segment whose epoch is NEAREST the requested time.
+ * SGP4 is most accurate close to epoch, and the operator's 6-hourly segments
+ * model planned maneuvers, so nearest-epoch gives the best position AND a
+ * near-zero propagation age — which is what makes a night pass 🟢 green.
+ */
+function pickSegment(satrec, whenMs) {
+  const segs = satrec?.segments;
+  if (!Array.isArray(segs) || segs.length <= 1) return satrec;
+  const targetJd = unixToJulian(whenMs);
+  let best = segs[0];
+  let bestGap = Math.abs(targetJd - best.jdsatepoch);
+  for (let i = 1; i < segs.length; i++) {
+    const gap = Math.abs(targetJd - segs[i].jdsatepoch);
+    if (gap < bestGap) { best = segs[i]; bestGap = gap; }
+  }
+  return best;
+}
+
+/** Epoch (ms) of the segment that would propagate `whenMs` — used so the
+ *  confidence rating reflects the age of the ACTUALLY-USED segment, not the
+ *  primary. Exported for the service's per-event confidence. */
+export function tleEpochMsAt(satrec, whenMs) {
+  const s = pickSegment(satrec, whenMs);
+  return Number.isFinite(s?.jdsatepoch) ? (s.jdsatepoch - 2440587.5) * 86400000 : null;
+}
+
 /** ISS topocentric Az/El + slant range (m) at a wall-clock time, or null. */
 function issAzEl(satrec, obsEcef, obsLat, obsLon, whenMs) {
-  const tsinceMin = (unixToJulian(whenMs) - satrec.jdsatepoch) * 1440.0;
-  const teme = sgp4(satrec, tsinceMin);
+  const seg = pickSegment(satrec, whenMs);
+  const tsinceMin = (unixToJulian(whenMs) - seg.jdsatepoch) * 1440.0;
+  const teme = sgp4(seg, tsinceMin);
   if (!teme) return null;
   const ecef = temeToEcef(teme.r, new Date(whenMs));
   return { ...targetEcefAzEl(obsEcef, obsLat, obsLon, ecef), ecef };
@@ -85,8 +130,9 @@ function issAzEl(satrec, obsEcef, obsLat, obsLon, whenMs) {
 
 /** ISS ECEF position only (m) at a time, or null. */
 function issEcef(satrec, whenMs) {
-  const tsinceMin = (unixToJulian(whenMs) - satrec.jdsatepoch) * 1440.0;
-  const teme = sgp4(satrec, tsinceMin);
+  const seg = pickSegment(satrec, whenMs);
+  const tsinceMin = (unixToJulian(whenMs) - seg.jdsatepoch) * 1440.0;
+  const teme = sgp4(seg, tsinceMin);
   if (!teme) return null;
   return temeToEcef(teme.r, new Date(whenMs));
 }
