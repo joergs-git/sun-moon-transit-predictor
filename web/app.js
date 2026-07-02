@@ -524,7 +524,23 @@ function renderSkyPlan(state) {
   const dsoNote = meta.enabled
     ? (nextEver ? `sky-targets: soonest/obj, ${meta.nextOpportunityDays ?? 90} d` : `sky-targets: next ${meta.planHorizonDays ?? 7} d`)
     : 'sky-targets off';
-  if (sub) sub.textContent = computing ? `computing ${meta.nextOpportunityDays ?? 90} d scan…` : `${rows.length} event${rows.length === 1 ? '' : 's'} · ${dsoNote}`;
+  // Current ISS TLE age — the confidence badges are rated from the TLE age AT
+  // each event, so surfacing the live age here explains WHY a soon event can
+  // still be 🟡 (the newest element Celestrak has is already N days old). The
+  // prediction can never be fresher than its input TLE.
+  const issAge = Number.isFinite(state.iss?.tleAgeDays) ? state.iss.tleAgeDays : null;
+  const tleNote = issAge != null ? ` · ISS TLE ${issAge.toFixed(1)} d old` : '';
+  if (sub) {
+    sub.textContent = computing
+      ? `computing ${meta.nextOpportunityDays ?? 90} d scan…`
+      : `${rows.length} event${rows.length === 1 ? '' : 's'} · ${dsoNote}${tleNote}`;
+    sub.title = issAge != null
+      ? `Current ISS TLE is ${issAge.toFixed(1)} days old. Confidence is rated from the TLE age AT each event `
+        + `(🟢 < 1 d · 🟡 1–3 d · 🟠 3–6 d · 🔴 > 6 d; ISS never better than 🟡 beyond 2 d for reboost risk). `
+        + `A soon event can still be 🟡 if the newest element Celestrak has published is already ≥ 1 day old — `
+        + `the prediction can only be as fresh as its input TLE.`
+      : '';
+  }
 
   tbody.innerHTML = '';
   if (!rows.length) {
