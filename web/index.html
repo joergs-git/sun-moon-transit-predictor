@@ -894,6 +894,27 @@
             <small id="sharpcap-test-msg" class="field-hint">Fires an immediate 2 s capture using the host/port above (no save needed).</small>
           </div>
 
+          <!-- ── Mount control (v0.55.0) — OPT-IN, night objects only ─────── -->
+          <div class="sc-subhead">🔭 Mount control <span class="sc-subhead-hint">— point an ASCOM mount at the active NIGHT object (never the Sun)</span></div>
+          <label class="checkbox-row">
+            <input name="sharpcap.mount.enabled" type="checkbox"> Allow mount slew (ASCOM)
+            <small class="field-hint">Off by default. Lets the predictor drive an ASCOM mount (unpark / slew / track / park) through the listener. Set the mount's ProgID on the <b>listener</b> side (<code>STP_MOUNT_PROGID</code>). <b>Framing accuracy = your polar alignment — PA the mount manually first.</b> Never slews to the Sun or in daylight.</small></label>
+          <label class="checkbox-row">
+            <input name="sharpcap.mount.autoSequence" type="checkbox"> Autonomous sequence (arm per night)
+            <small class="field-hint">When armed, at <b>Lead min</b> before the active object's pass: unpark → slew → track; park when no pass is left. Requires the toggle above + arming with the button below each night.</small></label>
+          <label>Lead (min)<input name="sharpcap.mount.leadMinutes" type="number" step="any" min="0" max="60">
+            <small class="field-hint">Slew this many minutes before the pass (default 5) — enough to settle before the T−95 s capture arming.</small></label>
+          <label>Min elevation °<input name="sharpcap.mount.minElevationDeg" type="number" step="any" min="0" max="90">
+            <small class="field-hint">Never slew to an object below this elevation (default 15°).</small></label>
+          <div class="checkbox-row" style="flex-wrap:wrap;gap:6px">
+            <button type="button" id="mount-status-btn" class="btn">Status</button>
+            <button type="button" id="mount-unpark-btn" class="btn">Unpark</button>
+            <button type="button" id="mount-slew-btn" class="btn">Slew to target</button>
+            <button type="button" id="mount-park-btn" class="btn">Park</button>
+            <button type="button" id="mount-arm-btn" class="btn">Arm sequence</button>
+            <small id="mount-msg" class="field-hint">⚠ <b>Bench-test first:</b> Unpark → Slew → Park with someone watching the mount before any unattended night. Enable + Save above first.</small>
+          </div>
+
           <!-- ── Additional rigs — extra capture targets, each with its
                   own host/port and per-row overrides for body/pre/post/
                   sep°. Empty fields fall back to the Global defaults

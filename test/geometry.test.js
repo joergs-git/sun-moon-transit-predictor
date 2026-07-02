@@ -9,6 +9,7 @@ import {
   OBSERVABILITY_MIN_ELEVATION_DEG,
   sunAzEl,
   targetAzEl,
+  equatorialRaDec,
 } from '../src/geometry.js';
 import { nextHorizonCrossing, nextMeridianTransit } from '../src/service.js';
 
@@ -18,6 +19,27 @@ const RHEINE = {
   longitudeDeg: 7.4406,
   elevationM: 50.0,
 };
+
+describe('equatorialRaDec (mount slew coords, v0.55.0)', () => {
+  const t = new Date('2026-07-03T01:44:00Z');
+  it('returns a fixed star’s catalogue RA/Dec verbatim', () => {
+    const vega = { id: 'vega', raHours: 18.6156, decDeg: 38.7837 };
+    const rd = equatorialRaDec(RHEINE, vega, t);
+    expect(rd.raHours).toBeCloseTo(18.6156, 3);
+    expect(rd.decDeg).toBeCloseTo(38.7837, 3);
+  });
+  it('computes a body’s RA/Dec from the ephemeris (Moon in range)', () => {
+    const rd = equatorialRaDec(RHEINE, 'Moon', t);
+    expect(rd).not.toBeNull();
+    expect(rd.raHours).toBeGreaterThanOrEqual(0);
+    expect(rd.raHours).toBeLessThan(24);
+    expect(rd.decDeg).toBeGreaterThanOrEqual(-90);
+    expect(rd.decDeg).toBeLessThanOrEqual(90);
+  });
+  it('NEVER returns coordinates for the Sun — a hard safety block', () => {
+    expect(equatorialRaDec(RHEINE, 'Sun', t)).toBeNull();
+  });
+});
 
 describe('sunAzEl', () => {
   it('summer solstice noon in Rheine peaks near 61° elevation, due south', () => {

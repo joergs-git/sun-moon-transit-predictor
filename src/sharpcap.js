@@ -180,6 +180,22 @@ export class SharpCapTrigger {
    * @param {number} [nowMs]
    * @returns {Promise<{ sent: boolean, response?: any, error?: any, reason?: string }>}
    */
+  /**
+   * Mount control (v0.55.0) — send one ASCOM mount action to this rig's
+   * listener, reusing the same socket path as a capture (but a DIFFERENT
+   * command, never the safety-critical capture arming). The caller (service)
+   * has already enforced the safety gates. `action` ∈ unpark|slew|track|park|
+   * status; `params` carries { raHours, decDeg } for slew or { on } for track.
+   * Returns the listener's reply via _sendPayload's { sent, response, error }.
+   */
+  async mount(action, params = {}) {
+    if (!this.enabled) return { sent: false, reason: 'disabled' };
+    const payload = { cmd: 'mount', action, ...params };
+    if (this.config.mountProgId) payload.progId = this.config.mountProgId;
+    if (this.config.token) payload.token = this.config.token;
+    return this._sendPayload(payload);
+  }
+
   async triggerFromEvent(evt, nowMs = Date.now()) {
     const decide = this.shouldTrigger(evt);
     if (!decide.ok) return { sent: false, reason: decide.reason };

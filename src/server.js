@@ -130,6 +130,7 @@ export function createHttpServer(opts) {
     getConfig, updateConfig, requestUpdate, requestAcInfo, requestRoute,
     requestSharpcapTest, requestBuzzerTest, setActiveTarget, getNextOpportunity,
     requestWifiScan, requestWifiConnect, requestWifiStatus,
+    requestMount, setMountArmed,
   } = opts;
 
   const server = createServer(async (req, res) => {
@@ -332,6 +333,26 @@ export function createHttpServer(opts) {
         catch (e) { return jsonResponse(res, 400, { error: `bad json: ${e.message}` }); }
         try {
           const result = setActiveTarget(body?.target);
+          return jsonResponse(res, result.ok ? 200 : 400, result);
+        } catch (e) {
+          return jsonResponse(res, 500, { error: String(e?.message ?? e) });
+        }
+      }
+      if (url.pathname === '/api/mount' && req.method === 'POST') {
+        // Mount control (v0.55.0). Body: { action: 'slew'|'unpark'|'track'|
+        // 'park'|'status'|'arm'|'disarm', targetId?, on? }. All safety gates are
+        // enforced server-side. 404 unless config.sharpcap.mount.enabled.
+        if (!requestMount) return jsonResponse(res, 404, { error: 'mount api disabled' });
+        let body;
+        try { body = await readJsonBody(req); }
+        catch (e) { return jsonResponse(res, 400, { error: `bad json: ${e.message}` }); }
+        const action = String(body?.action ?? '');
+        try {
+          if (action === 'arm' || action === 'disarm') {
+            if (!setMountArmed) return jsonResponse(res, 404, { error: 'mount api disabled' });
+            return jsonResponse(res, 200, { ok: true, ...setMountArmed(action === 'arm') });
+          }
+          const result = await requestMount(action, { targetId: body?.targetId, on: body?.on });
           return jsonResponse(res, result.ok ? 200 : 400, result);
         } catch (e) {
           return jsonResponse(res, 500, { error: String(e?.message ?? e) });
