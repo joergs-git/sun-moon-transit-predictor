@@ -8,6 +8,25 @@
 - **Rule:** <what to always/never do instead>
 - **Applies to:** <context>
 
+## [2026-07-02] — A user preference must not be gated on an unrelated feature toggle
+- **Mistake:** The body-observability floor (drives the "Sun/Moon below observable
+  limit (< N°)" banner AND the tracker's candidate-emission gate) was auto-widened
+  only from `sharpcapTargets` where `trigger.enabled` was true. A user who set the
+  scope floor to 10° but left SharpCap **auto-capture** disabled still got the
+  hardcoded 20° default → Sun at 13–16° flagged not observable, every 10–20°
+  transit silently dropped.
+- **Root cause:** Two orthogonal concepts were conflated behind one flag. `enabled`
+  means "fire a SharpCap recording"; `minElevationDeg` means "lowest elevation
+  worth tracking". Gating the *tracking floor* on the *capture toggle* let one knob
+  silently override an explicit user setting.
+- **Rule:** When a setting expresses a *what-to-do* preference (a floor, a filter,
+  a threshold), apply it independently of *whether-to-act* toggles. Before trusting
+  derived config, verify against the LIVE `/api/config` + `/api/state` on the box,
+  not the placeholder dev config — the ground truth exposed the disabled-rig case
+  a code read alone would have missed.
+- **Applies to:** src/service.js `effectiveMinBodyElevDeg` derivation; any
+  auto-widen/auto-narrow loop that iterates rigs/triggers with an `enabled` guard.
+
 ## [2026-06-23] — Overlay and plotted content must share ONE coordinate frame
 - **Mistake:** In the FOV sketch the sensor-FOV box was rotated into the camera
   frame (via `computeSensorMatrix`), but the transit path, aircraft silhouette,

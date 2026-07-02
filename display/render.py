@@ -613,6 +613,19 @@ def _sky_and_list(draw, state, pool):
     # ── Left: RECENT — the last few real (candidate/imminent) transits that were
     # recorded, with how long ago + the achieved separation. ──
     draw.text((4, top), "RECENT", font=_font(11), fill=BLACK)
+    # TLE freshness marker (v0.52.0): ISS/satellite SGP4 accuracy degrades with
+    # TLE age (~1-3 km/day cross-track), so surface it right by the satellite
+    # transit block instead of leaving it silent. Compact "TLE N.Nd" when fresh;
+    # bold "! TLE Nd" once it crosses ~3 days — the point where transit timing
+    # noticeably drifts and a refresh is due. Sits between RECENT and the
+    # AIRCRAFT header (rx=138), so it never collides.
+    iss = state.get("iss") or {}
+    tle_age = _num(iss.get("tleAgeDays"))
+    if iss.get("active") and tle_age is not None:
+        stale = tle_age >= 3.0
+        a_txt = ("! TLE %.0fd" % tle_age) if stale else ("TLE %.1fd" % tle_age)
+        a_x = 4 + draw.textlength("RECENT", font=_font(11)) + 8
+        draw.text((a_x, top), a_txt, font=_font(11, bold=stale), fill=BLACK)
     recents = state.get("recentTransits") or []
     now_ms = _num(state.get("nowMs")) or (time.time() * 1000.0)
     ry = top + 17
