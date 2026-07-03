@@ -20,6 +20,8 @@
 #   STP_PUSHOVER_TOKEN   Pushover application token (blank = disable)
 #   STP_PUSHOVER_USER    Pushover user / group key  (blank = disable)
 #   STP_WITH_DISPLAY     set to 1 to do the --with-display setup non-interactively
+#   STP_WIFI_COUNTRY     WiFi regulatory country (ISO code, e.g. DE/GB/US); set on
+#                        every install. Only defaults to DE when none is set yet.
 #
 # What it does:
 #   1. Ensures Node.js >= 22 (installed from NodeSource if missing).
@@ -346,10 +348,32 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 5c½. WiFi regulatory country — set on EVERY install. WiFi in general, and the
+#      off-road AP mode in particular, won't work without a regulatory country
+#      set + the radio unblocked (the AP then silently never starts — no SSID
+#      appears). Honour STP_WIFI_COUNTRY; otherwise default DE ONLY when none is
+#      configured yet, so a box with a correct country is never overridden.
+# ---------------------------------------------------------------------------
+if command -v raspi-config >/dev/null 2>&1; then
+  CUR_COUNTRY="$(iw reg get 2>/dev/null | sed -n 's/^country \([A-Z0-9]\{2\}\).*/\1/p' | head -1)"
+  if [ -n "${STP_WIFI_COUNTRY:-}" ]; then
+    sudo_run raspi-config nonint do_wifi_country "$STP_WIFI_COUNTRY" || log "WARN: could not set WiFi country"
+    log "WiFi regulatory country set to $STP_WIFI_COUNTRY"
+  elif [ -z "$CUR_COUNTRY" ] || [ "$CUR_COUNTRY" = "00" ]; then
+    sudo_run raspi-config nonint do_wifi_country DE || log "WARN: could not set WiFi country"
+    log "WiFi regulatory country was unset → defaulted to DE (override with STP_WIFI_COUNTRY)"
+  else
+    log "WiFi regulatory country already set to $CUR_COUNTRY"
+  fi
+fi
+sudo_run rfkill unblock wifi 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
 # 5d. Optional off-road WiFi failover AP (only with --with-wifi-ap /
 #     STP_WITH_WIFI_AP=1). Installs NetworkManager, a self-hosted AP profile,
 #     and the failover + privileged-join units, so the box stays reachable in
 #     the field with no terminal. Opt-in because it changes the network stack.
+#     (The WiFi country above is already set for every install.)
 # ---------------------------------------------------------------------------
 if [ "$WITH_WIFI_AP" -eq 1 ]; then
   log "Setting up off-road WiFi failover AP (--with-wifi-ap) ..."
@@ -358,17 +382,6 @@ if [ "$WITH_WIFI_AP" -eq 1 ]; then
     sudo_run apt-get install -y network-manager || log "WARN: network-manager install failed"
   fi
   sudo_run systemctl enable --now NetworkManager || log "WARN: could not enable NetworkManager"
-
-  # AP mode needs a WiFi REGULATORY COUNTRY set + the radio unblocked, or the
-  # access point silently fails to start (no SSID ever appears — the classic
-  # "off-road Pi hosts nothing" symptom). Default DE; override STP_WIFI_COUNTRY.
-  WIFI_COUNTRY="${STP_WIFI_COUNTRY:-DE}"
-  if command -v raspi-config >/dev/null 2>&1; then
-    sudo_run raspi-config nonint do_wifi_country "$WIFI_COUNTRY" \
-      || log "WARN: could not set WiFi country ($WIFI_COUNTRY) — AP mode may not start"
-  fi
-  sudo_run rfkill unblock wifi 2>/dev/null || true
-  log "WiFi regulatory country: $WIFI_COUNTRY (radio unblocked)"
 
   AP_SSID="${STP_AP_SSID:-sunmoontransits}"
   # Device-unique, readable password via the SAME code the app shows on screen.
