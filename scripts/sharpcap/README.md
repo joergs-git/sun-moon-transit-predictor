@@ -222,19 +222,35 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -AddInstance
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -AddInstance -InstanceName Moon -InstancePort 9998
 ```
 
-It copies the config to `stp-sharpcap.<name>.config.json` (new port), auto-detects
-`SharpCap.exe` (override `-SharpCapPath`), and drops `Desktop\SharpCap-<name>.bat`
-that launches SharpCap with `STP_SHARPCAP_CONFIG` set. Then:
+**There is NO second startup script.** The base install wires SharpCap's startup
+script (`bootstrap.py`) **once** — it's a SharpCap-wide setting. `-AddInstance`
+just copies the config to `stp-sharpcap.<name>.config.json` with a new **port**,
+auto-detects `SharpCap.exe`, and drops `Desktop\SharpCap-<name>.bat` that launches
+SharpCap with `STP_SHARPCAP_CONFIG` pointing at that config — so the *same*
+startup script binds the second port. `-AddInstance` **does not touch rig #1's
+config** and skips the setup wizard.
 
-1. Launch SharpCap **#1 normally** (base port).
-2. Double-click `SharpCap-<name>.bat` for **#2** (second port).
-3. Add matching targets in the predictor:
+Full two-rig setup:
+
+1. **Install rig #1** — run `install.ps1` once (the wizard configures it).
+2. **Add rig #2** — `install.ps1 -AddInstance -InstanceName Moon -InstancePort 9998`.
+   It asks one thing: *does this rig have its **own** mount?* (No = it shares
+   rig #1's mount — see the mount note below).
+3. Launch SharpCap **#1 normally** (base port); double-click `SharpCap-Moon.bat`
+   for **#2** (second port).
+4. Add matching targets in the predictor (Settings → SharpCap → Capture rigs, or):
    ```json
    "targets": [
      { "name": "Sun",  "host": "127.0.0.1", "port": 9999, "bodies": ["Sun"]  },
      { "name": "Moon", "host": "127.0.0.1", "port": 9998, "bodies": ["Moon"] }
    ]
    ```
+
+> **🔭 Mount + two instances:** the second instance is created with **no mount**
+> by default — because **only ONE listener may drive a shared mount** (two ASCOM
+> clients on one driver conflict). Two scopes on one mount → keep the mount on
+> rig #1 only. Two *separate* mounts → answer "own mount" (or pass `-MountProgId`)
+> so rig #2 gets its own.
 
 Both instances share the install dir, cached listener and (timestamped, tagged) log.
 Re-run `-AddInstance` with a new `-InstanceName` for a third.

@@ -348,7 +348,9 @@ if ($ChooseMount) {
 # Runs only in interactive mode and only for things not already decided by a
 # flag. Every question DEFAULTS TO YOUR CURRENT VALUE — pressing Enter keeps your
 # setup, so a re-run never nags or changes anything unless you say so.
-if ($script:Interactive) {
+# Skipped for -AddInstance: that flow only adds a second rig, it must not
+# re-prompt (or touch) the already-configured base rig.
+if ($script:Interactive -and -not $AddInstance) {
     Write-Host ""
     Write-Step "Setup — press Enter to keep the current value"
 
@@ -513,6 +515,22 @@ if ($AddInstance) {
     $cfg = [ordered]@{}
     foreach ($p in $base.PSObject.Properties) { $cfg[$p.Name] = $p.Value }
     $cfg["port"] = $port
+
+    # Mount for the SECOND instance. NEVER inherit the base mount blindly: two
+    # rigs usually share ONE mount (only one listener may drive it, else two
+    # ASCOM clients fight over the driver) or sit on two separate mounts. So the
+    # instance starts with NO mount; -MountProgId sets one explicitly, otherwise
+    # (interactive) we ask whether this rig has its OWN mount.
+    $cfg["mountProgId"] = ""
+    if ($MountProgId) {
+        $cfg["mountProgId"] = $MountProgId; Write-Ok "instance mount: $MountProgId"
+    } elseif ($ChooseMount -or ($script:Interactive -and (Ask-YesNo "Does this second rig have its OWN separate mount to slew? (No = shares rig #1's mount)" $false))) {
+        $progId = Select-AscomMount ""
+        if ($progId) { $cfg["mountProgId"] = $progId; Write-Ok "instance mount: $progId" }
+    } else {
+        Write-Ok "instance mount: none (rig #1 drives the shared mount, if any)"
+    }
+
     $cfgPath = Join-Path $InstallDir "stp-sharpcap.$safeName.config.json"
     $json = $cfg | ConvertTo-Json -Depth 5
     # UTF-8 without BOM -- see the base config write below for why.
