@@ -72,6 +72,11 @@ param(
     [int]$InstancePort,          # listener port for this instance (default base +/- 1)
     [string]$SharpCapPath,       # optional override; auto-detected by default
 
+    # --- Setup behaviour ---------------------------------------------------
+    [switch]$NonInteractive,     # skip all prompts (automation); defaults only
+    [switch]$FactoryReset,       # rare: rewrite the config from a clean template
+    [switch]$Remove,             # rare: uninstall (delete the install dir)
+
     [switch]$Help                # print usage and exit
 )
 
@@ -83,12 +88,17 @@ USAGE
   powershell -ExecutionPolicy Bypass -File install.ps1 [options]
 
 WHAT IT DOES
-  Downloads the latest listener from GitHub, sets up a bootstrap that pulls the
-  newest version on every SharpCap start (no versioning), and writes a local,
-  update-safe config for the watched folder + network destination. Re-running
-  doubles as the updater.
+  Just run it with no options — it walks you through setup interactively (NAS
+  copy? which mount?) with sensible defaults. Downloads the latest listener,
+  sets up an auto-update bootstrap, and writes an update-safe local config.
+  Re-running KEEPS your current config as the defaults (press Enter to keep
+  each value) and doubles as the updater — it never blindly overwrites.
 
 OPTIONS
+  (All optional — the interactive wizard covers the common setup.)
+  -NonInteractive       Skip all prompts (automation) — defaults only
+  -FactoryReset         Rare: rewrite the config from a clean template
+  -Remove               Rare: uninstall (delete the install folder)
   -Branch <name>        Git branch to pull from (default: main; override only
                         to test an unmerged feature branch)
   -InstallDir <path>    Install folder (default: %LOCALAPPDATA%\stp-sharpcap)
@@ -157,6 +167,32 @@ try {
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "    $msg" -ForegroundColor Green }
 function Write-Warn2($msg) { Write-Host "    $msg" -ForegroundColor Yellow }
+
+# Interactive by default: a real console whose input is not redirected. A piped
+# one-liner (input redirected) or -NonInteractive → no prompts, defaults only.
+$script:Interactive = (-not $NonInteractive) -and [Environment]::UserInteractive
+try { if ([Console]::IsInputRedirected) { $script:Interactive = $false } } catch { }
+
+# Yes/No prompt with a default (Enter = the default). Non-interactive → default.
+function Ask-YesNo($question, $defaultYes) {
+    if (-not $script:Interactive) { return [bool]$defaultYes }
+    $suffix = if ($defaultYes) { "[Y/n]" } else { "[y/N]" }
+    $ans = Read-Host "  $question $suffix"
+    if ([string]::IsNullOrWhiteSpace($ans)) { return [bool]$defaultYes }
+    return ($ans -match '^(y|yes|j|ja)$')
+}
+
+# --- Rare: uninstall ------------------------------------------------------
+if ($Remove) {
+    Write-Step "Uninstall — removing $InstallDir"
+    if ($script:Interactive -and -not (Ask-YesNo "Delete the stp-sharpcap install folder (config + cached listener)?" $false)) {
+        Write-Warn2 "aborted."; return
+    }
+    try { if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir } ; Write-Ok "removed $InstallDir" }
+    catch { Write-Warn2 ("could not remove: {0}" -f $_.Exception.Message) }
+    Write-Warn2 "Also remove the SharpCap startup script pointer: File -> SharpCap Settings -> Startup."
+    return
+}
 
 # Classic Windows folder-picker. Returns the chosen path, or $null if the user
 # cancels or no GUI is available. The dialog needs an STA thread (the default
@@ -245,17 +281,20 @@ if ($Branch -ne "main") {
 $configPath = Join-Path $InstallDir "stp-sharpcap.config.json"
 Write-Step "Local config: $configPath"
 
-# Start from the existing file (so unspecified settings are preserved), or an
-# ordered template with sane defaults if this is a first install.
+# Start from the existing file (so unspecified settings are PRESERVED — a re-run
+# never blindly overwrites; it keeps every current value unless you change it),
+# or a clean template on first install / -FactoryReset.
 $cfg = [ordered]@{}
-if (Test-Path $configPath) {
+if ((Test-Path $configPath) -and -not $FactoryReset) {
     try {
         $existing = Get-Content -Raw -Path $configPath | ConvertFrom-Json
         foreach ($p in $existing.PSObject.Properties) { $cfg[$p.Name] = $p.Value }
-        Write-Ok "merging into existing config"
+        Write-Ok "keeping your existing config as the defaults (change only what you want)"
     } catch {
         Write-Warn2 "existing config unreadable; rewriting from template"
     }
+} elseif ($FactoryReset) {
+    Write-Warn2 "-FactoryReset: rewriting config from a clean template"
 }
 function Set-Default($k, $v) { if (-not $cfg.Contains($k)) { $cfg[$k] = $v } }
 Set-Default "port" 9999
@@ -303,6 +342,45 @@ if ($ChooseMount) {
     Write-Step "Pick your mount (ASCOM chooser)"
     $progId = Select-AscomMount $cfg["mountProgId"]
     if ($progId) { $cfg["mountProgId"] = $progId; Write-Ok "mount: $progId" } else { Write-Warn2 "no mount picked; keeping '$($cfg['mountProgId'])'" }
+}
+
+# ── Interactive setup wizard (no flags needed) ─────────────────────────────
+# Runs only in interactive mode and only for things not already decided by a
+# flag. Every question DEFAULTS TO YOUR CURRENT VALUE — pressing Enter keeps your
+# setup, so a re-run never nags or changes anything unless you say so.
+if ($script:Interactive) {
+    Write-Host ""
+    Write-Step "Setup — press Enter to keep the current value"
+
+    # 1) Capture transfer: local SharpCap folder -> network/NAS folder.
+    if (-not $EnableTransfer -and -not $DisableTransfer) {
+        $curOn = [bool]$cfg["transferEnabled"]
+        $curTxt = if ($curOn) { " (now ON -> '$($cfg['destDir'])')" } else { "" }
+        if (Ask-YesNo "Copy each capture to a network/NAS folder after recording?$curTxt" $curOn) {
+            $cfg["transferEnabled"] = $true
+            Write-Step "  Pick the SharpCap capture folder (local)"
+            $p = Select-FolderDialog "Select the SharpCap capture folder to watch (subfolders included)" $cfg["sourceDir"]
+            if ($p) { $cfg["sourceDir"] = $p; Write-Ok "  source: $p" }
+            Write-Step "  Pick the network destination folder (remote)"
+            $p = Select-FolderDialog "Select the destination folder on the network drive" $cfg["destDir"]
+            if ($p) { $cfg["destDir"] = $p; Write-Ok "  destination: $p" }
+        } else {
+            $cfg["transferEnabled"] = $false
+        }
+    }
+
+    # 2) Mount: offered BY DEFAULT (most imaging rigs have an ASCOM mount). On a
+    # re-run that already has one, the default is "keep" (Enter = no change).
+    if (-not $ChooseMount -and -not $MountProgId) {
+        $hasMount = -not [string]::IsNullOrWhiteSpace([string]$cfg["mountProgId"])
+        $q = if ($hasMount) { "Change the mount the predictor slews? (now '$($cfg['mountProgId'])')" }
+             else { "Let the predictor point your telescope at the target (pick your ASCOM mount)?" }
+        if (Ask-YesNo $q (-not $hasMount)) {
+            $progId = Select-AscomMount $cfg["mountProgId"]
+            if ($progId) { $cfg["mountProgId"] = $progId; Write-Ok "  mount: $progId" }
+            elseif ($hasMount) { Write-Ok "  keeping mount: $($cfg['mountProgId'])" }
+        }
+    }
 }
 
 # Write UTF-8 WITHOUT a BOM. Windows PowerShell 5.1's `Set-Content -Encoding

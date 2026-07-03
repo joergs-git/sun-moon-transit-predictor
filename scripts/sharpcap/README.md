@@ -20,6 +20,10 @@ In **Windows PowerShell** on the PC running SharpCap:
 $u="https://raw.githubusercontent.com/joergs-git/sun-moon-transit-predictor/main/scripts/sharpcap/install.ps1"; iwr $u -OutFile "$env:TEMP\stp.ps1"; powershell -ExecutionPolicy Bypass -File "$env:TEMP\stp.ps1"
 ```
 
+It **walks you through setup** — copy captures to a NAS? which ASCOM mount? —
+with sensible defaults (just press Enter to skip/keep). **Re-running keeps your
+current settings** as the defaults and updates the listener; it never overwrites.
+
 > Already cloned the repo? Just run: `powershell -ExecutionPolicy Bypass -File .\install.ps1`
 >
 > ⚠️ **`.\install.ps1` alone fails** with *"running scripts is disabled on this
@@ -292,11 +296,12 @@ runs an unattended sequence around a pass (`unpark → slew → track`, then `pa
 The listener talks **ASCOM Telescope directly** (`ASCOM.DriverAccess`, lazy import),
 so SharpCap keeps only the camera — no Device Hub needed.
 
-**Pick your mount — no typing, no ProgID, no env vars.** Two ways, both use the
-standard ASCOM chooser (the same list every astro app shows):
+**Pick your mount — no typing, no ProgID, no env vars.** The standard ASCOM
+chooser (the same list every astro app shows):
 
-- **In the installer** (recommended): `powershell -ExecutionPolicy Bypass -File .\install.ps1 -ChooseMount`
-  → pops the ASCOM picker, you click your mount, it's saved to the config. Done.
+- **In the installer**: just run it — the setup wizard asks *"pick your ASCOM
+  mount?"* and pops the picker. (Non-interactive: add `-ChooseMount`, or
+  `-MountProgId '<id>'`.)
 - **In the browser** (anytime): ⚙ Settings → Scopes → 🔭 Mount control →
   **Choose mount…** → the picker opens on the SharpCap PC → click your mount.
 
