@@ -1,10 +1,18 @@
 [Unit]
 Description=Nightly auto-update for stp.service
 
+# Two triggers, OR-combined by systemd:
+#
+# 1. OnBootSec — run ~2 min after EVERY boot so a Pi that is online always
+#    comes up on the newest version (v0.56.4). auto-update.sh is a safe no-op
+#    when offline (git pull fails → exit 0) or already current (HEAD unmoved →
+#    no restart), so this costs nothing when there is nothing to do. The
+#    service orders After=network-online.target, so the pull waits for the link.
+# 2. OnCalendar — nightly at 03:30 local (+/- 15 min jitter) to pick up
+#    same-day releases without a reboot. Persistent=true catches up a nightly
+#    run missed while the Pi was off.
 [Timer]
-# 03:30 local time, +/- 15 min jitter to avoid thundering-herd on shared
-# upstream. Persistent=true catches up after an offline window (a Pi that
-# was off at 03:30 will run the timer the next time it boots).
+OnBootSec=2min
 OnCalendar=*-*-* 03:30:00
 Persistent=true
 RandomizedDelaySec=15m

@@ -1,6 +1,6 @@
 """
 Pillow renderer for the 4.2" e-paper panel (400×300, 1-bit black/white).
-v0.31.19
+v0.56.5
 
 render_state() turns an /api/state snapshot into a PIL Image. The layout is
 deliberately monospace so columns self-align, and fixed into three paragraphs.
@@ -781,7 +781,7 @@ def _draw_qr(draw, data, is_wifi=False):
                 draw.point((x0 + c, y0 + r), fill=BLACK)
 
 
-def render_state(state, display_cfg=None, source_url=None):
+def render_state(state, display_cfg=None, source_url=None, ap_override=None):
     """Render a full /api/state snapshot to a 1-bit PIL Image.
 
     Fixed three-paragraph grid (not configurable — `display_cfg` is accepted for
@@ -791,6 +791,11 @@ def render_state(state, display_cfg=None, source_url=None):
       3) bottom block  — Sky-now + the next tracked planes
     `source_url` (the host this panel polls) is encoded as a tiny QR in the
     bottom-right corner so you can open that web UI on a phone.
+
+    `ap_override` (v0.56.4): the LOCAL Pi's wifiAp block, read straight from the
+    local service. When THIS Pi is hosting its off-road AP, its join banner must
+    show even if `state` came from a REMOTE data source (whose own wifiAp is
+    about a different box). So the local AP always wins over `state.wifiAp` here.
     """
     img = Image.new("1", (WIDTH, HEIGHT), WHITE)
     draw = ImageDraw.Draw(img)
@@ -801,14 +806,96 @@ def render_state(state, display_cfg=None, source_url=None):
     _primary(draw, state, pool[0] if pool else None)
     _sky_and_list(draw, state, pool)
     # Off-road AP mode (v0.51.0): when the Pi hosts its onboarding access point,
-    # overlay the join banner + a WiFi-join QR instead of the web-URL QR.
-    ap = state.get("wifiAp") or {}
+    # overlay the join banner + a WiFi-join QR instead of the web-URL QR. Prefer
+    # the LOCAL AP block (ap_override) over state.wifiAp so a panel showing a
+    # remote host still surfaces THIS Pi's own join credentials (v0.56.4).
+    ap = ap_override or state.get("wifiAp") or {}
     if ap.get("active") and ap.get("qr"):
         _draw_ap_banner(draw, ap)
         _draw_qr(draw, ap["qr"], is_wifi=True)
     else:
         _draw_qr(draw, source_url)
     return img
+
+
+def render_ap_onboarding(ap, source_url=None, reason="", web_url=None):
+    """Full-screen 'connect to THIS device' onboarding (v0.56.4).
+
+    Shown when the Pi is hosting its off-road access point but the configured
+    data source is unreachable — i.e. exactly the lockout case where the plain
+    'SERVER OFFLINE' screen used to leave the user stranded with no password.
+    The generated SSID + password are drawn large and unmistakable, above TWO
+    QR codes (v0.56.5): ① a WiFi-join payload so a phone joins with one tap (no
+    typing the password), and ② the `web_url` (the AP gateway) so the predictor
+    opens in the browser once joined. Never a dead end.
+    """
+    img = Image.new("1", (WIDTH, HEIGHT), WHITE)
+    draw = ImageDraw.Draw(img)
+
+    ssid = (ap or {}).get("ssid") or ""
+    pw = (ap or {}).get("password") or ""
+    wifi_qr = (ap or {}).get("qr")
+
+    # Title bar — inverted so it reads as the primary call to action.
+    draw.rectangle((0, 0, WIDTH - 1, 22), fill=BLACK)
+    draw.text((6, 3), "CONNECT TO THIS DEVICE", font=_font(14, bold=True), fill=WHITE)
+
+    # Credentials, big — so the AP can also be joined by TYPING them, not only
+    # by scanning (a phone can't scan the WiFi QR while its own camera app is
+    # busy, etc.). ssid/pass sit on one row each above the two QR codes.
+    _lv(draw, 6, 27, "WIFI", ssid, 18, 11, gap=5, pad=0)
+    _lv(draw, 6, 51, "PASS", pw, 20, 11, gap=5, pad=0)
+
+    # ── Two QR codes side by side (v0.56.5) ──
+    #  ① WiFi-join payload  → one-tap join of the AP (no typing the password)
+    #  ② the web-UI URL     → opens the predictor in the browser once joined
+    cap_y, qr_y, box = 78, 101, 3
+    draw.text((26, cap_y), "1 JOIN WIFI", font=_font(11, bold=True), fill=BLACK)
+    _draw_big_qr(draw, wifi_qr, 28, qr_y, box=box)
+    draw.text((214, cap_y), "2 OPEN IN BROWSER", font=_font(11, bold=True), fill=BLACK)
+    _draw_big_qr(draw, web_url, 216, qr_y, box=box)
+    if web_url:
+        draw.text((214, HEIGHT - 52), web_url[:28], font=_font(11), fill=BLACK)
+
+    # Why we are here + a timestamp, small, along the bottom.
+    clock = time.strftime("%H:%M:%S")
+    note = "data source offline"
+    if source_url:
+        note += " · %s" % source_url
+    draw.text((6, HEIGHT - 34), note[:60], font=_font(11), fill=BLACK)
+    if reason:
+        draw.text((6, HEIGHT - 20), reason[:60], font=_font(11), fill=BLACK)
+    _right(draw, WIDTH - 4, HEIGHT - 20, clock, _font(11))
+    return img
+
+
+def _draw_big_qr(draw, data, x0, y0, box=3):
+    """Draw a large QR (WiFi-join payload OR a URL — encoded verbatim) at
+    (x0, y0) with a white quiet zone. No-op if the qrcode lib is missing or no
+    payload was given (the SSID/password/URL text is still shown, so onboarding
+    never fully fails)."""
+    if not _HAVE_QR or not data:
+        return
+    try:
+        qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L,
+                           box_size=box, border=0)
+        qr.add_data(data)
+        qr.make(fit=True)
+        m = qr.get_matrix()
+    except Exception:
+        return
+    n = len(m)
+    if not n:
+        return
+    quiet = 2 * box
+    side = n * box
+    draw.rectangle((x0 - quiet, y0 - quiet, x0 + side + quiet, y0 + side + quiet), fill=WHITE)
+    for r in range(n):
+        row = m[r]
+        yy = y0 + r * box
+        for c in range(n):
+            if row[c]:
+                draw.rectangle((x0 + c * box, yy, x0 + c * box + box - 1, yy + box - 1), fill=BLACK)
 
 
 def render_offline(source_url, reason=""):

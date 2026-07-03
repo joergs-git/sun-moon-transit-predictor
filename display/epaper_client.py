@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 E-paper display client for the Sun-Moon Transit Predictor.
-v0.47.3 — guarded shutdown (clean restart) + opt-in region-only refresh.
+v0.56.4 — off-road AP onboarding shown from the LOCAL service (lockout fix).
 
 A standalone, decoupled HTTP poller + renderer for a Waveshare 4.2" B/W SPI
 panel (400×300) on a Raspberry Pi 5. It carries NO business logic: it reads its
@@ -254,14 +254,31 @@ def run(panel, once=False):
             except Exception as e:
                 _log("buzzer scheduler error: %s" % e)
 
+        # Local off-road AP onboarding (v0.56.4). The access point is how you
+        # reach THIS Pi, so its join credentials come from the LOCAL service and
+        # are shown regardless of whether the (possibly remote) data source is
+        # reachable. Without this, a panel pointed at another antenna shows only
+        # "SERVER OFFLINE" while the Pi is hosting its AP — the generated
+        # password never appears and the box is unreachable: a lockout.
+        local_ap = config.fetch_local_wifi_ap()
+
         # Panel.
         if display_on:
             recovered = conn_ok and (last_conn_ok is False)
             if conn_ok != last_conn_ok:
                 _log("connected to %s" % source_url if conn_ok else "offline: %s (%s)" % (source_url, reason))
                 last_conn_ok = conn_ok
-            img = (render.render_state(state, display_cfg, source_url=source_url)
-                   if conn_ok else render.render_offline(source_url, reason))
+            if conn_ok:
+                # Live readout — with THIS Pi's AP banner overlaid when hosting.
+                img = render.render_state(state, display_cfg, source_url=source_url,
+                                          ap_override=local_ap)
+            elif local_ap:
+                # Data source down AND we are hosting the AP → the actionable
+                # "connect to this device" screen instead of a dead-end offline.
+                img = render.render_ap_onboarding(local_ap, source_url, reason,
+                                                  web_url=config.AP_WEB_URL)
+            else:
+                img = render.render_offline(source_url, reason)
             need_full = (last_full == 0.0) or (now - last_full >= long_s) or recovered
             region_on = bool(display_cfg.get("regionPartial"))
 

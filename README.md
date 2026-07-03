@@ -103,7 +103,7 @@ curl -s localhost:8080/data/aircraft.json | grep -o '"hex"' | wc -l  # planes se
 - Single **Raspberry Pi 5**, ~5 W, browser-administered, runs unattended for months.
 - **Offline** geometry (SGP4 for satellites — ISS, Hubble, Tiangong — `astronomy-engine` for Sun/Moon) — no cloud needed for prediction.
 - Optional **e-paper panel** (browserless readout) + **piezo buzzer** (audible countdown), both configured from the web UI.
-- Auto-updates nightly from `main`; personal config (`observer.json`, `service.json`, `data/`) is never overwritten.
+- Auto-updates on every boot (when online) and nightly from `main`; personal config (`observer.json`, `service.json`, `data/`) is never overwritten.
 
 ## License
 
