@@ -41,6 +41,18 @@ nearby traffic even when nothing currently qualifies as a Real candidate.
   the source is loopback (a single-Pi setup reading its own `localhost`), the
   host is swapped for this Pi's real **LAN IP** so the QR still opens the local
   web UI. Omitted only if the `qrcode` lib is absent.
+- **Off-road AP onboarding (lockout-proof)** — when this Pi is hosting its
+  own WiFi access point (no home network in range), the panel always shows how
+  to join **this** device: the **SSID + password** (derived per-device — it is
+  never `12345678`) and a one-tap **WiFi-join QR**. This is read from the
+  **local** service, so it appears even when the configured **Data source** is a
+  remote antenna that is unreachable off-road — where the panel would otherwise
+  show only `SERVER OFFLINE`. If the source is up, the join banner overlays the
+  normal readout; if it's down, a full-screen **CONNECT TO THIS DEVICE** screen
+  replaces the dead-end offline screen: SSID + password in large type plus **two
+  QR codes** — ① **JOIN WIFI** (one-tap join) and ② **OPEN IN BROWSER** (the
+  `http://10.42.0.1:8081` AP-gateway URL) — so a phone joins and opens the web
+  UI without typing anything.
 
 The client carries no business logic — it polls the predictor's HTTP API and
 renders. So the data can come from **the same Pi** or a **remote Pi on the LAN**
@@ -192,7 +204,7 @@ nothing or garbage on first run, switch to the older driver via the unit's
 | `No module named 'waveshare_epd.epd4in2_V2'` | Older board — set `STP_EPD_DRIVER=epd4in2` in the unit, daemon-reload, restart. |
 | `failed to init panel driver` | SPI not enabled, driver not installed, or wrong `STP_EPD_DRIVER`. See logs. |
 | Nothing / garbage on screen | Try `STP_EPD_DRIVER=epd4in2` (older board) vs `epd4in2_V2`. |
-| `SERVER OFFLINE` | The **Data source URL** host is unreachable. Check the predictor is up and the IP/port are right. |
+| `SERVER OFFLINE` | The **Data source URL** host is unreachable. Check the predictor is up and the IP/port are right. (If this Pi is hosting its off-road AP, the panel shows the **CONNECT TO THIS DEVICE** join screen instead — join it and blank the Data-source URL in Settings.) |
 | **`display disabled`** even though it's enabled in Settings | The client reads its `enabled` flag from a Node service, and prints which host on the disabled screen (`config: <url>`). It prefers this Pi's own service, so normally you just enable it in **this Pi's** browser Settings. If the screen shows a *remote* host (a diskless panel via `STP_CONFIG_URL`), either enable the panel in **that** host's Settings, or unset `STP_CONFIG_URL` so the local service is used. No systemd edit is needed for a standard install. |
 | Permission denied on `/dev/spidev0.0` | Service user not in `spi`/`gpio` groups (step 3); re-login or reboot. |
 | Heavy ghosting | Lower **Long refresh** (more frequent full clears). |

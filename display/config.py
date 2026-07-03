@@ -1,6 +1,6 @@
 """
 Bootstrap + live configuration for the e-paper display client.
-v0.52.3
+v0.56.4
 
 Design: the panel is administered ENTIRELY from the browser — no SSH/systemd
 editing. The client reads its live `display`/`buzzer` config from a Node
@@ -48,6 +48,14 @@ def _port_of(url, default_port):
 # The local Node service on THIS Pi, on the same port as the configured host.
 # Tried first for config, so a panel Pi always trusts its own browser settings.
 LOCAL_CONFIG_URL = "http://127.0.0.1:%d" % _port_of(CONFIG_URL, 8081)
+
+# The web-UI URL a phone uses AFTER joining the off-road AP. NetworkManager's
+# `ipv4.method shared` gives the Pi the gateway address 10.42.0.1 (what the
+# installer prints and the AP profile uses), on the same service port as above.
+# Shown on the e-paper onboarding screen so a locked-out user has the exact
+# address to type — no guessing. Override the gateway with STP_AP_GATEWAY.
+AP_GATEWAY = os.environ.get("STP_AP_GATEWAY", "10.42.0.1")
+AP_WEB_URL = "http://%s:%d" % (AP_GATEWAY, _port_of(CONFIG_URL, 8081))
 
 
 def _config_candidates():
@@ -182,3 +190,31 @@ def resolve_source_url(display_cfg):
 def fetch_state(source_url, timeout=HTTP_TIMEOUT_S):
     """GET the live ``/api/state`` snapshot from the resolved data host."""
     return _http_json("%s/api/state" % source_url, timeout=timeout)
+
+
+def fetch_local_wifi_ap(timeout=HTTP_TIMEOUT_S):
+    """The LOCAL service's WiFi-AP onboarding block — or None.
+
+    Anti-lockout (v0.56.4). The off-road access point is how you reach THIS Pi,
+    so its join credentials MUST be read from the local service (127.0.0.1) and
+    shown even when the panel's configured data source is a REMOTE host that —
+    precisely because we are off-road and hosting the AP — is unreachable.
+    Without this the panel pointed at another antenna renders only
+    "SERVER OFFLINE" and the generated password is never displayed: a literal
+    lockout, with no way onto the device.
+
+    Read from the local host only (never STP_CONFIG_URL): the AP belongs to the
+    box the panel is physically attached to. A true diskless panel has no local
+    service, so this returns None there — correct, it is not the one hosting an
+    AP. Returns the wifiAp dict only while this Pi is ACTIVELY hosting the AP
+    (active + ssid + password present); None otherwise or on any error, so a
+    server hiccup never disturbs the normal readout.
+    """
+    try:
+        state = _http_json("%s/api/state" % LOCAL_CONFIG_URL, timeout=timeout)
+    except Exception:
+        return None
+    ap = (state or {}).get("wifiAp") or {}
+    if ap.get("active") and ap.get("ssid") and ap.get("password"):
+        return ap
+    return None
