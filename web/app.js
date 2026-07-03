@@ -2266,11 +2266,18 @@ if ($('#sharpcap-add-rig')) {
           : `${x.rig}: ${x.error}`).join(' · ') || 'no rig replied');
       } else if (action === 'arm' || action === 'disarm') {
         say(j.armed ? '✓ armed for tonight' : '✓ disarmed');
+      } else if (action === 'choose') {
+        const pid = (j.results ?? []).map((x) => x.response?.progId).filter(Boolean)[0];
+        say(pid ? `✓ mount set: ${pid}` : '✓ choose sent (check the SharpCap PC dialog)');
       } else {
         say(`✓ ${action} sent`);
       }
     } catch (e) { say(`✗ ${action}: ${e.message}`); }
   }
+  $('#mount-choose-btn')?.addEventListener('click', () => {
+    say('opening the ASCOM picker on the SharpCap PC…');
+    mount('choose');
+  });
   $('#mount-status-btn')?.addEventListener('click', () => mount('status'));
   $('#mount-unpark-btn')?.addEventListener('click', () => mount('unpark'));
   $('#mount-slew-btn')?.addEventListener('click', () => mount('slew'));

@@ -60,6 +60,8 @@ param(
     [int]$Port,                  # listener TCP port
     [string]$Token,              # shared secret (must match predictor's sharpcap.token)
     [switch]$PickFolders,        # pick source + destination via a folder dialog
+    [switch]$ChooseMount,        # pop the ASCOM chooser to pick the mount to slew
+    [string]$MountProgId,        # or set the ASCOM Telescope ProgID explicitly
 
     # --- Second-instance setup (one PC, two cameras). Drops a per-instance
     #     config + a Desktop .bat launcher in one go; the existing install /
@@ -101,6 +103,10 @@ OPTIONS
   -SourceDir <path>     SharpCap capture folder to watch (subfolders included)
   -DestDir <path>       Network destination (UNC \\server\share or mapped Z:\)
   -PickFolders          Choose source + destination in a folder dialog
+
+  Mount slew (optional — point the scope at the active night object):
+  -ChooseMount          Pop the ASCOM chooser to pick your mount (no typing)
+  -MountProgId <id>     Or set the ASCOM Telescope ProgID explicitly
   -Move | -Copy         Move (delete local) or copy (default)
   -Exts .ser,.txt       Extensions to transfer (default: .ser)
 
@@ -179,6 +185,23 @@ function Select-FolderDialog($description, $initialPath) {
     }
 }
 
+function Select-AscomMount($current) {
+    # Pop the STANDARD ASCOM chooser (the same list every astro app shows), so the
+    # user picks their mount from a dropdown — no ProgID typing. Returns the chosen
+    # ProgID, or $null on cancel / no ASCOM Platform.
+    try {
+        $chooser = New-Object -ComObject "ASCOM.Utilities.Chooser"
+        $chooser.DeviceType = "Telescope"
+        $progId = $chooser.Choose($current)
+        return $progId
+    } catch {
+        Write-Warn2 ("ASCOM chooser unavailable ({0})." -f $_.Exception.Message)
+        Write-Warn2 "Install the ASCOM Platform from https://ascom-standards.org/ then re-run with -ChooseMount,"
+        Write-Warn2 "or pass -MountProgId '<your driver's ProgID>' explicitly."
+        return $null
+    }
+}
+
 $rawBase = "https://raw.githubusercontent.com/$Owner/$Repo/$Branch/scripts/sharpcap"
 
 function Get-File($relName, $destPath) {
@@ -242,6 +265,7 @@ Set-Default "sourceDir" "C:\SharpCap Captures"
 Set-Default "destDir" "\\NAS\transits"
 Set-Default "move" $false
 Set-Default "exts" @(".ser")
+Set-Default "mountProgId" ""
 
 # Apply only the parameters the user actually passed.
 if ($PSBoundParameters.ContainsKey("Port"))    { $cfg["port"] = $Port }
@@ -270,6 +294,17 @@ if ($pickDest) {
     if ($p) { $cfg["destDir"] = $p; Write-Ok "destination: $p" } else { Write-Warn2 "no folder picked; keeping '$($cfg['destDir'])'" }
 }
 
+# Mount selection (v0.55.0): explicit -MountProgId wins; otherwise -ChooseMount
+# pops the standard ASCOM chooser so the user picks the mount from a list — no
+# ProgID typing, no env vars. Writes mountProgId into the same config the
+# listener reads, so it survives every auto-update.
+if ($MountProgId) { $cfg["mountProgId"] = $MountProgId; Write-Ok "mount: $MountProgId" }
+if ($ChooseMount) {
+    Write-Step "Pick your mount (ASCOM chooser)"
+    $progId = Select-AscomMount $cfg["mountProgId"]
+    if ($progId) { $cfg["mountProgId"] = $progId; Write-Ok "mount: $progId" } else { Write-Warn2 "no mount picked; keeping '$($cfg['mountProgId'])'" }
+}
+
 # Write UTF-8 WITHOUT a BOM. Windows PowerShell 5.1's `Set-Content -Encoding
 # UTF8` prepends a BOM, which the CPython embedded in SharpCap 4.x cannot
 # parse (json.load -> "Expecting value: line 1 column 1 (char 0)"). .NET's
@@ -278,6 +313,8 @@ $cfgJson = $cfg | ConvertTo-Json -Depth 5
 [System.IO.File]::WriteAllText($configPath, $cfgJson, (New-Object System.Text.UTF8Encoding $false))
 Write-Ok ("transfer={0}  source='{1}'  dest='{2}'  move={3}" -f `
     $cfg["transferEnabled"], $cfg["sourceDir"], $cfg["destDir"], $cfg["move"])
+if ($cfg["mountProgId"]) { Write-Ok ("mount={0}" -f $cfg["mountProgId"]) }
+else { Write-Warn2 "No mount configured. To let the predictor slew the scope, re-run with -ChooseMount (pops the ASCOM picker) — optional." }
 if (-not $cfg["transferEnabled"]) {
     Write-Warn2 "Transfer is OFF. Enable it and pick the folders via a dialog:"
     Write-Warn2 "  .\install.ps1 -EnableTransfer            # pops folder pickers"

@@ -1320,7 +1320,7 @@ export async function runService({
       params = { raHours: gate.raHours, decDeg: gate.decDeg };
     } else if (action === 'track') {
       params = { on: on !== false };
-    } else if (!['unpark', 'park', 'status'].includes(action)) {
+    } else if (!['unpark', 'park', 'status', 'choose'].includes(action)) {
       return { ok: false, error: 'bad-action' };
     }
     const results = [];

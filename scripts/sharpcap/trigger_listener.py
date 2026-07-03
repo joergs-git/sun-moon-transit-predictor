@@ -154,6 +154,7 @@ _CONFIG_KEY_MAP = {
     "rescanS": "TRANSFER_RESCAN_S",
     "maxDurationS": "MAX_DURATION_S",
     "maxPreRollS": "MAX_PRE_ROLL_S",
+    "mountProgId": "MOUNT_PROGID",     # ASCOM Telescope ProgID (install.ps1 -ChooseMount writes it)
 }
 
 
@@ -877,12 +878,68 @@ def _get_mount(prog_id):
         return t
 
 
+def _save_config_value(key, value):
+    """Persist one key into the on-disk config JSON (read-modify-write, no BOM),
+    so a mount picked live in the browser survives a restart. Best-effort."""
+    for path in _candidate_config_paths():
+        try:
+            data = {}
+            if os.path.isfile(path):
+                with open(path, "r") as f:
+                    txt = f.read()
+                if txt[:1] == u"﻿":
+                    txt = txt[1:]
+                if txt.strip():
+                    data = json.loads(txt)
+            data[key] = value
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            with open(path, "w") as f:
+                f.write(json.dumps(data, indent=2))
+            _log("config: saved {}={!r} to {}".format(key, value, path))
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _choose_mount():
+    """Pop the standard ASCOM chooser dialog ON THE SharpCap PC so the user picks
+    their mount from the familiar list — no ProgID typing. Persists the choice to
+    the config so it sticks. Returns the chosen ProgID."""
+    global _mount, MOUNT_PROGID
+    try:
+        import clr
+        clr.AddReference("ASCOM.Utilities")
+        from ASCOM.Utilities import Chooser        # noqa: E402
+        ch = Chooser()
+        ch.DeviceType = "Telescope"
+        pid = ch.Choose(MOUNT_PROGID or "")
+    except Exception as e:
+        _log("mount: chooser failed: {}".format(e))
+        return {"ok": False, "error": "no-ascom: {}".format(e)}
+    if not pid:
+        return {"ok": False, "error": "cancelled"}
+    MOUNT_PROGID = pid
+    _mount = None                                    # reconnect to the new mount
+    _save_config_value("mountProgId", pid)
+    try:
+        _get_mount(pid)                              # verify it connects
+    except Exception as e:
+        return {"ok": True, "action": "choose", "progId": pid,
+                "warning": "saved but connect failed: {}".format(e)}
+    return {"ok": True, "action": "choose", "progId": pid}
+
+
 def _handle_mount(req):
     """Execute one mount action over ASCOM. The predictor has already enforced
     the safety gates (never the Sun, night, elevation) — here we only do the
     mechanical action defensively, honouring the driver's Can* capability flags
     so a mount that can't unpark/park/set-tracking is never forced."""
     action = str(req.get("action", "")).lower()
+    if action == "choose":                          # pop the ASCOM picker + persist
+        return _choose_mount()
     try:
         t = _get_mount(req.get("progId"))
     except Exception as e:

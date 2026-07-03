@@ -292,14 +292,18 @@ runs an unattended sequence around a pass (`unpark → slew → track`, then `pa
 The listener talks **ASCOM Telescope directly** (`ASCOM.DriverAccess`, lazy import),
 so SharpCap keeps only the camera — no Device Hub needed.
 
-**Windows setup:** set your mount's ASCOM **ProgID** for the listener (once):
+**Pick your mount — no typing, no ProgID, no env vars.** Two ways, both use the
+standard ASCOM chooser (the same list every astro app shows):
 
-```powershell
-setx STP_MOUNT_PROGID "ASCOM.DeviceHub.Telescope"   # or your driver's ProgID; then restart SharpCap
-```
+- **In the installer** (recommended): `powershell -ExecutionPolicy Bypass -File .\install.ps1 -ChooseMount`
+  → pops the ASCOM picker, you click your mount, it's saved to the config. Done.
+- **In the browser** (anytime): ⚙ Settings → Scopes → 🔭 Mount control →
+  **Choose mount…** → the picker opens on the SharpCap PC → click your mount.
 
-If two rigs share **one** mount, set `STP_MOUNT_PROGID` on **only one** listener
-(the other replies `mount-not-configured`, harmless).
+Either way the choice is written to the listener's config and survives every
+auto-update. If two rigs share **one** mount, pick it on **only one** listener
+(the other stays unconfigured, harmless). Needs the free **ASCOM Platform**
+(ascom-standards.org) installed on the SharpCap PC.
 
 **Predictor side:** ⚙ Settings → Scopes → *🔭 Mount control* — tick **Allow mount
 slew**, set Lead/Min-elevation, **Save**, then use **Status / Unpark / Slew to
