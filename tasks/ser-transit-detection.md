@@ -19,12 +19,6 @@ macOS-only and cannot be spawned from the Windows SharpCap listener.
 3. **[future]** Optionally a watcher on the NAS/Pi that processes transferred
    `.ser` files and renames them — decoupled from capture.
 
-## Blocking open item
-Reconcile the measured **separation** with our existing `finalsep` definition
-(to Sun centre? predicted ADS-B point? limb?) and the plate-scale source
-(disc-fit vs. known focal length). Test showed 0.228° vs the file's `finalsep065`
-(0.65°). Resolve before enabling filename tagging.
-
 ## Reference
 `scripts/detect/ser_transit.py` (validated), `scripts/detect/proofs/*.png`,
 `scripts/detect/README.md`. Sample captures used: the Vega-ISS dual-rig pair and

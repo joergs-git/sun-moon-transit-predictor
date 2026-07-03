@@ -51,6 +51,10 @@ Run end-to-end on real captures; each verified visually (see `proofs/`):
 
 Timing: ~8 s for the 4.8 GB mono file, ~160 s for the 13.8 GB sun file (one read+bin).
 
+Note: the reported separation (px, and degrees on the Sun via the disc-radius
+plate scale) is a rough measure — exact calibration against the historical
+`finalsep` value is intentionally not pursued.
+
 ## Usage
 ```bash
 python3 ser_transit.py capture.ser --bin 4 --json --out proof.png
@@ -65,9 +69,3 @@ LE int32 at byte offsets: 14 LuID, 18 ColorID, 22 LittleEndian, 26 Width,
 30 Height, 34 PixelDepth(bits), 38 FrameCount. `bytesPerPixel = depth≤8?1:2`;
 `planes = ColorID≥100?3:1`; frame `i` at `178 + i·W·H·bytesPerPixel·planes`.
 ColorID: 0=MONO, 8–11=Bayer, 100/101=RGB/BGR.
-
-## Open item before production
-Measured Sun separation (closest approach to **disc centre**) = 0.228°, but the
-test file is tagged `finalsep065` (0.65°). Reconcile how `finalsep` is defined
-(to Sun centre / predicted ADS-B point / limb?) and the plate-scale source
-(disc-fit vs. known focal length) before wiring up filename tagging.
