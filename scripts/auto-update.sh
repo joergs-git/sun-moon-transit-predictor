@@ -102,19 +102,57 @@ if git diff --name-only "$before" "$after" | grep -qE '^(package\.json|package-l
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Restart only if backend code, deps or service config changed. Frontend
-#    files in web/ are served live from disk — a browser reload picks them up.
+# 5. Restart the affected services. The Node predictor (stp.service) and the
+#    e-paper client (stp-display.service) are SEPARATE units, so a change under
+#    display/ must restart the PANEL — otherwise the running client keeps
+#    executing the OLD display/*.py until the next reboot and a pulled fix
+#    silently never takes effect there. Frontend files in web/ are served live
+#    from disk, so a browser reload is enough for those.
 # ---------------------------------------------------------------------------
 CHANGED="$(git diff --name-only "$before" "$after")"
-if echo "$CHANGED" | grep -qE '^(src/|bin/|package(-lock)?\.json|systemd/stp\.service|config/service\.example\.json)'; then
-  log "restarting stp.service ..."
-  if command -v sudo >/dev/null 2>&1; then
-    sudo /bin/systemctl restart stp.service
-  else
-    /bin/systemctl restart stp.service
+
+# Restart one systemd unit, but only if it is installed AND active on this box
+# (a tracker-only Pi has no stp-display; a diskless panel may have no
+# stp.service). Uses the narrowly scoped sudoers rule via `sudo -n` so it can
+# never hang on a password prompt; a failure — e.g. an older install whose
+# sudoers fragment predates stp-display.service — is surfaced with the one-time
+# fix instead of aborting the update.
+restart_unit() {
+  local unit="$1"
+  if ! systemctl list-unit-files "$unit" >/dev/null 2>&1; then
+    log "$unit not installed — nothing to restart."
+    return 0
   fi
+  if ! systemctl is-active --quiet "$unit" 2>/dev/null; then
+    log "$unit not active — nothing to restart."
+    return 0
+  fi
+  log "restarting $unit ..."
+  if [ "$(id -u)" -eq 0 ]; then
+    /bin/systemctl restart "$unit" || log "WARNING: could not restart $unit."
+  elif command -v sudo >/dev/null 2>&1; then
+    if ! sudo -n /bin/systemctl restart "$unit" 2>/dev/null; then
+      log "WARNING: could not restart $unit — the sudoers rule may predate it."
+      log "         One-time fix: re-run  bash scripts/install-pi5.sh  on the Pi"
+      log "         (or restart it by hand: sudo systemctl restart $unit)."
+    fi
+  else
+    /bin/systemctl restart "$unit" || log "WARNING: could not restart $unit."
+  fi
+}
+
+# Backend code / deps / service unit / example config → restart the predictor.
+if echo "$CHANGED" | grep -qE '^(src/|bin/|package(-lock)?\.json|systemd/stp\.service|config/service\.example\.json)'; then
+  restart_unit stp.service
 else
-  log "frontend / docs only — no restart required."
+  log "no backend change — stp.service left running."
+fi
+
+# E-paper client code (or its unit) → restart the panel so the new render code
+# runs. This is what makes a display-only fix actually reach an installed panel
+# through the updater, not just get pulled to disk.
+if echo "$CHANGED" | grep -qE '^(display/|systemd/stp-display\.service)'; then
+  restart_unit stp-display.service
 fi
 
 log "done."

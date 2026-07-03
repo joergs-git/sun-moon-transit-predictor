@@ -268,9 +268,12 @@ if [ "$ENABLE_AUTO_UPDATE" -eq 1 ]; then
   sudo_run install -m 0644 "$TMP_UPDATE_PATH" "$UPDATE_PATH_FILE"
   rm -f "$TMP_UPDATE_PATH"
 
-  # Sudoers fragment: only allow the exact restart command, nothing else.
+  # Sudoers fragment: only the exact restart commands, nothing else. Both the
+  # predictor AND the e-paper client, because auto-update.sh restarts whichever
+  # of the two separate units a pull touched (a display/*.py fix must restart
+  # stp-display.service or the panel keeps running the old code until a reboot).
   TMP_SUDOERS="$(mktemp)"
-  printf '%s ALL=(root) NOPASSWD: /bin/systemctl restart stp.service\n' "$TARGET_USER" > "$TMP_SUDOERS"
+  printf '%s ALL=(root) NOPASSWD: /bin/systemctl restart stp.service, /bin/systemctl restart stp-display.service\n' "$TARGET_USER" > "$TMP_SUDOERS"
   sudo_run install -m 0440 -o root -g root "$TMP_SUDOERS" "$SUDOERS_FILE"
   rm -f "$TMP_SUDOERS"
 
@@ -376,7 +379,10 @@ if [ "$WITH_DISPLAY" -eq 1 ]; then
   sudo_run install -m 0644 "$TMP_DISPLAY_SVC" "$DISPLAY_SERVICE_FILE"
   rm -f "$TMP_DISPLAY_SVC"
   sudo_run systemctl daemon-reload
-  sudo_run systemctl enable --now stp-display.service || true
+  sudo_run systemctl enable stp-display.service || true
+  # restart (not just enable --now) so re-running the installer to deploy new
+  # display code refreshes a panel that is already running the old client.
+  sudo_run systemctl restart stp-display.service || true
 
   log "E-paper client installed. Reboot once so SPI + group membership take effect,"
   log "then enable the panel in the web UI: Settings > E-paper display > Enabled."
