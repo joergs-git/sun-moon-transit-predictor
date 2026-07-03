@@ -434,12 +434,23 @@ function appendSkyPlanRow(tbody, r, idx) {
   const clickable = r.kind === 'transit' && r.geom ? ' sketchable' : '';
   tr.className = `skyplan-row conf-${r.confidence ?? 'none'}${r.conflictWithPrev ? ' has-conflict' : ''}${clickable}`;
   if (clickable) { tr.dataset.source = 'skyplan'; tr.dataset.index = String(idx); }
+  // Split fields into the same named columns as the Live-tracking list.
+  const eta = fmtCountdownLong(Math.max(0, r.atMs - Date.now()));
+  const sepCell = r.sepDeg != null ? fmtSep(r.sepDeg) : '—';
+  const tentative = r.tentative ? ' <span class="skyplan-tentative">tentative</span>' : '';
+  const elCell = Number.isFinite(r.elDeg) ? `${Math.round(r.elDeg)}°` : '—';
+  const azCell = r.azText ?? '—';
+  const durCell = r.durMs != null ? fmtDuration(r.durMs) : '—';
   tr.innerHTML = `
     <td class="skyplan-when">${fmtDateTime(r.atMs)}${conflict}</td>
+    <td class="skyplan-eta">${eta}</td>
     <td class="skyplan-obj">${objCell}</td>
     <td class="skyplan-sat">🛰 ${r.satTag ?? '?'}${shadow}</td>
     <td class="skyplan-type type-${typeLabel}">${typeLabel}</td>
-    <td class="skyplan-detail">${r.detailHtml ?? '—'}</td>
+    <td class="skyplan-sep">${sepCell}${tentative}</td>
+    <td class="skyplan-el">${elCell}</td>
+    <td class="skyplan-az">${azCell}</td>
+    <td class="skyplan-dur">${durCell}</td>
     <td class="skyplan-conf" title="${confTip}">${conf}</td>
   `;
   tbody.appendChild(tr);
@@ -454,11 +465,18 @@ function unifiedPlanRows(state, dsoRows) {
   if (state.iss?.active) sats.push({ tag: 'ISS', vp: state.iss.visiblePass, nt: state.iss.nextTransit });
   for (const s of (state.satellites ?? [])) if (s.active) sats.push({ tag: s.tag, vp: s.visiblePass, nt: s.nextTransit });
   for (const s of sats) {
+    // Per-row fields (not a packed "Detail" string) so the Sky-plan table can
+    // reuse the SAME named columns as the Live-tracking list (Sep · El · Az ·
+    // Dur · ETA) — v0.56.0. A field is null when it doesn't apply to that kind
+    // (rendered as '—'); no information is dropped.
     const vp = s.vp;
     if (vp && Number.isFinite(vp.startMs)) {
       rows.push({
         atMs: vp.startMs, satTag: s.tag, kind: 'visible',
-        detailHtml: `${azToCompass(vp.startAzDeg)}→${azToCompass(vp.endAzDeg)} · max ${vp.maxElevationDeg}° · ${vp.durationS}s`,
+        sepDeg: null,                                   // an overhead pass, not a close approach
+        elDeg: vp.maxElevationDeg ?? null,              // max elevation
+        azText: `${azToCompass(vp.startAzDeg)}→${azToCompass(vp.endAzDeg)}`,
+        durMs: Number.isFinite(vp.durationS) ? vp.durationS * 1000 : null,
         confidence: null,
       });
     }
@@ -467,23 +485,27 @@ function unifiedPlanRows(state, dsoRows) {
       rows.push({
         atMs: nt.atMs, satTag: s.tag, kind: 'transit',
         object: nt.body, objectIcon: nt.body === 'Sun' ? '☀' : '🌙',
-        detailHtml: `sep ${fmtSep(nt.sepDeg)}${nt.tentative ? ' <span class="skyplan-tentative">· tentative</span>' : ''}`,
+        sepDeg: nt.sepDeg ?? null,
+        elDeg: Number.isFinite(nt.geom?.aircraftAt?.el) ? nt.geom.aircraftAt.el : null,
+        azText: Number.isFinite(nt.geom?.aircraftAt?.az) ? azToCompass(nt.geom.aircraftAt.az) : null,
+        durMs: null,
+        tentative: !!nt.tentative,
         confidence: null,
         // Sketchable when the server attached geometry (v0.45.3) → click to
         // preview a future ISS/HST/CSS transit in the FOV.
-        body: nt.body, sepDeg: nt.sepDeg, geom: nt.geom ?? null,
+        body: nt.body, geom: nt.geom ?? null,
       });
     }
   }
   for (const r of (dsoRows ?? [])) {
-    const miss = r.missArcmin == null ? '—'
-      : (r.missArcmin >= 60 ? `${(r.missArcmin / 60).toFixed(2)}°` : `${Math.round(r.missArcmin)}′`);
-    const parts = [`miss ${miss}`];
-    if (r.elevationDeg != null) parts.push(`el ${Math.round(r.elevationDeg)}°`);
-    if (r.timeInFieldMs) parts.push(`${(r.timeInFieldMs / 1000).toFixed(1)}s`);
     rows.push({
       atMs: r.atMs, satTag: r.satTag, kind: r.kind,
-      object: r.targetName, detailHtml: parts.join(' · '),
+      object: r.targetName,
+      sepDeg: Number.isFinite(r.sepDeg) ? r.sepDeg
+        : (r.missArcmin != null ? r.missArcmin / 60 : null),
+      elDeg: Number.isFinite(r.elevationDeg) ? r.elevationDeg : null,
+      azText: null,                                     // az not carried in the plan rows
+      durMs: r.timeInFieldMs ?? null,
       confidence: r.confidence, sunlit: r.sunlit,
       conflictWithPrev: r.conflictWithPrev, conflictGapMs: r.conflictGapMs,
     });
@@ -553,7 +575,7 @@ function renderSkyPlan(state) {
 
   tbody.innerHTML = '';
   if (!rows.length) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="6">No upcoming satellite events.</td></tr>';
+    tbody.innerHTML = '<tr class="empty"><td colspan="10">No upcoming satellite events.</td></tr>';
     return;
   }
   lastSkyPlanRows = rows;     // for pin-from-row (future ISS, v0.45.3)
