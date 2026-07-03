@@ -7,6 +7,11 @@
 #   bash scripts/install-pi5.sh --non-interactive # zero prompts; reads env vars
 #   bash scripts/install-pi5.sh --no-auto-update  # skip the nightly timer
 #   bash scripts/install-pi5.sh --with-display     # also set up the e-paper panel
+#   bash scripts/install-pi5.sh --without-wifi-ap  # skip the off-road WiFi AP
+#
+# Off-road WiFi AP failover is the DEFAULT for an interactive install and is
+# auto-enabled when NetworkManager is already active; opt out with
+# --without-wifi-ap (or STP_WITH_WIFI_AP=0). Force it on with --with-wifi-ap.
 #
 # Env vars honoured in --non-interactive mode (or as defaults otherwise):
 #   STP_OBSERVER_NAME    e.g. "City"
@@ -20,6 +25,8 @@
 #   STP_PUSHOVER_TOKEN   Pushover application token (blank = disable)
 #   STP_PUSHOVER_USER    Pushover user / group key  (blank = disable)
 #   STP_WITH_DISPLAY     set to 1 to do the --with-display setup non-interactively
+#   STP_WITH_WIFI_AP     1 = force the off-road WiFi AP, 0 = force skip. Unset =
+#                        auto (default on interactively / when NM already active).
 #   STP_WIFI_COUNTRY     WiFi regulatory country (ISO code, e.g. DE/GB/US); set on
 #                        every install. Only defaults to DE when none is set yet.
 #
@@ -56,10 +63,16 @@ ENABLE_AUTO_UPDATE=1
 # Optional e-paper panel: off by default (minority hardware). Opt in with
 # --with-display, or STP_WITH_DISPLAY=1 for non-interactive/bootstrap runs.
 WITH_DISPLAY="${STP_WITH_DISPLAY:-0}"
-# Off-road WiFi failover AP (v0.51.0). Opt-in: it installs NetworkManager and a
-# failover AP, which changes the network stack — never do that to a working
-# remote box implicitly. STP_WITH_WIFI_AP=1 for non-interactive runs.
+# Off-road WiFi failover AP (v0.51.0). Now the DEFAULT for an interactive install
+# and auto-enabled on boxes already running NetworkManager (v0.56.3) — it keeps a
+# field Pi reachable when no known WiFi is around. Still fully opt-out. Because it
+# can install/switch to NetworkManager (a network-stack change), it is never
+# turned on implicitly on a non-interactive box that isn't already using NM.
+# STP_WITH_WIFI_AP=1/0 or --with-wifi-ap/--without-wifi-ap force it either way.
 WITH_WIFI_AP="${STP_WITH_WIFI_AP:-0}"
+# Was the choice made explicitly (flag or env)?  If so, skip the auto-decision.
+WIFI_AP_EXPLICIT=0
+[ -n "${STP_WITH_WIFI_AP:-}" ] && WIFI_AP_EXPLICIT=1
 
 for arg in "$@"; do
   case "$arg" in
@@ -67,7 +80,8 @@ for arg in "$@"; do
     --non-interactive)   NONINTERACTIVE=1 ;;
     --no-auto-update)    ENABLE_AUTO_UPDATE=0 ;;
     --with-display)      WITH_DISPLAY=1 ;;
-    --with-wifi-ap)      WITH_WIFI_AP=1 ;;
+    --with-wifi-ap)      WITH_WIFI_AP=1; WIFI_AP_EXPLICIT=1 ;;
+    --without-wifi-ap)   WITH_WIFI_AP=0; WIFI_AP_EXPLICIT=1 ;;
     -h|--help)           sed -n '2,36p' "$0"; exit 0 ;;
     *) echo "Unknown arg: $arg" >&2; exit 2 ;;
   esac
@@ -87,12 +101,35 @@ prompt() {
   echo "${var:-$default}"
 }
 
+# Is NetworkManager already the active network stack? (Pi OS Bookworm default.)
+# When it is, enabling the failover AP does NOT change the stack, so it is safe
+# to turn on automatically.
+nm_active() { systemctl is-active --quiet NetworkManager 2>/dev/null; }
+
+# Decide the off-road WiFi AP unless it was set explicitly (flag/env). It is the
+# default for interactive installs; on non-interactive boxes it is only
+# auto-enabled when NM already runs (never switch a working box's stack silently).
+if [ "$WIFI_AP_EXPLICIT" -eq 0 ]; then
+  if nm_active; then NM_STATE=active; else NM_STATE=inactive; fi
+  if [ "$NONINTERACTIVE" -eq 1 ]; then
+    [ "$NM_STATE" = active ] && WITH_WIFI_AP=1
+  elif [ "$NM_STATE" = active ]; then
+    ans="$(prompt 'Set up off-road WiFi AP failover? (NetworkManager already active) [Y/n]' 'Y')"
+    case "$ans" in [Nn]*) WITH_WIFI_AP=0 ;; *) WITH_WIFI_AP=1 ;; esac
+  else
+    log "Off-road WiFi AP keeps the box reachable at a dark site with no known WiFi."
+    log "It installs NetworkManager and switches the network stack (recommended on Pi OS Bookworm)."
+    ans="$(prompt 'Set up off-road WiFi AP failover? Installs/switches to NetworkManager [Y/n]' 'Y')"
+    case "$ans" in [Nn]*) WITH_WIFI_AP=0 ;; *) WITH_WIFI_AP=1 ;; esac
+  fi
+fi
+
 log "Repo directory: $REPO_DIR"
 log "Target user:    $TARGET_USER"
 log "Mode:           $( [ "$NONINTERACTIVE" -eq 1 ] && echo non-interactive || echo interactive )"
 log "Auto-update:    $( [ "$ENABLE_AUTO_UPDATE" -eq 1 ] && echo enabled || echo disabled )"
 log "E-paper panel:  $( [ "$WITH_DISPLAY" -eq 1 ] && echo "setup (--with-display)" || echo "skipped (use --with-display)" )"
-log "WiFi AP:        $( [ "$WITH_WIFI_AP" -eq 1 ] && echo "setup (--with-wifi-ap)" || echo "skipped (use --with-wifi-ap)" )"
+log "WiFi AP:        $( [ "$WITH_WIFI_AP" -eq 1 ] && echo "setup (off-road failover)" || echo "skipped (--without-wifi-ap)" )"
 
 # ---------------------------------------------------------------------------
 # 1. Node.js >= 22
@@ -369,11 +406,11 @@ fi
 sudo_run rfkill unblock wifi 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# 5d. Optional off-road WiFi failover AP (only with --with-wifi-ap /
-#     STP_WITH_WIFI_AP=1). Installs NetworkManager, a self-hosted AP profile,
-#     and the failover + privileged-join units, so the box stays reachable in
-#     the field with no terminal. Opt-in because it changes the network stack.
-#     (The WiFi country above is already set for every install.)
+# 5d. Off-road WiFi failover AP. Default for interactive installs and auto-on when
+#     NetworkManager already runs (decided above); opt out with --without-wifi-ap.
+#     Installs NetworkManager, a self-hosted AP profile, and the failover +
+#     privileged-join units, so the box stays reachable in the field with no
+#     terminal. (The WiFi country above is already set for every install.)
 # ---------------------------------------------------------------------------
 if [ "$WITH_WIFI_AP" -eq 1 ]; then
   log "Setting up off-road WiFi failover AP (--with-wifi-ap) ..."
@@ -419,7 +456,7 @@ if [ "$WITH_WIFI_AP" -eq 1 ]; then
   log "WiFi failover AP ready. SSID '$AP_SSID', password '$AP_PASS' (also on the e-paper)."
   log "Off-road: if no home WiFi is found it hosts '$AP_SSID' → join it, open http://10.42.0.1:8081, scan + connect."
 else
-  log "Skipping WiFi failover AP (pass --with-wifi-ap to set it up)."
+  log "Skipping WiFi failover AP (enable later by re-running, or with --with-wifi-ap)."
 fi
 
 # ---------------------------------------------------------------------------
