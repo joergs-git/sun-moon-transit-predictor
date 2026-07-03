@@ -9,7 +9,10 @@ alerts (early candidate → precise T-minus).
 It also predicts + auto-captures **satellite passes through deep-sky fields**
 (ISS / HST / Tiangong crossing a star, planet or DSO you're framing) — an opt-in
 "Sky-target plan" with confidence rating, a 🔭 scope-target selector that arms
-the capture, an editable object catalogue, and Pushover plan-alerts.
+the capture, an editable object catalogue, and Pushover plan-alerts. The ISS uses
+a **supplemental multi-segment ephemeris** (maneuver-aware, keeps predictions
+sharp), and — opt-in — the predictor can **slew an ASCOM mount** to the night
+object before a pass (never the Sun).
 
 ![Pi 5 + e-paper stand with ADS-B dongle and antenna — and a real H-alpha Sun transit behind](3D-Prints/sunmoon-adsb-casestand.jpg)
 
