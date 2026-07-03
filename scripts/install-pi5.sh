@@ -359,6 +359,17 @@ if [ "$WITH_WIFI_AP" -eq 1 ]; then
   fi
   sudo_run systemctl enable --now NetworkManager || log "WARN: could not enable NetworkManager"
 
+  # AP mode needs a WiFi REGULATORY COUNTRY set + the radio unblocked, or the
+  # access point silently fails to start (no SSID ever appears — the classic
+  # "off-road Pi hosts nothing" symptom). Default DE; override STP_WIFI_COUNTRY.
+  WIFI_COUNTRY="${STP_WIFI_COUNTRY:-DE}"
+  if command -v raspi-config >/dev/null 2>&1; then
+    sudo_run raspi-config nonint do_wifi_country "$WIFI_COUNTRY" \
+      || log "WARN: could not set WiFi country ($WIFI_COUNTRY) — AP mode may not start"
+  fi
+  sudo_run rfkill unblock wifi 2>/dev/null || true
+  log "WiFi regulatory country: $WIFI_COUNTRY (radio unblocked)"
+
   AP_SSID="${STP_AP_SSID:-sunmoontransits}"
   # Device-unique, readable password via the SAME code the app shows on screen.
   AP_PASS="$(cd "$REPO_DIR" && node -e 'import("./src/wifi.js").then(m=>console.log(m.deriveApCredentials({serial:m.readMachineSerial()}).password)).catch(()=>process.exit(1))' 2>/dev/null || true)"
