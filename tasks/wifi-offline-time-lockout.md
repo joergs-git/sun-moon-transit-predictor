@@ -11,6 +11,8 @@ Planned: 2026-07-04. Status: **PLAN — key decisions locked; ready to build.**
 - **c3** → **No**: no USB second-radio / permanent-AP hardware note.
 - **d** (new) → diagnose + fix the intermittent "SERVER OFFLINE" flash on the
   e-paper (see section d below).
+- **d1** → **debounce 3** consecutive failed polls before showing the offline
+  screen; **keep the 1.5 s** HTTP timeout (favours a fast true-outage signal).
 
 ## User ask (verbatim)
 
@@ -280,13 +282,13 @@ actually restarted.
 
 ### Fix (proposed)
 
-1. **Debounce (primary).** Require **N consecutive failed polls** (default 2–3)
-   before rendering the offline screen — a single transient blip keeps the last
-   good frame on screen. Kills the visible flash for causes 1–4 while a real
-   outage still appears within a few seconds. Small state var + threshold in the
-   client loop.
-2. **Configurable, slightly longer timeout.** Make `HTTP_TIMEOUT_S` a Setting
-   (default raise 1.5 → ~3 s) so a busy-but-alive server isn't read as offline.
+1. **Debounce (primary) — LOCKED at 3.** Require **3 consecutive failed polls**
+   before rendering the offline screen — a single transient blip (or two) keeps
+   the last good frame on screen. At the 2 s quick tick a real outage still shows
+   within ~6 s. Small `consecutive_fail` counter + threshold in the client loop.
+2. **Keep the 1.5 s timeout** (d1) — the debounce, not a longer timeout, absorbs
+   transients, so a genuine outage is still signalled fast. (`HTTP_TIMEOUT_S`
+   may still be exposed as a Setting for power users, but the default stays 1.5 s.)
 3. **Throttle the local-AP probe.** Only call `fetch_local_wifi_ap()` every few
    seconds (not every 2 s tick), or reuse the source `/api/state` when the source
    IS localhost — halves the request load in the common single-Pi case.
@@ -301,10 +303,8 @@ actually restarted.
   `/api/state` never blocks on heavy work.
 - `display/README.md`: note the debounce + how to read the journal reason.
 
-### Open decision
-- **d1.** Debounce threshold + default timeout — recommend 2 consecutive
-  failures and 3 s. Confirm, or prefer a faster true-outage signal (keep 1.5 s,
-  debounce 3)?
+### Decision (locked)
+- **d1** → debounce **3** consecutive failures, timeout stays **1.5 s**.
 
 ---
 
