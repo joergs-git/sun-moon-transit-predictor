@@ -1,7 +1,16 @@
 # WiFi management, offline UTC time & lockout prevention
 
 Branch: `claude/pi-wifi-offline-time-3l1xtc`
-Planned: 2026-07-04. Status: **PLAN — awaiting user decisions before build.**
+Planned: 2026-07-04. Status: **PLAN — key decisions locked; ready to build.**
+
+## Decisions locked with user (2026-07-04)
+- **b1** → **Banner**: don't lock the UI. Show a persistent red "clock unverified"
+  banner + the entry modal; the rest of the UI stays usable.
+- **c1** → **Setting**: the boot AP window is a normal, Settings-editable option
+  (`wifi.bootLocalWindowS`, default 90 s; `0` = off).
+- **c3** → **No**: no USB second-radio / permanent-AP hardware note.
+- **d** (new) → diagnose + fix the intermittent "SERVER OFFLINE" flash on the
+  e-paper (see section d below).
 
 ## User ask (verbatim)
 
@@ -227,6 +236,78 @@ catching the 90 s window.
 
 ---
 
+## d. Intermittent "SERVER OFFLINE" flash on the e-paper (a few seconds, not the 60 s refresh)
+
+**Symptom (user).** Every so often the panel briefly shows "display inactive /
+not reachable / SERVER OFFLINE" for a few seconds, then recovers. NOT the normal
+ghosting flash of the periodic full refresh.
+
+### Root cause
+
+The display client (`display/epaper_client.py`) polls with a **hard, short HTTP
+timeout** — `config.HTTP_TIMEOUT_S = 1.5 s` (`display/config.py:82`) — on
+**every quick tick** (`quickRefreshS`, default 2 s). If **one single poll** of
+`/api/state` fails or exceeds 1.5 s, `conn_ok` flips to `False` and that tick
+renders `render_offline()` → **"SERVER OFFLINE"** (or the AP onboarding screen).
+The very next tick succeeds and it recovers. So one slow/dropped poll = a
+few-seconds flash. This is *by design* (fail-fast + auto-recover, documented in
+`display/README.md:157`) — but a single blip is enough to trigger it, and there
+is **no tolerance for a lone transient failure**.
+
+What makes an occasional single poll exceed 1.5 s / fail:
+1. **Node event loop blocked > 1.5 s by periodic heavy work** → `/api/state`
+   can't answer in time. Suspects: a long `tick()` (SGP4 over the catalogue +
+   findTransits + snapshots under heavy traffic), an ISS TLE reload, or an
+   on-demand op sharing the loop (Sat finder propagating ~15 k TLEs, the long
+   "next opportunity" DSO scan, the Stats report). Occasional → matches "von
+   Zeit zu Zeit".
+2. **Extra per-tick request load.** Every tick ALSO fires a second `/api/state`
+   GET for `fetch_local_wifi_ap()` (localhost), plus two `/api/config` fetches
+   every 5 s — more requests = more chance one lands during a busy moment.
+3. **Two-Pi (remote source) setups:** NetworkManager's periodic background WiFi
+   **scan** (~every 2 min) briefly adds latency/packet loss on the associated
+   link → a poll to the remote predictor tips over 1.5 s. Classic "every couple
+   of minutes, brief blip". (Also `wifi-failover.sh` drops the AP ~25 s every
+   180 s to probe — but only while hosting the AP.)
+4. A lone GC pause / TCP hiccup > 1.5 s.
+
+**First, confirm which:** the client logs `offline: <url> (<reason>)` on change
+(`epaper_client.py:269`) → `journalctl -u stp-display` shows the reason
+(`timed out` vs `Connection refused`) and the cadence. `timed out` on a
+localhost source ⇒ cause 1 (event-loop block); `timed out` on a remote source
+every ~2 min ⇒ cause 3 (WiFi scan); `Connection refused` ⇒ the Node service
+actually restarted.
+
+### Fix (proposed)
+
+1. **Debounce (primary).** Require **N consecutive failed polls** (default 2–3)
+   before rendering the offline screen — a single transient blip keeps the last
+   good frame on screen. Kills the visible flash for causes 1–4 while a real
+   outage still appears within a few seconds. Small state var + threshold in the
+   client loop.
+2. **Configurable, slightly longer timeout.** Make `HTTP_TIMEOUT_S` a Setting
+   (default raise 1.5 → ~3 s) so a busy-but-alive server isn't read as offline.
+3. **Throttle the local-AP probe.** Only call `fetch_local_wifi_ap()` every few
+   seconds (not every 2 s tick), or reuse the source `/api/state` when the source
+   IS localhost — halves the request load in the common single-Pi case.
+4. **Node side (optional, if cause 1 confirmed).** Keep `/api/state` served from
+   the cached `state` snapshot only (never blocking on in-flight heavy work) so
+   an in-progress tick/TLE-reload can't stall the HTTP response.
+
+### New/changed files
+- `display/epaper_client.py`: consecutive-failure debounce.
+- `display/config.py`: `HTTP_TIMEOUT_S` from config; throttle `fetch_local_wifi_ap`.
+- `src/service.js` / `web`: expose the timeout as a `display.*` Setting; verify
+  `/api/state` never blocks on heavy work.
+- `display/README.md`: note the debounce + how to read the journal reason.
+
+### Open decision
+- **d1.** Debounce threshold + default timeout — recommend 2 consecutive
+  failures and 3 s. Confirm, or prefer a faster true-outage signal (keep 1.5 s,
+  debounce 3)?
+
+---
+
 ## Cross-cutting / sequencing
 
 - **Trust boundary unchanged.** Every privileged action stays a trigger-file →
@@ -251,6 +332,8 @@ catching the 90 s window.
       Forget button; tests.
 - [ ] c1 — boot AP window + stay-local latch + special URL/toggle; config knobs.
 - [ ] c2 — LAN-client reachability tracking + isolation watchdog in failover.
+- [ ] d — display client: consecutive-failure debounce + configurable timeout +
+      throttled local-AP probe; confirm `/api/state` never blocks.
 - [ ] Docs (README/wiki/MILESTONES) + version bump + `npm test` green +
       `node --check`.
 - [ ] Pi 5 hardware verification (real nmcli/timedatectl, isolation scenario) —
