@@ -590,7 +590,7 @@ export function nextMeridianTransit(observer, body, fromMs) {
   return null;
 }
 
-function mergeConfig(user) {
+export function mergeConfig(user) {
   return {
     ...DEFAULT_CONFIG,
     ...user,
@@ -611,6 +611,11 @@ function mergeConfig(user) {
     sharpcap:  { ...DEFAULT_CONFIG.sharpcap,  ...(user.sharpcap  ?? {}) },
     display:   { ...DEFAULT_CONFIG.display,   ...(user.display   ?? {}) },
     buzzer:    { ...DEFAULT_CONFIG.buzzer,    ...(user.buzzer    ?? {}) },
+    // wifi MUST deep-merge: the installer writes a partial block
+    // ({enabled, apSsid, apPassword}) into service.json, so a shallow `...user`
+    // would drop the default `triggerPath`/`statusPollMs` and the web-UI join
+    // then fails with "wifi trigger path not configured".
+    wifi:      { ...DEFAULT_CONFIG.wifi,      ...(user.wifi      ?? {}) },
     lifecyclePersist: { ...DEFAULT_CONFIG.lifecyclePersist, ...(user.lifecyclePersist ?? {}) },
     driftPersist: { ...DEFAULT_CONFIG.driftPersist, ...(user.driftPersist ?? {}) },
     diag: { ...DEFAULT_CONFIG.diag, ...(user.diag ?? {}) },
