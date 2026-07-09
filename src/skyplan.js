@@ -71,7 +71,8 @@ export function buildSkyTargetPlan(candidates, opts = {}) {
     if (!Number.isFinite(atMs)) continue;
     if (atMs < nowMs - 60_000) continue;                 // already past (small grace)
     if (atMs - nowMs > horizonMs) continue;              // beyond the plan horizon
-    const elevationDeg = c.satAtClosest?.elevationDeg ?? null;
+    const sat = c.satAtClosest;
+    const elevationDeg = sat?.elevationDeg ?? null;
     if (minElevationDeg && elevationDeg != null && elevationDeg < minElevationDeg) continue;
 
     // Epoch may be a fixed ms value (single TLE) or a function of the event
@@ -90,6 +91,14 @@ export function buildSkyTargetPlan(candidates, opts = {}) {
       targetName: c.targetName,
       kind: c.kind,                                      // 'transit' | 'field'
       elevationDeg,
+      azimuthDeg: sat?.azimuthDeg ?? null,
+      // Sky position of the flying object at closest approach — J2000 (matches
+      // the catalogue frame, so it can be pinned as a custom { raHours, decDeg }
+      // target) plus of-date/JNow. Null when the satellite state was unavailable.
+      satRaHours: sat?.raHours ?? null,
+      satDecDeg: sat?.decDeg ?? null,
+      satRaHoursOfDate: sat?.raHoursOfDate ?? null,
+      satDecDegOfDate: sat?.decDegOfDate ?? null,
       sepDeg: c.closestApproachSepDeg,
       missArcmin: c.missArcmin,
       timeInFieldMs: c.timeInFieldMs,

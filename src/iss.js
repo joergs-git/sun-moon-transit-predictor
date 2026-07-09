@@ -17,7 +17,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 
 import {
   observerEcef, targetEcefAzEl, bodyAzEl, targetAzEl, apparentDiameterDeg,
-  angularSeparationDeg, isObservable,
+  angularSeparationDeg, isObservable, horizontalToRaDec,
 } from './geometry.js';
 import { twoline2satrec, sgp4, temeToEcef, unixToJulian } from './sgp4.js';
 
@@ -555,7 +555,16 @@ function buildSkyTargetCandidate(
     angularRateDegPerSec: omegaDegPerSec,
     sunlit,
     satAtClosest: satAt
-      ? { azimuthDeg: satAt.azimuthDeg, elevationDeg: satAt.elevationDeg, rangeM: satAt.rangeM ?? null }
+      ? {
+        azimuthDeg: satAt.azimuthDeg,
+        elevationDeg: satAt.elevationDeg,
+        rangeM: satAt.rangeM ?? null,
+        // WHERE on the sky the satellite sits at closest approach. J2000
+        // (raHours/decDeg) matches the catalogue frame, so it can be reused
+        // verbatim as a fixed { raHours, decDeg } custom target; the of-date
+        // pair is the "JNow" a mount would slew to (v0.57.0).
+        ...horizontalToRaDec(observer, satAt, closestMs),
+      }
       : null,
     targetAtClosest: { azimuthDeg: tgtAt.azimuthDeg, elevationDeg: tgtAt.elevationDeg },
     transitPath,

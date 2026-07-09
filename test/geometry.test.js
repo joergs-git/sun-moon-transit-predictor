@@ -10,6 +10,7 @@ import {
   sunAzEl,
   targetAzEl,
   equatorialRaDec,
+  horizontalToRaDec,
 } from '../src/geometry.js';
 import { nextHorizonCrossing, nextMeridianTransit } from '../src/service.js';
 
@@ -38,6 +39,43 @@ describe('equatorialRaDec (mount slew coords, v0.55.0)', () => {
   });
   it('NEVER returns coordinates for the Sun — a hard safety block', () => {
     expect(equatorialRaDec(RHEINE, 'Sun', t)).toBeNull();
+  });
+});
+
+describe('horizontalToRaDec (Az/El → RA/Dec, v0.57.0)', () => {
+  const t = new Date('2026-07-03T01:44:00Z');
+
+  it('round-trips a body: Az/El back to its of-date RA/Dec', () => {
+    // Jupiter's apparent (of-date) RA/Dec, and its geometric Az/El (refraction
+    // off, matching the satellite pipeline). Converting the Az/El back must
+    // recover the same of-date RA/Dec.
+    const az = bodyAzEl(RHEINE, 'Jupiter', t, { applyRefraction: false });
+    const rd = horizontalToRaDec(RHEINE, az, t);
+    const equ = equatorialRaDec(RHEINE, 'Jupiter', t);   // of-date/apparent
+    expect(rd.raHoursOfDate).toBeCloseTo(equ.raHours, 2);
+    expect(rd.decDegOfDate).toBeCloseTo(equ.decDeg, 2);
+  });
+
+  it('recovers a fixed star’s catalogue J2000 RA/Dec from its Az/El', () => {
+    const vega = { raHours: 18.6156, decDeg: 38.7837 };
+    const az = targetAzEl(RHEINE, vega, t, { applyRefraction: false });
+    const rd = horizontalToRaDec(RHEINE, az, t);
+    // J2000 recovered from the horizontal position; a few arcmin tolerance
+    // covers aberration + the annual-vs-catalogue frame nuances.
+    expect(rd.raHours).toBeCloseTo(vega.raHours, 2);
+    expect(rd.decDeg).toBeCloseTo(vega.decDeg, 1);
+  });
+
+  it('returns RA in [0,24) and Dec in [-90,90] for both frames', () => {
+    const rd = horizontalToRaDec(RHEINE, { azimuthDeg: 210, elevationDeg: 55 }, t);
+    for (const ra of [rd.raHours, rd.raHoursOfDate]) {
+      expect(ra).toBeGreaterThanOrEqual(0);
+      expect(ra).toBeLessThan(24);
+    }
+    for (const dec of [rd.decDeg, rd.decDegOfDate]) {
+      expect(dec).toBeGreaterThanOrEqual(-90);
+      expect(dec).toBeLessThanOrEqual(90);
+    }
   });
 });
 

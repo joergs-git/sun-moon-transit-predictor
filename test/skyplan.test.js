@@ -60,6 +60,33 @@ describe('buildSkyTargetPlan', () => {
     expect(rows[0].elevationDeg).toBe(45);
   });
 
+  it('carries the flying object’s sky position (RA/Dec + Az) into the plan row', () => {
+    const rows = buildSkyTargetPlan([
+      cand({
+        closestApproachAtMs: now + DAY,
+        satAtClosest: {
+          elevationDeg: 40, azimuthDeg: 123.4,
+          raHours: 5.59, decDeg: -5.39,
+          raHoursOfDate: 5.6, decDegOfDate: -5.4,
+        },
+      }),
+    ], { nowMs: now });
+    expect(rows[0].satRaHours).toBeCloseTo(5.59, 5);
+    expect(rows[0].satDecDeg).toBeCloseTo(-5.39, 5);
+    expect(rows[0].satRaHoursOfDate).toBeCloseTo(5.6, 5);
+    expect(rows[0].satDecDegOfDate).toBeCloseTo(-5.4, 5);
+    expect(rows[0].azimuthDeg).toBeCloseTo(123.4, 5);
+  });
+
+  it('leaves the sky-position fields null when the satellite state is absent', () => {
+    const rows = buildSkyTargetPlan([
+      cand({ closestApproachAtMs: now + DAY, satAtClosest: null }),
+    ], { nowMs: now });
+    expect(rows[0].satRaHours).toBeNull();
+    expect(rows[0].satDecDeg).toBeNull();
+    expect(rows[0].azimuthDeg).toBeNull();
+  });
+
   it('firstPerCombo keeps only the soonest pass per satellite×object', () => {
     const rows = buildSkyTargetPlan([
       cand({ closestApproachAtMs: now + 3 * DAY, satTag: 'ISS', targetId: 'm42' }),

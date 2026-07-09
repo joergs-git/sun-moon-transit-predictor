@@ -50,6 +50,39 @@ function fmtSpeed(ms)     { return ms == null ? '—' : `${Math.round(ms * 3.6)}
 function fmtDistance(m)   { return m  == null ? '—' : `${(m / 1000).toFixed(1)} km`; }
 function fmtSep(d)        { return d  == null ? '—' : `${d.toFixed(2)}°`; }
 
+// Right Ascension (decimal hours → h m s) and Declination (deg → ±d m) for the
+// Sky-plan "Sky pos" cell — the equatorial position of the flying object at
+// closest approach, so it can be reused as a fixed custom target.
+function fmtRaHours(h) {
+  if (!Number.isFinite(h)) return null;
+  const t = ((h % 24) + 24) % 24;
+  const hh = Math.floor(t);
+  const mFull = (t - hh) * 60;
+  const mm = Math.floor(mFull);
+  const ss = Math.round((mFull - mm) * 60);
+  let H = hh, M = mm, S = ss;
+  if (S === 60) { S = 0; M += 1; }
+  if (M === 60) { M = 0; H = (H + 1) % 24; }
+  return `${H}h${String(M).padStart(2, '0')}m${String(S).padStart(2, '0')}s`;
+}
+function fmtDecDeg(d) {
+  if (!Number.isFinite(d)) return null;
+  const sign = d < 0 ? '−' : '+';
+  const a = Math.abs(d);
+  const deg = Math.floor(a);
+  let min = Math.round((a - deg) * 60);
+  let D = deg;
+  if (min === 60) { min = 0; D += 1; }
+  return `${sign}${D}°${String(min).padStart(2, '0')}′`;
+}
+// Combined RA/Dec cell; '—' when the position is unavailable (e.g. a visible pass).
+function fmtRaDec(raHours, decDeg) {
+  const ra = fmtRaHours(raHours);
+  const dec = fmtDecDeg(decDeg);
+  if (ra == null || dec == null) return '—';
+  return `<span class="skyplan-radec" title="RA ${ra} / Dec ${dec} (J2000) — the flying object's sky position at closest approach. Custom target: raHours ${raHours.toFixed(5)}, decDeg ${decDeg.toFixed(4)}.">${ra} ${dec}</span>`;
+}
+
 // SEP cell for the live "Real candidates" table. When the entry's best
 // (= minimum ever seen) projected sep is meaningfully better than the
 // current one — typically the case for a stale → 'faded' row whose
@@ -440,6 +473,7 @@ function appendSkyPlanRow(tbody, r, idx) {
   const tentative = r.tentative ? ' <span class="skyplan-tentative">tentative</span>' : '';
   const elCell = Number.isFinite(r.elDeg) ? `${Math.round(r.elDeg)}°` : '—';
   const azCell = r.azText ?? '—';
+  const posCell = fmtRaDec(r.satRaHours, r.satDecDeg);
   const durCell = r.durMs != null ? fmtDuration(r.durMs) : '—';
   tr.innerHTML = `
     <td class="skyplan-when">${fmtDateTime(r.atMs)}${conflict}</td>
@@ -450,6 +484,7 @@ function appendSkyPlanRow(tbody, r, idx) {
     <td class="skyplan-sep">${sepCell}${tentative}</td>
     <td class="skyplan-el">${elCell}</td>
     <td class="skyplan-az">${azCell}</td>
+    <td class="skyplan-pos">${posCell}</td>
     <td class="skyplan-dur">${durCell}</td>
     <td class="skyplan-conf" title="${confTip}">${conf}</td>
   `;
@@ -504,7 +539,8 @@ function unifiedPlanRows(state, dsoRows) {
       sepDeg: Number.isFinite(r.sepDeg) ? r.sepDeg
         : (r.missArcmin != null ? r.missArcmin / 60 : null),
       elDeg: Number.isFinite(r.elevationDeg) ? r.elevationDeg : null,
-      azText: null,                                     // az not carried in the plan rows
+      azText: Number.isFinite(r.azimuthDeg) ? azToCompass(r.azimuthDeg) : null,
+      satRaHours: r.satRaHours, satDecDeg: r.satDecDeg,  // sky position of the flying object
       durMs: r.timeInFieldMs ?? null,
       confidence: r.confidence, sunlit: r.sunlit,
       conflictWithPrev: r.conflictWithPrev, conflictGapMs: r.conflictGapMs,
@@ -575,7 +611,7 @@ function renderSkyPlan(state) {
 
   tbody.innerHTML = '';
   if (!rows.length) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="10">No upcoming satellite events.</td></tr>';
+    tbody.innerHTML = '<tr class="empty"><td colspan="11">No upcoming satellite events.</td></tr>';
     return;
   }
   lastSkyPlanRows = rows;     // for pin-from-row (future ISS, v0.45.3)

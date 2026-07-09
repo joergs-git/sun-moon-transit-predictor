@@ -206,6 +206,14 @@ describe('predictSkyTargetTransits', () => {
     expect(c.entersFieldAtMs).toBeLessThanOrEqual(c.closestApproachAtMs);
     expect(c.leavesFieldAtMs).toBeGreaterThanOrEqual(c.closestApproachAtMs);
     expect(c.satAtClosest).not.toBeNull();
+    // The flying object's sky position at closest approach — J2000 + of-date,
+    // in range, so it can be reused as a fixed custom { raHours, decDeg } target.
+    expect(c.satAtClosest.raHours).toBeGreaterThanOrEqual(0);
+    expect(c.satAtClosest.raHours).toBeLessThan(24);
+    expect(c.satAtClosest.decDeg).toBeGreaterThanOrEqual(-90);
+    expect(c.satAtClosest.decDeg).toBeLessThanOrEqual(90);
+    expect(Number.isFinite(c.satAtClosest.raHoursOfDate)).toBe(true);
+    expect(Number.isFinite(c.satAtClosest.decDegOfDate)).toBe(true);
     expect(Array.isArray(c.transitPath)).toBe(true);
     // Object-centred path: the closest sample sits near (0,0) arcmin.
     const nearest = c.transitPath.reduce((a, b) => (Math.abs(b.tOffsetMs) < Math.abs(a.tOffsetMs) ? b : a));
