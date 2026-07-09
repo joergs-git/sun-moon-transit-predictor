@@ -1499,9 +1499,10 @@ a.acstats-label.hex-link:hover { text-decoration: underline; }
    meridian + rise/set.) */
 /* Metric cells split out of the old single "Detail" column (v0.56.0) — same
    muted, compact look as the Live-tracking metric columns above. */
-.skyplan-eta, .skyplan-sep, .skyplan-el, .skyplan-az, .skyplan-dur {
+.skyplan-eta, .skyplan-sep, .skyplan-el, .skyplan-az, .skyplan-pos, .skyplan-dur {
   color: var(--muted); font-size: 11.5px; white-space: nowrap;
 }
+.skyplan-radec { cursor: help; font-variant-numeric: tabular-nums; }
 .skyplan-tentative { color: var(--accent); font-size: 10.5px; }
 .skyplan-vis { color: var(--muted); font-style: italic; }
 .skyplan-type.type-visible { color: #7fb0ff; text-transform: uppercase; font-size: 10.5px; }

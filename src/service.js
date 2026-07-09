@@ -416,6 +416,12 @@ export const DEFAULT_CONFIG = {
       requireDarkSky: true,       // …and the sky dark — so these cluster in twilight
       sunBelowDeg: -6,            // "dark enough": Sun below civil dusk
       reslewMinGapMin: 5,         // two events closer than this can't share one scope → conflict flag
+      // Lead/trail sky positions: also report the flying object's RA/Dec this
+      // many minutes BEFORE and AFTER closest approach, so you can pre-slew to a
+      // point on its track (0 = don't compute that side). Only shown while the
+      // satellite is still above the horizon at that offset.
+      leadBeforeMin: 1,
+      leadAfterMin: 1,
       // Pushover plan-alerts (M83 §12): a heads-up the moment a future pass
       // FIRST reaches the confidence threshold ("a transit is firming up"),
       // separate from the live radio→imminent transit alerts and edge-triggered
@@ -1050,6 +1056,8 @@ export async function runService({
           sunBelowDeg: skyCfg.sunBelowDeg ?? -6,
           coarseStepMs: 10_000,
           coarseGateDeg: 14,
+          leadBeforeMs: (skyCfg.leadBeforeMin ?? 1) * 60_000,
+          leadAfterMs: (skyCfg.leadAfterMin ?? 1) * 60_000,
         }));
       } catch (e) {
         logger.warn?.(`next-opportunity scan failed for ${s.tag}:`, e?.message ?? e);
@@ -1628,6 +1636,8 @@ export async function runService({
         requireDarkSky: config.iss?.skyTargets?.requireDarkSky !== false,
         sunBelowDeg: config.iss?.skyTargets?.sunBelowDeg ?? -6,
         reslewMinGapMin: config.iss?.skyTargets?.reslewMinGapMin ?? 5,
+        leadBeforeMin: config.iss?.skyTargets?.leadBeforeMin ?? 1,
+        leadAfterMin: config.iss?.skyTargets?.leadAfterMin ?? 1,
         objectCount: (config.iss?.skyTargets?.objects ?? []).filter((o) => o?.enabled !== false).length,
         // Full catalogue for the UI editor (no secrets).
         objects: config.iss?.skyTargets?.objects ?? [],
@@ -1986,6 +1996,8 @@ export async function runService({
         minElevationDeg: [0, 90, false],
         sunBelowDeg: [-18, 10, false],
         reslewMinGapMin: [0, 120, false],
+        leadBeforeMin: [0, 10, false],
+        leadAfterMin: [0, 10, false],
       };
       for (const [k, [lo, hi]] of Object.entries(NUM)) {
         if (k in d) {
@@ -3172,6 +3184,8 @@ export async function runService({
             requireSunlit: true,      // always — see the recompute path above
             requireDarkSky: true,
             sunBelowDeg: skyCfg.sunBelowDeg ?? -6,
+            leadBeforeMs: (skyCfg.leadBeforeMin ?? 1) * 60_000,
+            leadAfterMs: (skyCfg.leadAfterMin ?? 1) * 60_000,
           }));
         } catch (e) {
           logger.warn?.(`sky-target prediction failed for ${s.tag}:`, e?.message ?? e);

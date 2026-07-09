@@ -50,6 +50,63 @@ function fmtSpeed(ms)     { return ms == null ? '—' : `${Math.round(ms * 3.6)}
 function fmtDistance(m)   { return m  == null ? '—' : `${(m / 1000).toFixed(1)} km`; }
 function fmtSep(d)        { return d  == null ? '—' : `${d.toFixed(2)}°`; }
 
+// Right Ascension (decimal hours → h m s) and Declination (deg → ±d m) for the
+// Sky-plan "Sky pos" cell — the equatorial position of the flying object at
+// closest approach, so it can be reused as a fixed custom target.
+function fmtRaHours(h) {
+  if (!Number.isFinite(h)) return null;
+  const t = ((h % 24) + 24) % 24;
+  const hh = Math.floor(t);
+  const mFull = (t - hh) * 60;
+  const mm = Math.floor(mFull);
+  const ss = Math.round((mFull - mm) * 60);
+  let H = hh, M = mm, S = ss;
+  if (S === 60) { S = 0; M += 1; }
+  if (M === 60) { M = 0; H = (H + 1) % 24; }
+  return `${H}h${String(M).padStart(2, '0')}m${String(S).padStart(2, '0')}s`;
+}
+function fmtDecDeg(d) {
+  if (!Number.isFinite(d)) return null;
+  const sign = d < 0 ? '−' : '+';
+  const a = Math.abs(d);
+  const deg = Math.floor(a);
+  let min = Math.round((a - deg) * 60);
+  let D = deg;
+  if (min === 60) { min = 0; D += 1; }
+  return `${sign}${D}°${String(min).padStart(2, '0')}′`;
+}
+// One "RA h m s / Dec ±d m" line for a track position, optionally tagged with
+// its time offset (e.g. "−1 min") and elevation. Returns null when unavailable.
+function raDecLine(pos, label) {
+  if (!pos || !Number.isFinite(pos.raHours) || !Number.isFinite(pos.decDeg)) return null;
+  const ra = fmtRaHours(pos.raHours);
+  const dec = fmtDecDeg(pos.decDeg);
+  const el = Number.isFinite(pos.elevationDeg) ? ` (el ${Math.round(pos.elevationDeg)}°)` : '';
+  return `${label ? label + ': ' : ''}RA ${ra} / Dec ${dec}${el}`;
+}
+// Combined RA/Dec cell for the Sky-plan "Sky pos" column. The cell shows the
+// CLOSEST-approach J2000 position; the tooltip adds the lead-in/lead-out track
+// points (N min before/after) so you can pre-slew to a spot on the track.
+// '—' when unavailable (e.g. a naked-eye visible pass).
+function fmtRaDec(r) {
+  const ra = fmtRaHours(r.satRaHours);
+  const dec = fmtDecDeg(r.satDecDeg);
+  if (ra == null || dec == null) return '—';
+  const fmtOff = (ms) => {
+    const m = Math.round(Math.abs(ms) / 60000);
+    const s = Math.round(Math.abs(ms) / 1000);
+    const mag = m >= 1 ? `${m} min` : `${s} s`;
+    return `${ms < 0 ? '−' : '+'}${mag}`;
+  };
+  const lines = [
+    r.satBefore ? raDecLine(r.satBefore, fmtOff(r.satBefore.tOffsetMs)) : null,
+    raDecLine({ raHours: r.satRaHours, decDeg: r.satDecDeg, elevationDeg: r.elDeg }, 'closest'),
+    r.satAfter ? raDecLine(r.satAfter, fmtOff(r.satAfter.tOffsetMs)) : null,
+  ].filter(Boolean);
+  const tip = `${lines.join('\n')}\n(J2000) — custom target: raHours ${r.satRaHours.toFixed(5)}, decDeg ${r.satDecDeg.toFixed(4)}.`;
+  return `<span class="skyplan-radec" title="${tip}">${ra} ${dec}</span>`;
+}
+
 // SEP cell for the live "Real candidates" table. When the entry's best
 // (= minimum ever seen) projected sep is meaningfully better than the
 // current one — typically the case for a stale → 'faded' row whose
@@ -440,6 +497,7 @@ function appendSkyPlanRow(tbody, r, idx) {
   const tentative = r.tentative ? ' <span class="skyplan-tentative">tentative</span>' : '';
   const elCell = Number.isFinite(r.elDeg) ? `${Math.round(r.elDeg)}°` : '—';
   const azCell = r.azText ?? '—';
+  const posCell = fmtRaDec(r);
   const durCell = r.durMs != null ? fmtDuration(r.durMs) : '—';
   tr.innerHTML = `
     <td class="skyplan-when">${fmtDateTime(r.atMs)}${conflict}</td>
@@ -450,6 +508,7 @@ function appendSkyPlanRow(tbody, r, idx) {
     <td class="skyplan-sep">${sepCell}${tentative}</td>
     <td class="skyplan-el">${elCell}</td>
     <td class="skyplan-az">${azCell}</td>
+    <td class="skyplan-pos">${posCell}</td>
     <td class="skyplan-dur">${durCell}</td>
     <td class="skyplan-conf" title="${confTip}">${conf}</td>
   `;
@@ -504,7 +563,9 @@ function unifiedPlanRows(state, dsoRows) {
       sepDeg: Number.isFinite(r.sepDeg) ? r.sepDeg
         : (r.missArcmin != null ? r.missArcmin / 60 : null),
       elDeg: Number.isFinite(r.elevationDeg) ? r.elevationDeg : null,
-      azText: null,                                     // az not carried in the plan rows
+      azText: Number.isFinite(r.azimuthDeg) ? azToCompass(r.azimuthDeg) : null,
+      satRaHours: r.satRaHours, satDecDeg: r.satDecDeg,  // sky position of the flying object
+      satBefore: r.satBefore, satAfter: r.satAfter,      // lead-in / lead-out track positions
       durMs: r.timeInFieldMs ?? null,
       confidence: r.confidence, sunlit: r.sunlit,
       conflictWithPrev: r.conflictWithPrev, conflictGapMs: r.conflictGapMs,
@@ -575,7 +636,7 @@ function renderSkyPlan(state) {
 
   tbody.innerHTML = '';
   if (!rows.length) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="10">No upcoming satellite events.</td></tr>';
+    tbody.innerHTML = '<tr class="empty"><td colspan="11">No upcoming satellite events.</td></tr>';
     return;
   }
   lastSkyPlanRows = rows;     // for pin-from-row (future ISS, v0.45.3)

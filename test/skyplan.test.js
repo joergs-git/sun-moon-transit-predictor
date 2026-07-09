@@ -60,6 +60,55 @@ describe('buildSkyTargetPlan', () => {
     expect(rows[0].elevationDeg).toBe(45);
   });
 
+  it('carries the flying object’s sky position (RA/Dec + Az) into the plan row', () => {
+    const rows = buildSkyTargetPlan([
+      cand({
+        closestApproachAtMs: now + DAY,
+        satAtClosest: {
+          elevationDeg: 40, azimuthDeg: 123.4,
+          raHours: 5.59, decDeg: -5.39,
+          raHoursOfDate: 5.6, decDegOfDate: -5.4,
+        },
+      }),
+    ], { nowMs: now });
+    expect(rows[0].satRaHours).toBeCloseTo(5.59, 5);
+    expect(rows[0].satDecDeg).toBeCloseTo(-5.39, 5);
+    expect(rows[0].satRaHoursOfDate).toBeCloseTo(5.6, 5);
+    expect(rows[0].satDecDegOfDate).toBeCloseTo(-5.4, 5);
+    expect(rows[0].azimuthDeg).toBeCloseTo(123.4, 5);
+  });
+
+  it('carries the lead-in / lead-out track positions into the plan row', () => {
+    const before = { tOffsetMs: -60_000, raHours: 5.4, decDeg: -6, elevationDeg: 22 };
+    const after = { tOffsetMs: 60_000, raHours: 5.8, decDeg: -4, elevationDeg: 35 };
+    const rows = buildSkyTargetPlan([
+      cand({
+        closestApproachAtMs: now + DAY,
+        satAtClosest: { elevationDeg: 40, raHours: 5.59, decDeg: -5.39 },
+        satBefore: before, satAfter: after,
+      }),
+    ], { nowMs: now });
+    expect(rows[0].satBefore).toEqual(before);
+    expect(rows[0].satAfter).toEqual(after);
+  });
+
+  it('leaves the lead positions null when the candidate omits them', () => {
+    const rows = buildSkyTargetPlan([
+      cand({ closestApproachAtMs: now + DAY }),   // no satBefore/satAfter
+    ], { nowMs: now });
+    expect(rows[0].satBefore).toBeNull();
+    expect(rows[0].satAfter).toBeNull();
+  });
+
+  it('leaves the sky-position fields null when the satellite state is absent', () => {
+    const rows = buildSkyTargetPlan([
+      cand({ closestApproachAtMs: now + DAY, satAtClosest: null }),
+    ], { nowMs: now });
+    expect(rows[0].satRaHours).toBeNull();
+    expect(rows[0].satDecDeg).toBeNull();
+    expect(rows[0].azimuthDeg).toBeNull();
+  });
+
   it('firstPerCombo keeps only the soonest pass per satellite×object', () => {
     const rows = buildSkyTargetPlan([
       cand({ closestApproachAtMs: now + 3 * DAY, satTag: 'ISS', targetId: 'm42' }),

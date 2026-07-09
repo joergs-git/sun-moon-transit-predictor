@@ -17,7 +17,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 
 import {
   observerEcef, targetEcefAzEl, bodyAzEl, targetAzEl, apparentDiameterDeg,
-  angularSeparationDeg, isObservable,
+  angularSeparationDeg, isObservable, horizontalToRaDec,
 } from './geometry.js';
 import { twoline2satrec, sgp4, temeToEcef, unixToJulian } from './sgp4.js';
 
@@ -425,6 +425,10 @@ export function predictSkyTargetTransits(observer, satrec, opts = {}) {
     // still resolves the exact crossing time within each bracketed window.
     coarseStepMs = COARSE_STEP_MS,
     coarseGateDeg = COARSE_GATE_DEG,
+    // Also report the object's RA/Dec this many ms before/after closest
+    // approach (0 = skip that side), for pre-slewing to a point on its track.
+    leadBeforeMs = 60_000,
+    leadAfterMs = 60_000,
   } = opts;
 
   const obsEcef = observerEcef(observer);
@@ -476,7 +480,7 @@ export function predictSkyTargetTransits(observer, satrec, opts = {}) {
         out.push(buildSkyTargetCandidate(
           observer, satrec, obsEcef, obsLat, obsLon, target,
           refined.tMs, refined.sep, fieldRadiusDeg, sepAt,
-          { tag, name, typeDesc },
+          { tag, name, typeDesc, leadBeforeMs, leadAfterMs },
         ));
       }
     }, coarseStepMs);
@@ -511,6 +515,26 @@ function buildSkyTargetCandidate(
   const timeInFieldMs = leaveMs - enterMs;
 
   const sunlit = satAt ? issSunlit(satAt.ecef, sunUnitEcef(observer, closestMs)) : false;
+
+  // Lead/trail sky positions: where the flying object sits N minutes before and
+  // after closest approach, so you can pre-slew to a point on its track. Null
+  // once the satellite has dropped below the horizon at that offset (nothing to
+  // point at). Same J2000 + of-date frames as satAtClosest.
+  const satPosAt = (tMs) => {
+    const s = issAzEl(satrec, obsEcef, obsLat, obsLon, tMs);
+    if (!s || s.elevationDeg < 0) return null;
+    return {
+      tOffsetMs: tMs - closestMs,
+      azimuthDeg: s.azimuthDeg,
+      elevationDeg: s.elevationDeg,
+      rangeM: s.rangeM ?? null,
+      ...horizontalToRaDec(observer, s, tMs),
+    };
+  };
+  const leadBeforeMs = Number.isFinite(meta.leadBeforeMs) ? meta.leadBeforeMs : 60_000;
+  const leadAfterMs = Number.isFinite(meta.leadAfterMs) ? meta.leadAfterMs : 60_000;
+  const satBefore = leadBeforeMs > 0 ? satPosAt(closestMs - leadBeforeMs) : null;
+  const satAfter = leadAfterMs > 0 ? satPosAt(closestMs + leadAfterMs) : null;
 
   // Object-centred path for the UI: offsets in arcmin from the target centre,
   // azimuth scaled by cos(el) so the sketch is locally square. Spans the field
@@ -555,8 +579,21 @@ function buildSkyTargetCandidate(
     angularRateDegPerSec: omegaDegPerSec,
     sunlit,
     satAtClosest: satAt
-      ? { azimuthDeg: satAt.azimuthDeg, elevationDeg: satAt.elevationDeg, rangeM: satAt.rangeM ?? null }
+      ? {
+        azimuthDeg: satAt.azimuthDeg,
+        elevationDeg: satAt.elevationDeg,
+        rangeM: satAt.rangeM ?? null,
+        // WHERE on the sky the satellite sits at closest approach. J2000
+        // (raHours/decDeg) matches the catalogue frame, so it can be reused
+        // verbatim as a fixed { raHours, decDeg } custom target; the of-date
+        // pair is the "JNow" a mount would slew to (v0.57.0).
+        ...horizontalToRaDec(observer, satAt, closestMs),
+      }
       : null,
+    // Track lead-in / lead-out sky positions (null when below the horizon at
+    // that offset, or when the corresponding lead is disabled).
+    satBefore,
+    satAfter,
     targetAtClosest: { azimuthDeg: tgtAt.azimuthDeg, elevationDeg: tgtAt.elevationDeg },
     transitPath,
   };

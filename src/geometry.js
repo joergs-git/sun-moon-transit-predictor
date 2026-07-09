@@ -324,6 +324,52 @@ export function equatorialRaDec(observer, target, whenUtc) {
 }
 
 /**
+ * Equatorial coordinates (RA in hours, Dec in degrees) of an object given only
+ * its Az/El — the inverse of `bodyAzEl`/`targetAzEl`. Used to report WHERE on
+ * the sky a fast-moving object (a satellite) actually sits at the moment of
+ * closest approach, so that sky position can be reused as a fixed custom target
+ * ({ raHours, decDeg }) in the catalogue (v0.57.0).
+ *
+ * Two frames are returned: J2000 (`raHours`/`decDeg`, the same mean-equatorial
+ * frame the sky-target catalogue stores, so the values drop straight into a
+ * `{ raHours, decDeg }` target descriptor) and equator-of-date / apparent
+ * (`raHoursOfDate`/`decDegOfDate`, i.e. "JNow", what a mount pointed right now
+ * would use). The satellite Az/El from the SGP4 pipeline is geometric (no
+ * refraction), so refraction is OFF by default to stay consistent.
+ *
+ * @param {Observer} observer
+ * @param {AzEl} azEl                 { azimuthDeg, elevationDeg }
+ * @param {Date|string|number} whenUtc
+ * @param {{ applyRefraction?: boolean }} [opts]
+ * @returns {{ raHours:number, decDeg:number, raHoursOfDate:number, decDegOfDate:number }}
+ */
+export function horizontalToRaDec(observer, azEl, whenUtc, opts = {}) {
+  const { applyRefraction = false } = opts;
+  const aobs = new Astronomy.Observer(
+    observer.latitudeDeg,
+    observer.longitudeDeg,
+    observer.elevationM,
+  );
+  const time = Astronomy.MakeTime(whenUtc instanceof Date ? whenUtc : new Date(whenUtc));
+  const refraction = applyRefraction ? 'normal' : null;
+  // Spherical(lat=altitude, lon=azimuth, dist); distance is irrelevant to RA/Dec.
+  const sphere = new Astronomy.Spherical(azEl.elevationDeg, azEl.azimuthDeg, 1);
+  const vecHor = Astronomy.VectorFromHorizon(sphere, time, refraction);
+  const equOfDate = Astronomy.EquatorFromVector(
+    Astronomy.RotateVector(Astronomy.Rotation_HOR_EQD(time, aobs), vecHor),
+  );
+  const equJ2000 = Astronomy.EquatorFromVector(
+    Astronomy.RotateVector(Astronomy.Rotation_HOR_EQJ(time, aobs), vecHor),
+  );
+  return {
+    raHours: equJ2000.ra,
+    decDeg: equJ2000.dec,
+    raHoursOfDate: equOfDate.ra,
+    decDegOfDate: equOfDate.dec,
+  };
+}
+
+/**
  * Apparent angular diameter of a target, in degrees, at a given time.
  * Bodies: computed from physical radius + geocentric distance (so the Sun's
  * ~0.533° and the Moon's ~0.518° fall out naturally, and a planet's disc is

@@ -188,6 +188,8 @@ describe('predictSkyTargetTransits', () => {
   const under = { name: 'under-track', latitudeDeg: 30, longitudeDeg: -10, elevationM: 50 };
   const fromMs = Date.UTC(2024, 4, 3, 0, 0, 0);
   const sunBox = { id: 'sun', name: 'Sun', body: 'Sun', fovWidthDeg: 2, fovHeightDeg: 2 };
+  // Two sky positions are meaningfully different (> ~0.1° in RA or Dec).
+  const p_differs = (a, b) => Math.abs(a.raHours - b.raHours) > 0.007 || Math.abs(a.decDeg - b.decDeg) > 0.1;
 
   it('finds a satellite pass through a framed field and shapes it correctly', () => {
     // Daytime Sun transit → disable the night gates so the approach registers.
@@ -206,11 +208,54 @@ describe('predictSkyTargetTransits', () => {
     expect(c.entersFieldAtMs).toBeLessThanOrEqual(c.closestApproachAtMs);
     expect(c.leavesFieldAtMs).toBeGreaterThanOrEqual(c.closestApproachAtMs);
     expect(c.satAtClosest).not.toBeNull();
+    // The flying object's sky position at closest approach — J2000 + of-date,
+    // in range, so it can be reused as a fixed custom { raHours, decDeg } target.
+    expect(c.satAtClosest.raHours).toBeGreaterThanOrEqual(0);
+    expect(c.satAtClosest.raHours).toBeLessThan(24);
+    expect(c.satAtClosest.decDeg).toBeGreaterThanOrEqual(-90);
+    expect(c.satAtClosest.decDeg).toBeLessThanOrEqual(90);
+    expect(Number.isFinite(c.satAtClosest.raHoursOfDate)).toBe(true);
+    expect(Number.isFinite(c.satAtClosest.decDegOfDate)).toBe(true);
     expect(Array.isArray(c.transitPath)).toBe(true);
     // Object-centred path: the closest sample sits near (0,0) arcmin.
     const nearest = c.transitPath.reduce((a, b) => (Math.abs(b.tOffsetMs) < Math.abs(a.tOffsetMs) ? b : a));
     expect(Math.hypot(nearest.dAzArcmin, nearest.dElArcmin)).toBeLessThan(c.fieldRadiusDeg * 60 + 1);
     expect(typeof c.sunlit).toBe('boolean');
+  });
+
+  it('reports lead-in / lead-out sky positions at the configured offsets', () => {
+    const ev = predictSkyTargetTransits(under, tle.satrec, {
+      fromMs, horizonMs: 14 * 24 * 3600_000, targets: [sunBox],
+      requireSunlit: false, requireDarkSky: false,
+      leadBeforeMs: 30_000, leadAfterMs: 30_000,
+    });
+    const c = ev[0];
+    // Both offsets fall inside the (short) daytime pass here, so both resolve.
+    expect(c.satBefore).not.toBeNull();
+    expect(c.satAfter).not.toBeNull();
+    expect(c.satBefore.tOffsetMs).toBe(-30_000);
+    expect(c.satAfter.tOffsetMs).toBe(30_000);
+    for (const p of [c.satBefore, c.satAfter]) {
+      expect(p.raHours).toBeGreaterThanOrEqual(0);
+      expect(p.raHours).toBeLessThan(24);
+      expect(p.decDeg).toBeGreaterThanOrEqual(-90);
+      expect(p.decDeg).toBeLessThanOrEqual(90);
+      expect(p.elevationDeg).toBeGreaterThanOrEqual(0);   // above the horizon or omitted
+    }
+    // The satellite moved, so a lead position differs from the closest one.
+    expect(p_differs(c.satBefore, c.satAtClosest) || p_differs(c.satAfter, c.satAtClosest)).toBe(true);
+  });
+
+  it('omits a lead position when that side is disabled (0 min)', () => {
+    const ev = predictSkyTargetTransits(under, tle.satrec, {
+      fromMs, horizonMs: 14 * 24 * 3600_000, targets: [sunBox],
+      requireSunlit: false, requireDarkSky: false,
+      leadBeforeMs: 0, leadAfterMs: 45_000,
+    });
+    const c = ev[0];
+    expect(c.satBefore).toBeNull();
+    expect(c.satAfter).not.toBeNull();
+    expect(c.satAfter.tOffsetMs).toBe(45_000);
   });
 
   it('classifies a sub-disc miss as a transit (through the object)', () => {
