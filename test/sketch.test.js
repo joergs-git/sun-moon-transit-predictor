@@ -217,6 +217,31 @@ describe('sketch renderer', () => {
     expect(svg).not.toContain('<polyline');
   });
 
+  it('carries a sky-target history row: object disc size + satellite flag', () => {
+    const candidate = syntheticTransitCandidate();
+    // Shape it like a recorded sky-target pass (satellite × DSO): the framed
+    // object plays the "body" role and carries its apparent diameter.
+    const skyCandidate = {
+      ...candidate,
+      icao: 'CSS', isISS: true, isSky: true,
+      objectDiameterDeg: 1.0,          // e.g. M42
+    };
+    const row = {
+      body: 'M42 Orion Nebula',
+      icao: 'CSS',
+      closest_at_ms: candidate.closestApproachAtMs,
+      closest_sep_deg: candidate.closestApproachSepDeg,
+      range_m: candidate.aircraftAtClosest.rangeM,
+      payload: { candidate: skyCandidate, route: null },
+    };
+    const input = fromHistoryRow(row);
+    expect(input).not.toBeNull();
+    expect(input.isISS).toBe(true);                 // suppresses aircraft-only aux panels
+    expect(input.bodyDiameterDeg).toBe(1.0);        // draws the DSO disc, not the Sun/Moon default
+    const svg = buildSketchSvg(input);
+    expect(svg.startsWith('<svg')).toBe(true);
+  });
+
   it('returns null when essential fields are missing', () => {
     expect(fromLifecycleEntry({})).toBeNull();
     expect(fromLifecycleEntry({ candidate: {} })).toBeNull();

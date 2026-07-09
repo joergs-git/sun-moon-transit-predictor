@@ -889,7 +889,10 @@ function historyTr(e, absIdx) {
     ? e.leadTimeMs
     : (e.closest_at_ms - e.recorded_at_ms);
   const dt = discTransit(e);
-  const bodyIcon = e.body === 'Sun' ? '☀' : '🌙';
+  // Sky-target rows (satellite × star/planet/DSO) show the ✦ glyph + the object
+  // name, matching the Live-tracking list; Sun/Moon keep ☀/🌙.
+  const isSky = e.payload?.candidate?.isSky === true;
+  const bodyIcon = isSky ? '✦' : (e.body === 'Sun' ? '☀' : '🌙');
   const elDeg = e.payload?.candidate?.aircraftAtClosest?.elevationDeg;
   tr.innerHTML = `
     ${visCellNeutral(elDeg, isArmed(e.icao, e.body, e.closest_at_ms))}
@@ -1768,7 +1771,12 @@ function acMetaFromLifecycle(entry) {
 }
 function acMetaFromHistory(row) {
   const a = row?.payload?.candidate?.aircraft;
-  const iss = row?.icao === 'ISS';
+  // Any orbiting satellite (ISS/HST/CSS) or a sky-target pass → treat as "ISS"
+  // for the FOV aux panels: the plan-view map, side view and airframe spec card
+  // are all aircraft-only and are suppressed for these.
+  const iss = row?.payload?.candidate?.isISS === true
+    || row?.payload?.candidate?.isSky === true
+    || SAT_TAGS.has(row?.icao) || row?.icao === 'ISS';
   const route = row?.payload?.candidate?.route ?? null;
   return {
     typeCode: a?.typeCode ?? null, registration: a?.registration ?? null,

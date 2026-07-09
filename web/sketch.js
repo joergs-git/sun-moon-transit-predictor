@@ -403,7 +403,11 @@ export function fromHistoryRow(row) {
     origin: row.origin ?? route?.origin?.iata ?? route?.origin?.icao ?? null,
     destination: row.destination ?? route?.destination?.iata ?? route?.destination?.icao ?? null,
     icao: row.icao ?? null,
-    isISS: c.isISS === true || c.aircraft?.typeCode === 'ISS' || row.icao === 'ISS',
+    isISS: c.isISS === true || c.isSky === true || c.aircraft?.typeCode === 'ISS' || row.icao === 'ISS',
+    // Sky-target body is the framed object, not the Sun/Moon — carry its
+    // apparent diameter so the sketch draws the right disc (a DSO's degrees, a
+    // planet's arcseconds → a point) instead of the default Sun/Moon disc.
+    bodyDiameterDeg: Number.isFinite(c.objectDiameterDeg) ? c.objectDiameterDeg : null,
     ...dimsFromType(c.aircraft?.typeCode),
     transitPath: Array.isArray(c.transitPath) ? c.transitPath : [],
   };

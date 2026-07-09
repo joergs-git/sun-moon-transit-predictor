@@ -62,6 +62,20 @@ describe('Notifier', () => {
     expect(events.length).toBe(0);
   });
 
+  it('records a sky-target pass to History but never pushes it (record-only)', async () => {
+    const px = new FakePushover();
+    const recorded = [];
+    const n = new Notifier({ pushover: px, onEvent: (e) => recorded.push(e) });
+    // A satellite × DSO pass: icao = sat tag, body = the framed object, isSky.
+    const sky = { ...makeCandidate({ icao: 'ISS', body: 'M42', closestInMs: 90_000, level: 'candidate' }), isSky: true, isISS: true };
+    const events = await n.tick([sky], 1_000_000_000_000);
+    // History record happens (so it appears + is clickable in History)…
+    expect(recorded.some((e) => e.candidate.body === 'M42' && e.candidate.isSky)).toBe(true);
+    // …but it never buzzes the phone and is not counted as a dispatched event.
+    expect(px.calls.length).toBe(0);
+    expect(events.length).toBe(0);
+  });
+
   it('still pushes the allowed body when pushBodies is set', async () => {
     const px = new FakePushover();
     const n = new Notifier({ pushover: px, pushBodies: ['Sun'] });

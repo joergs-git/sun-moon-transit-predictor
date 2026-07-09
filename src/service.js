@@ -3509,8 +3509,13 @@ export async function runService({
     try {
       // ISS rides the same notifier path as aircraft → Pushover the moment a
       // transit is predicted, plus the History row(s) via its onEvent hook.
-      // baseCandidates excludes sky-targets on purpose (no mislabeled pushes).
-      await notifier.tick(baseCandidates, nowMs);
+      // Sky-target passes ride along too, but the notifier records them
+      // WITHOUT pushing (cand.isSky → record-only) so a satellite × star/DSO
+      // pass also lands in History (clickable there), never a mislabeled push.
+      await notifier.tick(
+        skyForLifecycle.length ? baseCandidates.concat(skyForLifecycle) : baseCandidates,
+        nowMs,
+      );
     } catch (e) {
       logger.error?.('notifier tick failed:', e);
     }
