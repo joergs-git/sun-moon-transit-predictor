@@ -78,6 +78,28 @@ describe('buildSkyTargetPlan', () => {
     expect(rows[0].azimuthDeg).toBeCloseTo(123.4, 5);
   });
 
+  it('carries the lead-in / lead-out track positions into the plan row', () => {
+    const before = { tOffsetMs: -60_000, raHours: 5.4, decDeg: -6, elevationDeg: 22 };
+    const after = { tOffsetMs: 60_000, raHours: 5.8, decDeg: -4, elevationDeg: 35 };
+    const rows = buildSkyTargetPlan([
+      cand({
+        closestApproachAtMs: now + DAY,
+        satAtClosest: { elevationDeg: 40, raHours: 5.59, decDeg: -5.39 },
+        satBefore: before, satAfter: after,
+      }),
+    ], { nowMs: now });
+    expect(rows[0].satBefore).toEqual(before);
+    expect(rows[0].satAfter).toEqual(after);
+  });
+
+  it('leaves the lead positions null when the candidate omits them', () => {
+    const rows = buildSkyTargetPlan([
+      cand({ closestApproachAtMs: now + DAY }),   // no satBefore/satAfter
+    ], { nowMs: now });
+    expect(rows[0].satBefore).toBeNull();
+    expect(rows[0].satAfter).toBeNull();
+  });
+
   it('leaves the sky-position fields null when the satellite state is absent', () => {
     const rows = buildSkyTargetPlan([
       cand({ closestApproachAtMs: now + DAY, satAtClosest: null }),

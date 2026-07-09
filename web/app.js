@@ -75,12 +75,36 @@ function fmtDecDeg(d) {
   if (min === 60) { min = 0; D += 1; }
   return `${sign}${D}°${String(min).padStart(2, '0')}′`;
 }
-// Combined RA/Dec cell; '—' when the position is unavailable (e.g. a visible pass).
-function fmtRaDec(raHours, decDeg) {
-  const ra = fmtRaHours(raHours);
-  const dec = fmtDecDeg(decDeg);
+// One "RA h m s / Dec ±d m" line for a track position, optionally tagged with
+// its time offset (e.g. "−1 min") and elevation. Returns null when unavailable.
+function raDecLine(pos, label) {
+  if (!pos || !Number.isFinite(pos.raHours) || !Number.isFinite(pos.decDeg)) return null;
+  const ra = fmtRaHours(pos.raHours);
+  const dec = fmtDecDeg(pos.decDeg);
+  const el = Number.isFinite(pos.elevationDeg) ? ` (el ${Math.round(pos.elevationDeg)}°)` : '';
+  return `${label ? label + ': ' : ''}RA ${ra} / Dec ${dec}${el}`;
+}
+// Combined RA/Dec cell for the Sky-plan "Sky pos" column. The cell shows the
+// CLOSEST-approach J2000 position; the tooltip adds the lead-in/lead-out track
+// points (N min before/after) so you can pre-slew to a spot on the track.
+// '—' when unavailable (e.g. a naked-eye visible pass).
+function fmtRaDec(r) {
+  const ra = fmtRaHours(r.satRaHours);
+  const dec = fmtDecDeg(r.satDecDeg);
   if (ra == null || dec == null) return '—';
-  return `<span class="skyplan-radec" title="RA ${ra} / Dec ${dec} (J2000) — the flying object's sky position at closest approach. Custom target: raHours ${raHours.toFixed(5)}, decDeg ${decDeg.toFixed(4)}.">${ra} ${dec}</span>`;
+  const fmtOff = (ms) => {
+    const m = Math.round(Math.abs(ms) / 60000);
+    const s = Math.round(Math.abs(ms) / 1000);
+    const mag = m >= 1 ? `${m} min` : `${s} s`;
+    return `${ms < 0 ? '−' : '+'}${mag}`;
+  };
+  const lines = [
+    r.satBefore ? raDecLine(r.satBefore, fmtOff(r.satBefore.tOffsetMs)) : null,
+    raDecLine({ raHours: r.satRaHours, decDeg: r.satDecDeg, elevationDeg: r.elDeg }, 'closest'),
+    r.satAfter ? raDecLine(r.satAfter, fmtOff(r.satAfter.tOffsetMs)) : null,
+  ].filter(Boolean);
+  const tip = `${lines.join('\n')}\n(J2000) — custom target: raHours ${r.satRaHours.toFixed(5)}, decDeg ${r.satDecDeg.toFixed(4)}.`;
+  return `<span class="skyplan-radec" title="${tip}">${ra} ${dec}</span>`;
 }
 
 // SEP cell for the live "Real candidates" table. When the entry's best
@@ -473,7 +497,7 @@ function appendSkyPlanRow(tbody, r, idx) {
   const tentative = r.tentative ? ' <span class="skyplan-tentative">tentative</span>' : '';
   const elCell = Number.isFinite(r.elDeg) ? `${Math.round(r.elDeg)}°` : '—';
   const azCell = r.azText ?? '—';
-  const posCell = fmtRaDec(r.satRaHours, r.satDecDeg);
+  const posCell = fmtRaDec(r);
   const durCell = r.durMs != null ? fmtDuration(r.durMs) : '—';
   tr.innerHTML = `
     <td class="skyplan-when">${fmtDateTime(r.atMs)}${conflict}</td>
@@ -541,6 +565,7 @@ function unifiedPlanRows(state, dsoRows) {
       elDeg: Number.isFinite(r.elevationDeg) ? r.elevationDeg : null,
       azText: Number.isFinite(r.azimuthDeg) ? azToCompass(r.azimuthDeg) : null,
       satRaHours: r.satRaHours, satDecDeg: r.satDecDeg,  // sky position of the flying object
+      satBefore: r.satBefore, satAfter: r.satAfter,      // lead-in / lead-out track positions
       durMs: r.timeInFieldMs ?? null,
       confidence: r.confidence, sunlit: r.sunlit,
       conflictWithPrev: r.conflictWithPrev, conflictGapMs: r.conflictGapMs,

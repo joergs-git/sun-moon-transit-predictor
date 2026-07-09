@@ -99,6 +99,10 @@ export function buildSkyTargetPlan(candidates, opts = {}) {
       satDecDeg: sat?.decDeg ?? null,
       satRaHoursOfDate: sat?.raHoursOfDate ?? null,
       satDecDegOfDate: sat?.decDegOfDate ?? null,
+      // Lead-in / lead-out track positions (N min before/after closest); null
+      // when below the horizon at that offset or the lead is disabled.
+      satBefore: c.satBefore ?? null,
+      satAfter: c.satAfter ?? null,
       sepDeg: c.closestApproachSepDeg,
       missArcmin: c.missArcmin,
       timeInFieldMs: c.timeInFieldMs,
