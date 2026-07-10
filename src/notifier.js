@@ -270,6 +270,14 @@ export class Notifier {
         } catch { /* history must never break the notifier loop */ }
       }
 
+      // Sky-target passes (satellite × star / planet / DSO) are RECORD-ONLY:
+      // they earn a History row (above) so they appear + are clickable there,
+      // but must NEVER buzz the phone — the Pushover template + gates are
+      // Sun/Moon-shaped, and sky-targets get their own plan-alerts / arming
+      // path elsewhere. Skipping the send path here is what lets them join the
+      // notifier at all (service.js feeds them in for the record).
+      if (cand.isSky) continue;
+
       // ---- Pushover dispatch: unchanged gating ----
       if (!sendStage) continue;
       // Active-target hard gate (v0.39.4): the operator explicitly pointed the
