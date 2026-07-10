@@ -371,6 +371,10 @@ export function fromSatTransit(row) {
     flight: row.satTag ?? 'ISS',
     icao: row.satTag ?? 'ISS',
     isISS: true,                  // draws the satellite glyph, not an airliner
+    // Sky-target pass: the body is the framed object (DSO degrees / planet
+    // arcseconds → a point), not the Sun/Moon — carry its disc so the preview
+    // draws the right size. Null/absent for a Sun/Moon transit (default disc).
+    bodyDiameterDeg: Number.isFinite(g.bodyDiameterDeg) ? g.bodyDiameterDeg : null,
     transitPath: Array.isArray(g.transitPath) ? g.transitPath : [],
   };
 }
