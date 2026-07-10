@@ -43,7 +43,7 @@ import { extrapolate, findTransits } from './tracker.js';
 import { filterAircraft } from './aircraftclass.js';
 import {
   loadIssTle, predictIssTransits, predictSkyTargetTransits, nextIssVisiblePass,
-  skyTargetToTransitCandidate, tleEpochMsAt,
+  visiblePassAimPoints, skyTargetToTransitCandidate, tleEpochMsAt,
 } from './iss.js';
 import { buildSkyTargetPlan, CONFIDENCE_RANK } from './skyplan.js';
 import {
@@ -1291,6 +1291,22 @@ export async function runService({
     if (id === 'Sun') return 'Sun';
     const list = config.iss?.skyTargets?.objects ?? DEFAULT_SKY_TARGETS;
     return list.find((o) => o.id === id) ?? null;
+  }
+
+  /**
+   * The camera sensor's field of view (degrees) from the current rig optics
+   * (focal length + sensor size). Falls back to a 0.5°×0.5° default when optics
+   * aren't set, so the visible-pass aim-point dwell is still a sane estimate.
+   */
+  function opticsFovDeg() {
+    const f = Number(config.optics?.telescopeFocalMm);
+    const sw = Number(config.optics?.sensorWmm);
+    const sh = Number(config.optics?.sensorHmm);
+    const fovOf = (mm) => 2 * Math.atan(mm / (2 * f)) * 180 / Math.PI;
+    return {
+      fovWidthDeg: (f > 0 && sw > 0) ? fovOf(sw) : 0.5,
+      fovHeightDeg: (f > 0 && sh > 0) ? fovOf(sh) : 0.5,
+    };
   }
 
   /**
@@ -3077,6 +3093,14 @@ export async function runService({
             // scan returns at the first hit, so this is essentially free.
             horizonMs: config.iss.visibleHorizonMs ?? config.iss.horizonMs,
           });
+          // Pre-pointing aim points (peak + low rise) so a visible pass with no
+          // catalogue star nearby is still clickable → pre-aim the scope + see
+          // the sensor enter/leave times (v0.59.0).
+          if (issVisiblePass) {
+            issVisiblePass.aimPoints = visiblePassAimPoints(
+              observer, issTle.satrec, issVisiblePass, opticsFovDeg(),
+            );
+          }
         } catch (e) {
           logger.warn?.('ISS visible-pass calc failed:', e?.message ?? e);
           issVisiblePass = null;
@@ -3120,6 +3144,11 @@ export async function runService({
             fromMs: nowMs,
             horizonMs: config.iss.visibleHorizonMs ?? config.iss.horizonMs,
           });
+          if (visiblePass) {
+            visiblePass.aimPoints = visiblePassAimPoints(
+              observer, tle.satrec, visiblePass, opticsFovDeg(),
+            );
+          }
         } catch (e) {
           logger.warn?.(`${sat.tag} visible-pass calc failed:`, e?.message ?? e);
         }
