@@ -34,6 +34,42 @@ export function confidenceFor(tag, ageAtEventDays) {
 
 export const CONFIDENCE_RANK = { green: 3, amber: 2, orange: 1, red: 0 };
 
+/**
+ * Build a compact, sketch-ready geometry blob for a future sky-target pass, so
+ * the Sky-plan row can be clicked to preview the crossing in the FOV before it
+ * reaches the live lifecycle. Mirrors the server's `transitGeom` shape used by
+ * the Sun/Moon next-transit rows: { bodyAt, aircraftAt, transitPath }, with the
+ * satellite playing the aircraft role and the framed object the body role. The
+ * dense per-pass path is DOWNSAMPLED to at most `maxPts` points — plenty to draw
+ * the crossing line, but keeps the per-tick plan (in /api/state) small.
+ *
+ * @param {object} c A sky-target candidate from predictSkyTargetTransits.
+ * @param {number} [maxPts] cap on path points (default 24)
+ * @returns {{bodyAt:object, aircraftAt:object, bodyDiameterDeg:number|null, transitPath:Array}|null}
+ */
+export function skyGeom(c, maxPts = 24) {
+  const sat = c?.satAtClosest;
+  const tgt = c?.targetAtClosest;
+  if (!sat || !tgt) return null;
+  const path = Array.isArray(c.transitPath) ? c.transitPath : [];
+  const step = Math.max(1, Math.ceil(path.length / maxPts));
+  const transitPath = [];
+  for (let i = 0; i < path.length; i += step) {
+    const p = path[i];
+    transitPath.push({
+      tOffsetMs: p.tOffsetMs,
+      aircraftAz: p.satAz, aircraftEl: p.satEl,
+      bodyAz: p.targetAz, bodyEl: p.targetEl,
+    });
+  }
+  return {
+    bodyAt: { az: tgt.azimuthDeg, el: tgt.elevationDeg },
+    aircraftAt: { az: sat.azimuthDeg, el: sat.elevationDeg, rangeM: sat.rangeM ?? null },
+    bodyDiameterDeg: Number.isFinite(c.objectDiameterDeg) ? c.objectDiameterDeg : null,
+    transitPath,
+  };
+}
+
 /** True when `level` meets or exceeds `min` (e.g. atLeastConfidence('amber','green') === false). */
 export function atLeastConfidence(level, min) {
   if (!level || !min) return false;
@@ -110,6 +146,11 @@ export function buildSkyTargetPlan(candidates, opts = {}) {
       leadMs: atMs - nowMs,
       tleAgeAtEventDays: ageAtEventDays,
       confidence: confidenceFor(c.satTag, ageAtEventDays),
+      // Sketch-ready geometry so a FUTURE sky-target pass is clickable in the
+      // Sky plan → FOV preview, before it enters the live lifecycle. Compact
+      // (downsampled path) to keep /api/state small.
+      geom: skyGeom(c),
+      objectDiameterDeg: c.objectDiameterDeg ?? null,
     });
   }
 

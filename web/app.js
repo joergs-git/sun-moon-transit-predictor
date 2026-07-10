@@ -486,9 +486,11 @@ function appendSkyPlanRow(tbody, r, idx) {
     ? '<span class="skyplan-vis">naked-eye</span>'
     : `${r.objectIcon ? r.objectIcon + ' ' : ''}${r.object ?? '—'}`;
   const tr = document.createElement('tr');
-  // A future satellite transit with attached geometry is clickable → pin it
-  // into the FOV preview (v0.45.3).
-  const clickable = r.kind === 'transit' && r.geom ? ' sketchable' : '';
+  // Any row with attached geometry is clickable → pin it into the FOV preview:
+  // a future ISS/HST/CSS Sun/Moon transit (v0.45.3) OR a satellite × star /
+  // planet / DSO sky-target pass, whether it goes through the object ('transit')
+  // or just crosses the framed field ('field') (v0.58.2).
+  const clickable = r.geom ? ' sketchable' : '';
   tr.className = `skyplan-row conf-${r.confidence ?? 'none'}${r.conflictWithPrev ? ' has-conflict' : ''}${clickable}`;
   if (clickable) { tr.dataset.source = 'skyplan'; tr.dataset.index = String(idx); }
   // Split fields into the same named columns as the Live-tracking list.
@@ -565,10 +567,14 @@ function unifiedPlanRows(state, dsoRows) {
       elDeg: Number.isFinite(r.elevationDeg) ? r.elevationDeg : null,
       azText: Number.isFinite(r.azimuthDeg) ? azToCompass(r.azimuthDeg) : null,
       satRaHours: r.satRaHours, satDecDeg: r.satDecDeg,  // sky position of the flying object
+      satRaHoursOfDate: r.satRaHoursOfDate, satDecDegOfDate: r.satDecDegOfDate,
       satBefore: r.satBefore, satAfter: r.satAfter,      // lead-in / lead-out track positions
       durMs: r.timeInFieldMs ?? null,
       confidence: r.confidence, sunlit: r.sunlit,
       conflictWithPrev: r.conflictWithPrev, conflictGapMs: r.conflictGapMs,
+      // Sketch-ready geometry (server-attached) → the sky-target pass is
+      // clickable in the Sky plan, previewing the crossing in the FOV.
+      body: r.targetName, geom: r.geom ?? null, objectDiameterDeg: r.objectDiameterDeg ?? null,
     });
   }
   rows.sort((a, b) => a.atMs - b.atMs);
@@ -2153,19 +2159,28 @@ function pinFromRow(source, index) {
       },
     };
   } else if (source === 'skyplan') {
-    // A future satellite (ISS/HST/CSS) Sun/Moon transit (v0.45.3). Geometry
-    // comes from the server-attached `geom`; the satellite spec card is hidden
-    // for SAT_TAGS, so acMeta is minimal.
+    // A future satellite pass (v0.45.3): an ISS/HST/CSS Sun/Moon transit OR a
+    // satellite × star/planet/DSO sky-target pass. Geometry comes from the
+    // server-attached `geom`. A sky-target row also carries the satellite's
+    // RA/Dec-at-closest, so the FOV "Sky pos" card shows for the upcoming pass.
     const r = lastSkyPlanRows[idx];
     const input = r ? fromSatTransit(r) : null;
     if (!input) return;
+    const isSky = Number.isFinite(r.satRaHours) && Number.isFinite(r.satDecDeg);
     pin = {
       key: `skyplan:${r.satTag}|${r.body}|${r.atMs}`,
       firstSeenMs: Date.now(),
       input,
       label: `${r.body} · ${r.satTag} transit (upcoming)`,
-      acMeta: { icao: r.satTag ?? 'ISS', isISS: true, rangeM: r.geom?.aircraftAt?.rangeM ?? null,
-                elevationDeg: r.geom?.aircraftAt?.el ?? null, lat: null, lon: null },
+      acMeta: {
+        icao: r.satTag ?? 'ISS', typeCode: r.satTag ?? 'ISS', isISS: true,
+        rangeM: r.geom?.aircraftAt?.rangeM ?? null,
+        elevationDeg: r.geom?.aircraftAt?.el ?? r.elDeg ?? null,
+        lat: null, lon: null,
+        isSky, satTag: r.satTag ?? null, targetName: isSky ? r.body : null,
+        raHours: r.satRaHours ?? null, decDeg: r.satDecDeg ?? null,
+        raHoursOfDate: r.satRaHoursOfDate ?? null, decDegOfDate: r.satDecDegOfDate ?? null,
+      },
     };
   }
   refreshFovPane();

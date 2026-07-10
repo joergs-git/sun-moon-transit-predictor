@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { confidenceFor, atLeastConfidence, buildSkyTargetPlan } from '../src/skyplan.js';
+import { confidenceFor, atLeastConfidence, buildSkyTargetPlan, skyGeom } from '../src/skyplan.js';
 
 const DAY = 86_400_000;
 
@@ -29,6 +29,38 @@ describe('atLeastConfidence', () => {
     expect(atLeastConfidence('amber', 'green')).toBe(false);
     expect(atLeastConfidence('amber', 'amber')).toBe(true);
     expect(atLeastConfidence(null, 'red')).toBe(false);
+  });
+});
+
+describe('skyGeom', () => {
+  const makePath = (n) => Array.from({ length: n }, (_, i) => ({
+    tOffsetMs: (i - n / 2) * 100,
+    satAz: 100 + i * 0.1, satEl: 40 + i * 0.05,
+    targetAz: 101, targetEl: 41,
+  }));
+
+  it('builds a sketch-ready geom with the sat as aircraft, object as body', () => {
+    const c = {
+      satAtClosest: { azimuthDeg: 123, elevationDeg: 45, rangeM: 500_000 },
+      targetAtClosest: { azimuthDeg: 122, elevationDeg: 44 },
+      objectDiameterDeg: 1.0,
+      transitPath: makePath(40),
+    };
+    const g = skyGeom(c);
+    expect(g.aircraftAt).toEqual({ az: 123, el: 45, rangeM: 500_000 });
+    expect(g.bodyAt).toEqual({ az: 122, el: 44 });
+    expect(g.bodyDiameterDeg).toBe(1.0);
+    // Path is remapped to aircraft/body field names…
+    expect(g.transitPath[0]).toHaveProperty('aircraftAz');
+    expect(g.transitPath[0]).toHaveProperty('bodyEl');
+    // …and downsampled to ≤ 24 points.
+    expect(g.transitPath.length).toBeGreaterThan(0);
+    expect(g.transitPath.length).toBeLessThanOrEqual(24);
+  });
+
+  it('returns null without a satellite or target position', () => {
+    expect(skyGeom({ targetAtClosest: { azimuthDeg: 1, elevationDeg: 1 } })).toBeNull();
+    expect(skyGeom({ satAtClosest: { azimuthDeg: 1, elevationDeg: 1 } })).toBeNull();
   });
 });
 
@@ -76,6 +108,28 @@ describe('buildSkyTargetPlan', () => {
     expect(rows[0].satRaHoursOfDate).toBeCloseTo(5.6, 5);
     expect(rows[0].satDecDegOfDate).toBeCloseTo(-5.4, 5);
     expect(rows[0].azimuthDeg).toBeCloseTo(123.4, 5);
+  });
+
+  it('attaches sketch-ready geom to the plan row so it is clickable in the Sky plan', () => {
+    const rows = buildSkyTargetPlan([
+      cand({
+        closestApproachAtMs: now + DAY,
+        satAtClosest: { elevationDeg: 40, azimuthDeg: 123, rangeM: 500_000 },
+        targetAtClosest: { azimuthDeg: 122, elevationDeg: 41 },
+        objectDiameterDeg: 0.5,
+        transitPath: [
+          { tOffsetMs: -100, satAz: 122.9, satEl: 39.9, targetAz: 122, targetEl: 41 },
+          { tOffsetMs: 0, satAz: 123, satEl: 40, targetAz: 122, targetEl: 41 },
+          { tOffsetMs: 100, satAz: 123.1, satEl: 40.1, targetAz: 122, targetEl: 41 },
+        ],
+      }),
+    ], { nowMs: now });
+    expect(rows[0].geom).not.toBeNull();
+    expect(rows[0].geom.aircraftAt.az).toBe(123);
+    expect(rows[0].geom.bodyAt.el).toBe(41);
+    expect(rows[0].geom.bodyDiameterDeg).toBe(0.5);
+    expect(rows[0].geom.transitPath.length).toBe(3);
+    expect(rows[0].objectDiameterDeg).toBe(0.5);
   });
 
   it('carries the lead-in / lead-out track positions into the plan row', () => {
