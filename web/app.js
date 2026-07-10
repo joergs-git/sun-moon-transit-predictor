@@ -1757,16 +1757,30 @@ function acMetaFromLifecycle(entry) {
   const a = entry?.candidate?.aircraft;
   if (!a) return null;
   const route = entry.route ?? entry.candidate?.route ?? null;
+  const iss = entry.isISS === true || entry.icao === 'ISS' || SAT_TAGS.has(entry.icao);
   return {
     typeCode: a.typeCode ?? null, registration: a.registration ?? null,
     typeDesc: a.typeDesc ?? null, icao: entry.icao ?? a.icao ?? null,
     rangeM: entry?.candidate?.aircraftAtClosest?.rangeM ?? null,
     elevationDeg: entry?.candidate?.aircraftAtClosest?.elevationDeg ?? null,
-    isISS: entry.isISS === true || entry.icao === 'ISS',
+    isISS: iss,
+    ...satSkyPos(entry?.candidate),
     flight: entry.flight ?? entry.callsign ?? route?.flight ?? null,
     origin: route?.origin?.iata ?? route?.origin?.icao ?? null,
     destination: route?.destination?.iata ?? route?.destination?.icao ?? null,
-    ...acGeo(a, entry.isISS === true || entry.icao === 'ISS'),
+    ...acGeo(a, iss),
+  };
+}
+// Pull the flying object's RA/Dec-at-closest (+ the framed object name, for a
+// sky-target pass) off a recorded/live candidate, for the FOV "Sky pos" card.
+function satSkyPos(candidate) {
+  const s = candidate?.aircraftAtClosest;
+  return {
+    satTag: candidate?.icao ?? candidate?.aircraft?.typeCode ?? null,
+    isSky: candidate?.isSky === true,
+    targetName: candidate?.isSky ? (candidate?.body ?? null) : null,
+    raHours: s?.raHours ?? null, decDeg: s?.decDeg ?? null,
+    raHoursOfDate: s?.raHoursOfDate ?? null, decDegOfDate: s?.decDegOfDate ?? null,
   };
 }
 function acMetaFromHistory(row) {
@@ -1784,6 +1798,7 @@ function acMetaFromHistory(row) {
     rangeM: row?.payload?.candidate?.aircraftAtClosest?.rangeM ?? row?.range_m ?? null,
     elevationDeg: row?.payload?.candidate?.aircraftAtClosest?.elevationDeg ?? null,
     isISS: iss,
+    ...satSkyPos(row?.payload?.candidate),
     flight: row?.flight ?? row?.callsign ?? route?.flight ?? null,
     origin: row?.origin ?? route?.origin?.iata ?? route?.origin?.icao ?? null,
     destination: row?.destination ?? route?.destination?.iata ?? route?.destination?.icao ?? null,
@@ -1972,11 +1987,28 @@ function specRow(label, value) {
 // identifying at all (hide the panel entirely).
 function renderFovSpecs(meta) {
   if (!fovSpecs) return;
-  // Satellites (ISS/HST/CSS) are not airframes and have no useful spec card —
-  // the FOV sketch already labels them. Hide the panel entirely.
-  if (SAT_TAGS.has(meta?.typeCode)) {
-    fovSpecs.hidden = true;
-    fovSpecs.innerHTML = '';
+  // Satellites (ISS/HST/CSS) are not airframes, so instead of an airframe spec
+  // card we show a compact "Sky pos" card: WHERE the flying object sits at
+  // closest approach (equatorial RA/Dec), so the same value shown in the Sky
+  // plan is visible for a pinned live OR history transit too, and can be reused
+  // as a fixed custom target. Falls back to hidden when no RA/Dec was recorded.
+  if (SAT_TAGS.has(meta?.typeCode) || meta?.isISS) {
+    const ra = fmtRaHours(meta?.raHours);
+    const dec = fmtDecDeg(meta?.decDeg);
+    if (ra == null || dec == null) { fovSpecs.hidden = true; fovSpecs.innerHTML = ''; return; }
+    const tag = meta?.satTag ?? meta?.icao ?? 'SAT';
+    const head = meta?.isSky && meta?.targetName ? `🛰 ${tag} × ${meta.targetName}` : `🛰 ${tag}`;
+    const jnow = (Number.isFinite(meta?.raHoursOfDate) && Number.isFinite(meta?.decDegOfDate))
+      ? specRow('JNow', `RA ${fmtRaHours(meta.raHoursOfDate)} · Dec ${fmtDecDeg(meta.decDegOfDate)}`)
+      : '';
+    const elRow = Number.isFinite(meta?.elevationDeg) ? specRow('Elev', `${Math.round(meta.elevationDeg)}°`) : '';
+    fovSpecs.innerHTML =
+      `<div class="spec-head">${head}<span class="spec-klass">sky pos</span></div>`
+      + specRow('RA/Dec', `${ra} · ${dec}`)
+      + jnow
+      + elRow
+      + `<div class="spec-foot">Equatorial position of the satellite at closest approach (RA/Dec J2000; JNow = of-date). Reuse the J2000 pair as a fixed { raHours ${meta.raHours.toFixed(5)}, decDeg ${meta.decDeg.toFixed(4)} } custom target.</div>`;
+    fovSpecs.hidden = false;
     return;
   }
   const spec = resolveAircraftType(meta?.typeCode);

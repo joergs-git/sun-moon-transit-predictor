@@ -342,7 +342,13 @@ function buildIssCandidate(
     leavesAtMs: durationMs ? closestMs + durationMs / 2 : closestMs,
     durationMs,
     aircraftAtClosest: issAt
-      ? { azimuthDeg: issAt.azimuthDeg, elevationDeg: issAt.elevationDeg, rangeM }
+      ? {
+        azimuthDeg: issAt.azimuthDeg, elevationDeg: issAt.elevationDeg, rangeM,
+        // Where on the sky the satellite sits at the transit — J2000 + of-date,
+        // same as the sky-target path, so the FOV/History readout is consistent
+        // for a Sun/Moon transit too (v0.58.1).
+        ...horizontalToRaDec(observer, issAt, closestMs),
+      }
       : null,
     bodyAtClosest: {
       azimuthDeg: bodyAt.azimuthDeg, elevationDeg: bodyAt.elevationDeg,

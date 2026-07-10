@@ -145,6 +145,15 @@ describe('predictIssTransits', () => {
       expect(c.closestApproachSepDeg).toBeLessThanOrEqual(1.0 + 1e-9);
       expect(Array.isArray(c.transitPath)).toBe(true);
       expect(['radio', 'candidate']).toContain(c.level);
+      // The satellite's sky position at the transit is carried on the candidate
+      // (same as sky-targets), so the FOV/History readout can show RA/Dec.
+      if (c.aircraftAtClosest) {
+        expect(c.aircraftAtClosest.raHours).toBeGreaterThanOrEqual(0);
+        expect(c.aircraftAtClosest.raHours).toBeLessThan(24);
+        expect(c.aircraftAtClosest.decDeg).toBeGreaterThanOrEqual(-90);
+        expect(c.aircraftAtClosest.decDeg).toBeLessThanOrEqual(90);
+        expect(Number.isFinite(c.aircraftAtClosest.raHoursOfDate)).toBe(true);
+      }
     }
   });
 
