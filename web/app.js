@@ -107,6 +107,53 @@ function fmtRaDec(r) {
   return `<span class="skyplan-radec" title="${tip}">${ra} ${dec}</span>`;
 }
 
+// Precise sexagesimal RA/Dec for a copy-paste-ready coordinate string that
+// planetarium / mount software accepts. RA → "HH MM SS.s", Dec → "±DD MM SS".
+function fmtRaHMS(h) {
+  if (!Number.isFinite(h)) return null;
+  const t = ((h % 24) + 24) % 24;
+  let hh = Math.floor(t);
+  let mm = Math.floor((t - hh) * 60);
+  let ss = ((t - hh) * 60 - mm) * 60;
+  if (ss >= 59.95) { ss = 0; mm += 1; }
+  if (mm === 60) { mm = 0; hh = (hh + 1) % 24; }
+  return `${String(hh).padStart(2, '0')} ${String(mm).padStart(2, '0')} ${ss.toFixed(1).padStart(4, '0')}`;
+}
+function fmtDecDMS(d) {
+  if (!Number.isFinite(d)) return null;
+  const sign = d < 0 ? '-' : '+';
+  const a = Math.abs(d);
+  let deg = Math.floor(a);
+  let min = Math.floor((a - deg) * 60);
+  let sec = Math.round(((a - deg) * 60 - min) * 60);
+  if (sec === 60) { sec = 0; min += 1; }
+  if (min === 60) { min = 0; deg += 1; }
+  return `${sign}${String(deg).padStart(2, '0')} ${String(min).padStart(2, '0')} ${String(sec).padStart(2, '0')}`;
+}
+// A selectable, copy-paste-ready coordinate chip: the text is directly
+// selectable AND a 📋 button copies it to the clipboard (delegated handler).
+function coordChip(text) {
+  const t = escHtml(text);
+  return `<code class="coord-copy">${t}</code>`
+    + `<button type="button" class="copy-btn" data-copy="${t}" title="Copy to clipboard">📋</button>`;
+}
+// One delegated handler for every 📋 button on the page.
+document.addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.copy-btn');
+  if (!btn) return;
+  const text = btn.dataset.copy ?? '';
+  const done = () => { const o = btn.textContent; btn.textContent = '✓'; setTimeout(() => { btn.textContent = o; }, 1200); };
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done, () => {});
+  else {
+    // Fallback for non-secure contexts (plain-HTTP LAN): a transient textarea.
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch { /* ignore */ }
+    ta.remove();
+  }
+});
+
 // SEP cell for the live "Real candidates" table. When the entry's best
 // (= minimum ever seen) projected sep is meaningfully better than the
 // current one — typically the case for a stale → 'faded' row whose
@@ -188,6 +235,13 @@ function dtTooltip(dt) {
 }
 function fmtRoute(o, d)   { return o && d ? `${o}→${d}` : (o || d || '—'); }
 function fmtTime(ms)      { return new Date(ms).toLocaleTimeString(); }
+// Local HH:MM:SS.d — tenths matter for a fast satellite sensor enter/leave.
+function fmtClock(ms) {
+  if (!Number.isFinite(ms)) return '—';
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${Math.floor(d.getMilliseconds() / 100)}`;
+}
 
 // Compact weekday + date + time for History rows where the user needs to
 // tell entries across multiple days apart. Today's rows collapse to just
@@ -532,6 +586,7 @@ function unifiedPlanRows(state, dsoRows) {
     // (rendered as '—'); no information is dropped.
     const vp = s.vp;
     if (vp && Number.isFinite(vp.startMs)) {
+      const aims = Array.isArray(vp.aimPoints) ? vp.aimPoints : null;
       rows.push({
         atMs: vp.startMs, satTag: s.tag, kind: 'visible',
         sepDeg: null,                                   // an overhead pass, not a close approach
@@ -539,6 +594,13 @@ function unifiedPlanRows(state, dsoRows) {
         azText: `${azToCompass(vp.startAzDeg)}→${azToCompass(vp.endAzDeg)}`,
         durMs: Number.isFinite(vp.durationS) ? vp.durationS * 1000 : null,
         confidence: null,
+        // Pre-aim points (peak + low rise) make the visible pass clickable → the
+        // FOV card shows the aim RA/Dec + camera-sensor enter/leave times. The
+        // peak's geometry drives the sketch preview (the aim point is a point
+        // "body" at frame centre).
+        aimPoints: aims,
+        geom: aims?.[0]?.geom ?? null,
+        body: aims?.length ? 'aim point' : undefined,
       });
     }
     const nt = s.nt;
@@ -1787,6 +1849,9 @@ function satSkyPos(candidate) {
     targetName: candidate?.isSky ? (candidate?.body ?? null) : null,
     raHours: s?.raHours ?? null, decDeg: s?.decDeg ?? null,
     raHoursOfDate: s?.raHoursOfDate ?? null, decDegOfDate: s?.decDegOfDate ?? null,
+    // Lead-in / lead-out track points (N min before/after closest) for the card.
+    satBefore: candidate?.satBefore ?? null,
+    satAfter: candidate?.satAfter ?? null,
   };
 }
 function acMetaFromHistory(row) {
@@ -1987,6 +2052,77 @@ function specRow(label, value) {
        + `<span class="spec-v">${value}</span></div>`;
 }
 
+// One copyable RA/Dec line for the Sky-pos card: a label, the human-readable
+// h m s / ±d m, and a copy chip carrying the paste-ready sexagesimal string.
+function raDecCardRow(label, raHours, decDeg, extra = '') {
+  if (!Number.isFinite(raHours) || !Number.isFinite(decDeg)) return '';
+  const human = `${fmtRaHours(raHours)} · ${fmtDecDeg(decDeg)}`;
+  const copyStr = `${fmtRaHMS(raHours)} ${fmtDecDMS(decDeg)}`;
+  return `<div class="spec-row skypos-row"><span class="spec-k">${label}</span>`
+    + `<span class="spec-v">${human}${extra} ${coordChip(copyStr)}</span></div>`;
+}
+
+// The satellite "Sky pos" card shown in the FOV preview when an ISS/HST/CSS
+// pass is pinned (from the Live list, History, or the Sky plan). Handles three
+// shapes:
+//   • a sky-target pass  → RA/Dec at closest + the −Xs / closest / +Xs track
+//     points (the lead-in / lead-out positions), each copy-paste-ready;
+//   • a plain Sun/Moon satellite transit → just the closest RA/Dec;
+//   • a naked-eye VISIBLE pass (no star) → an aim point at the peak AND at the
+//     low rise, each with the camera-sensor enter/leave times + dwell, so you
+//     can park the scope on a stable point for the longest streak.
+// Returns null when there's nothing to show.
+function satSkyCardHtml(meta) {
+  const tag = meta?.satTag ?? meta?.icao ?? 'SAT';
+
+  // ── Visible pass: one or two aim points with sensor enter/leave times ──────
+  if (Array.isArray(meta?.aimPoints) && meta.aimPoints.length) {
+    const LABEL = { peak: 'Peak (highest · sharpest, shortest streak)',
+                    rise: 'Rise ≥ min-el (lowest · longest streak)' };
+    const blocks = meta.aimPoints.map((p) => {
+      const dwellS = Number.isFinite(p.sensorDwellMs) ? (p.sensorDwellMs / 1000) : null;
+      const rate = Number.isFinite(p.angularRateDegPerSec) ? p.angularRateDegPerSec : null;
+      const el = Number.isFinite(p.elevationDeg) ? `${Math.round(p.elevationDeg)}°` : '—';
+      return `<div class="skypos-aim">`
+        + `<div class="skypos-aimhead">${LABEL[p.label] ?? p.label} · el ${el}</div>`
+        + raDecCardRow('Aim', p.raHours, p.decDeg)
+        + (Number.isFinite(p.sensorEnterMs) && Number.isFinite(p.sensorLeaveMs)
+          ? specRow('On sensor', `${fmtClock(p.sensorEnterMs)} → ${fmtClock(p.sensorLeaveMs)}`
+            + (dwellS != null ? ` · <b>${dwellS.toFixed(dwellS < 10 ? 1 : 0)} s</b>` : ''))
+          : '')
+        + (rate ? specRow('Rate', `${rate.toFixed(2)}°/s`) : '')
+        + '</div>';
+    }).join('');
+    return `<div class="spec-head">🛰 ${tag} pass<span class="spec-klass">pre-aim</span></div>`
+      + blocks
+      + `<div class="spec-foot">Park the scope on an <b>Aim</b> RA/Dec (J2000) — the times are when the satellite enters/leaves your camera sensor if its longest axis is rotated along the track. Peak = brightest but fastest; the lower rise gives the longest streak.</div>`;
+  }
+
+  // ── Sky-target pass / plain transit: closest RA/Dec (+ lead/trail points) ──
+  if (!Number.isFinite(meta?.raHours) || !Number.isFinite(meta?.decDeg)) return null;
+  const head = meta?.isSky && meta?.targetName ? `🛰 ${tag} × ${meta.targetName}` : `🛰 ${tag}`;
+  const fmtOff = (ms) => {
+    const m = Math.round(Math.abs(ms) / 60000);
+    const s = Math.round(Math.abs(ms) / 1000);
+    return `${ms < 0 ? '−' : '+'}${m >= 1 ? `${m} min` : `${s} s`}`;
+  };
+  const bEl = (p) => (Number.isFinite(p?.elevationDeg) ? ` <span class="skypos-el">el ${Math.round(p.elevationDeg)}°</span>` : '');
+  const before = meta.satBefore
+    ? raDecCardRow(fmtOff(meta.satBefore.tOffsetMs), meta.satBefore.raHours, meta.satBefore.decDeg, bEl(meta.satBefore)) : '';
+  const after = meta.satAfter
+    ? raDecCardRow(fmtOff(meta.satAfter.tOffsetMs), meta.satAfter.raHours, meta.satAfter.decDeg, bEl(meta.satAfter)) : '';
+  const jnow = (Number.isFinite(meta?.raHoursOfDate) && Number.isFinite(meta?.decDegOfDate))
+    ? specRow('JNow', `RA ${fmtRaHours(meta.raHoursOfDate)} · Dec ${fmtDecDeg(meta.decDegOfDate)}`) : '';
+  const elRow = Number.isFinite(meta?.elevationDeg) ? specRow('Elev', `${Math.round(meta.elevationDeg)}°`) : '';
+  return `<div class="spec-head">${head}<span class="spec-klass">sky pos</span></div>`
+    + before
+    + raDecCardRow('Closest', meta.raHours, meta.decDeg)
+    + after
+    + jnow
+    + elRow
+    + `<div class="spec-foot">RA/Dec (J2000) of the satellite — <b>Closest</b> = at closest approach, with the track points a minute before/after where available. Click 📋 to copy a paste-ready coordinate; reuse it as a fixed custom target.</div>`;
+}
+
 // Render the spec panel for whatever airframe is currently shown in the FOV.
 // Three cases: known type (full specs), unknown type but we at least have a
 // type/registration string (show that + "not in offline DB"), or nothing
@@ -1999,21 +2135,9 @@ function renderFovSpecs(meta) {
   // plan is visible for a pinned live OR history transit too, and can be reused
   // as a fixed custom target. Falls back to hidden when no RA/Dec was recorded.
   if (SAT_TAGS.has(meta?.typeCode) || meta?.isISS) {
-    const ra = fmtRaHours(meta?.raHours);
-    const dec = fmtDecDeg(meta?.decDeg);
-    if (ra == null || dec == null) { fovSpecs.hidden = true; fovSpecs.innerHTML = ''; return; }
-    const tag = meta?.satTag ?? meta?.icao ?? 'SAT';
-    const head = meta?.isSky && meta?.targetName ? `🛰 ${tag} × ${meta.targetName}` : `🛰 ${tag}`;
-    const jnow = (Number.isFinite(meta?.raHoursOfDate) && Number.isFinite(meta?.decDegOfDate))
-      ? specRow('JNow', `RA ${fmtRaHours(meta.raHoursOfDate)} · Dec ${fmtDecDeg(meta.decDegOfDate)}`)
-      : '';
-    const elRow = Number.isFinite(meta?.elevationDeg) ? specRow('Elev', `${Math.round(meta.elevationDeg)}°`) : '';
-    fovSpecs.innerHTML =
-      `<div class="spec-head">${head}<span class="spec-klass">sky pos</span></div>`
-      + specRow('RA/Dec', `${ra} · ${dec}`)
-      + jnow
-      + elRow
-      + `<div class="spec-foot">Equatorial position of the satellite at closest approach (RA/Dec J2000; JNow = of-date). Reuse the J2000 pair as a fixed { raHours ${meta.raHours.toFixed(5)}, decDeg ${meta.decDeg.toFixed(4)} } custom target.</div>`;
+    const html = satSkyCardHtml(meta);
+    if (!html) { fovSpecs.hidden = true; fovSpecs.innerHTML = ''; return; }
+    fovSpecs.innerHTML = html;
     fovSpecs.hidden = false;
     return;
   }
@@ -2159,19 +2283,22 @@ function pinFromRow(source, index) {
       },
     };
   } else if (source === 'skyplan') {
-    // A future satellite pass (v0.45.3): an ISS/HST/CSS Sun/Moon transit OR a
-    // satellite × star/planet/DSO sky-target pass. Geometry comes from the
-    // server-attached `geom`. A sky-target row also carries the satellite's
-    // RA/Dec-at-closest, so the FOV "Sky pos" card shows for the upcoming pass.
+    // A future satellite pass (v0.45.3): an ISS/HST/CSS Sun/Moon transit, a
+    // satellite × star/planet/DSO sky-target pass, OR a naked-eye VISIBLE pass
+    // with pre-aim points. Geometry comes from the server-attached `geom`.
     const r = lastSkyPlanRows[idx];
     const input = r ? fromSatTransit(r) : null;
     if (!input) return;
     const isSky = Number.isFinite(r.satRaHours) && Number.isFinite(r.satDecDeg);
+    const isVisible = r.kind === 'visible' && Array.isArray(r.aimPoints) && r.aimPoints.length > 0;
+    const label = isVisible
+      ? `${r.satTag} visible pass — pre-aim`
+      : `${r.body} · ${r.satTag} transit (upcoming)`;
     pin = {
-      key: `skyplan:${r.satTag}|${r.body}|${r.atMs}`,
+      key: `skyplan:${r.satTag}|${r.body ?? 'visible'}|${r.atMs}`,
       firstSeenMs: Date.now(),
       input,
-      label: `${r.body} · ${r.satTag} transit (upcoming)`,
+      label,
       acMeta: {
         icao: r.satTag ?? 'ISS', typeCode: r.satTag ?? 'ISS', isISS: true,
         rangeM: r.geom?.aircraftAt?.rangeM ?? null,
@@ -2180,6 +2307,10 @@ function pinFromRow(source, index) {
         isSky, satTag: r.satTag ?? null, targetName: isSky ? r.body : null,
         raHours: r.satRaHours ?? null, decDeg: r.satDecDeg ?? null,
         raHoursOfDate: r.satRaHoursOfDate ?? null, decDegOfDate: r.satDecDegOfDate ?? null,
+        // Lead-in / lead-out track points → the −Xs / closest / +Xs card rows.
+        satBefore: r.satBefore ?? null, satAfter: r.satAfter ?? null,
+        // Visible pass: the peak + low-rise aim points drive the FOV Sky-pos card.
+        aimPoints: isVisible ? r.aimPoints : null,
       },
     };
   }

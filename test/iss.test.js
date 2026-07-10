@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   loadIssTle, predictIssTransits, predictSkyTargetTransits, nextIssVisiblePass,
-  skyTargetToTransitCandidate, tleEpochMsAt,
+  visiblePassAimPoints, skyTargetToTransitCandidate, tleEpochMsAt,
 } from '../src/iss.js';
 import { observerEcef, targetEcefAzEl } from '../src/geometry.js';
 import { fromLifecycleEntry, buildSketchSvg } from '../web/sketch.js';
@@ -265,6 +265,47 @@ describe('predictSkyTargetTransits', () => {
     expect(c.satBefore).toBeNull();
     expect(c.satAfter).not.toBeNull();
     expect(c.satAfter.tOffsetMs).toBe(45_000);
+  });
+
+  it('visiblePassAimPoints returns aim points with RA/Dec + sensor enter/leave', () => {
+    // Use a sky-target transit time as an instant the satellite is above the
+    // horizon, and build a synthetic pass around it.
+    const ev = predictSkyTargetTransits(under, tle.satrec, {
+      fromMs, horizonMs: 14 * 24 * 3600_000, targets: [sunBox],
+      requireSunlit: false, requireDarkSky: false,
+    });
+    const up = ev[0].closestApproachAtMs;
+    const pass = { startMs: up - 20_000, peakMs: up, endMs: up + 20_000, maxElevationDeg: 40 };
+    const aims = visiblePassAimPoints(under, tle.satrec, pass, { fovWidthDeg: 0.5, fovHeightDeg: 0.5 });
+    expect(aims.length).toBeGreaterThanOrEqual(1);
+    for (const p of aims) {
+      expect(['peak', 'rise']).toContain(p.label);
+      expect(p.raHours).toBeGreaterThanOrEqual(0);
+      expect(p.raHours).toBeLessThan(24);
+      expect(p.decDeg).toBeGreaterThanOrEqual(-90);
+      expect(p.decDeg).toBeLessThanOrEqual(90);
+      // Enter/leave straddle the aim time and form a positive dwell window.
+      expect(p.sensorEnterMs).toBeLessThanOrEqual(p.atMs);
+      expect(p.sensorLeaveMs).toBeGreaterThanOrEqual(p.atMs);
+      expect(p.sensorLeaveMs).toBeGreaterThan(p.sensorEnterMs);
+      expect(p.sensorDwellMs).toBe(p.sensorLeaveMs - p.sensorEnterMs);
+      // Sketch geometry: satellite crossing a zero-diameter point at frame centre.
+      expect(p.geom.bodyDiameterDeg).toBe(0);
+      expect(p.geom.transitPath.length).toBeGreaterThan(0);
+      expect(p.geom.transitPath.length).toBeLessThanOrEqual(24);
+    }
+  });
+
+  it('visiblePassAimPoints: a wider sensor FOV gives a longer sensor dwell', () => {
+    const ev = predictSkyTargetTransits(under, tle.satrec, {
+      fromMs, horizonMs: 14 * 24 * 3600_000, targets: [sunBox],
+      requireSunlit: false, requireDarkSky: false,
+    });
+    const up = ev[0].closestApproachAtMs;
+    const pass = { startMs: up, peakMs: up, endMs: up + 20_000, maxElevationDeg: 40 };
+    const small = visiblePassAimPoints(under, tle.satrec, pass, { fovWidthDeg: 0.3, fovHeightDeg: 0.3 });
+    const big = visiblePassAimPoints(under, tle.satrec, pass, { fovWidthDeg: 1.5, fovHeightDeg: 1.5 });
+    expect(big[0].sensorDwellMs).toBeGreaterThan(small[0].sensorDwellMs);
   });
 
   it('classifies a sub-disc miss as a transit (through the object)', () => {

@@ -1154,6 +1154,33 @@ tr.sketchable.q-amber.fov-pinned td:first-child {
   line-height: 1.35;
 }
 
+/* Copy-paste-ready coordinate chip inside the Sky-pos card (v0.59.0). The
+   <code> is directly selectable; the 📋 button copies it to the clipboard. */
+.coord-copy {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  user-select: all;                 /* one click selects the whole coordinate */
+  background: var(--panel, rgba(127, 127, 127, 0.12));
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.copy-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.7;
+}
+.copy-btn:hover { opacity: 1; }
+/* Per-aim-point block for a visible-pass pre-aim card. */
+.skypos-aim { margin: 4px 0; padding-top: 4px; border-top: 1px solid rgba(127, 127, 127, 0.18); }
+.skypos-aim:first-of-type { border-top: none; }
+.skypos-aimhead { font-size: 11.5px; color: var(--fg); margin-bottom: 2px; }
+.skypos-el { color: var(--muted); font-size: 11px; }
+.skypos-row .spec-v { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+
 /* Next-visible-ISS-pass line under the Sky-now table (v0.10.0). Same cyan
    identity as the ISS rows so the eye groups all things-ISS together. */
 .iss-pass {

@@ -643,6 +643,10 @@ export function skyTargetToTransitCandidate(c) {
     // (planets tiny, DSOs degrees) instead of the Sun/Moon default.
     objectDiameterDeg: c.objectDiameterDeg ?? null,
     aircraftAtClosest: c.satAtClosest,
+    // Lead-in / lead-out sky positions (N min before/after closest) so the live
+    // + History FOV "Sky pos" card can show the −Xs / closest / +Xs track points.
+    satBefore: c.satBefore ?? null,
+    satAfter: c.satAfter ?? null,
     bodyAtClosest: c.targetAtClosest,
     aircraft: {
       icao: c.satTag,
@@ -739,4 +743,106 @@ function finalisePass(p) {
   p.maxElevationDeg = Math.round(p.maxElevationDeg);
   p.startAzDeg = Math.round(p.startAzDeg);
   p.endAzDeg = Math.round(p.endAzDeg);
+}
+
+/**
+ * Pre-pointing aim points for a VISIBLE satellite pass — for when no catalogue
+ * star/planet is near the track but you still want the scope parked on a stable
+ * RA/Dec so the satellite streaks across the camera sensor (v0.59.0).
+ *
+ * Returns one aim point per anchor moment:
+ *   - 'peak' — the pass's highest elevation: closest range → biggest/brightest,
+ *     but the fastest angular motion, so the SHORTEST dwell on the sensor.
+ *   - 'rise' — the low point just after the pass clears `minElevationDeg`:
+ *     farthest range → slowest motion → the LONGEST dwell (the "max streak"
+ *     option), at the cost of more atmosphere and a smaller image.
+ *
+ * Each point carries the satellite's fixed sky position (RA/Dec, J2000 + of-date)
+ * and the exact times it ENTERS and LEAVES the camera sensor centred on that
+ * point — computed as the crossing of a circle of radius = half the sensor
+ * DIAGONAL, i.e. the camera rotated so its longest axis lies along the ground
+ * track (the maximum a centred crossing can achieve). `geom` is sketch-ready
+ * (satellite = aircraft, the aim point a zero-diameter "body").
+ *
+ * @param {import('./geometry.js').Observer} observer
+ * @param {object} satrec
+ * @param {{startMs:number, peakMs:number, endMs:number, maxElevationDeg:number}} pass
+ * @param {{ fovWidthDeg?:number, fovHeightDeg?:number, maxScanMs?:number }} [opts]
+ * @returns {Array<object>} aim points (soonest first); [] when unusable
+ */
+export function visiblePassAimPoints(observer, satrec, pass, opts = {}) {
+  if (!pass || !Number.isFinite(pass.peakMs)) return [];
+  const { fovWidthDeg = 0.5, fovHeightDeg = 0.5, maxScanMs = 30_000 } = opts;
+  const obsEcef = observerEcef(observer);
+  const obsLat = observer.latitudeDeg;
+  const obsLon = observer.longitudeDeg;
+
+  // The longest chord through the sensor centre = its diagonal (camera rotated
+  // to align it with the track). Half of it is the exit radius from the aim.
+  const diagDeg = Math.hypot(fovWidthDeg, fovHeightDeg);
+  const halfDiagDeg = diagDeg / 2;
+
+  const anchors = [{ label: 'peak', tMs: pass.peakMs }];
+  // 'rise' only when it is meaningfully earlier than the peak (else it's a dupe).
+  if (Number.isFinite(pass.startMs) && pass.peakMs - pass.startMs > 5000) {
+    anchors.unshift({ label: 'rise', tMs: pass.startMs });
+  }
+
+  const sepFromAim = (aim, tMs) => {
+    const s = issAzEl(satrec, obsEcef, obsLat, obsLon, tMs);
+    return s ? angularSeparationDeg(s, aim) : Infinity;
+  };
+
+  const out = [];
+  for (const a of anchors) {
+    const sat = issAzEl(satrec, obsEcef, obsLat, obsLon, a.tMs);
+    if (!sat || sat.elevationDeg < 0) continue;
+    const aim = { azimuthDeg: sat.azimuthDeg, elevationDeg: sat.elevationDeg };
+
+    const before = issAzEl(satrec, obsEcef, obsLat, obsLon, a.tMs - 500);
+    const after = issAzEl(satrec, obsEcef, obsLat, obsLon, a.tMs + 500);
+    const omegaDegPerSec = (before && after) ? angularSeparationDeg(before, after) : 0;
+
+    // Enter/leave: walk out until the satellite leaves the sensor circle.
+    let enterMs = a.tMs;
+    let leaveMs = a.tMs;
+    for (let dt = 50; dt <= maxScanMs; dt += 50) { if (sepFromAim(aim, a.tMs - dt) > halfDiagDeg) break; enterMs = a.tMs - dt; }
+    for (let dt = 50; dt <= maxScanMs; dt += 50) { if (sepFromAim(aim, a.tMs + dt) > halfDiagDeg) break; leaveMs = a.tMs + dt; }
+
+    // Sketch path (downsampled) of the satellite crossing the fixed aim point.
+    const span = Math.max(1500, (leaveMs - enterMs) / 2 + 500);
+    const dense = [];
+    for (let dt = -span; dt <= span; dt += 100) {
+      const s = issAzEl(satrec, obsEcef, obsLat, obsLon, a.tMs + dt);
+      if (!s) continue;
+      dense.push({
+        tOffsetMs: dt,
+        aircraftAz: s.azimuthDeg, aircraftEl: s.elevationDeg,
+        bodyAz: aim.azimuthDeg, bodyEl: aim.elevationDeg,
+      });
+    }
+    const step = Math.max(1, Math.ceil(dense.length / 24));
+    const transitPath = dense.filter((_, i) => i % step === 0);
+
+    out.push({
+      label: a.label,
+      atMs: a.tMs,
+      azimuthDeg: sat.azimuthDeg,
+      elevationDeg: sat.elevationDeg,
+      rangeM: sat.rangeM ?? null,
+      angularRateDegPerSec: omegaDegPerSec,
+      ...horizontalToRaDec(observer, sat, a.tMs),
+      sensorEnterMs: enterMs,
+      sensorLeaveMs: leaveMs,
+      sensorDwellMs: leaveMs - enterMs,
+      fovDiagonalDeg: diagDeg,
+      geom: {
+        bodyAt: { az: aim.azimuthDeg, el: aim.elevationDeg },
+        aircraftAt: { az: sat.azimuthDeg, el: sat.elevationDeg, rangeM: sat.rangeM ?? null },
+        bodyDiameterDeg: 0,
+        transitPath,
+      },
+    });
+  }
+  return out;
 }
