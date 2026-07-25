@@ -163,6 +163,29 @@ CREATE TABLE IF NOT EXISTS capture_arms (
   re_arm       INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_capture_arms_at ON capture_arms(armed_at_ms DESC);
+
+-- v0.60.0: per-episode ARM DECISION — the terminal verdict for every real
+-- transit the arming path evaluated, INCLUDING the ones it declined. capture_arms
+-- only records *successful* arms; this table answers the operator's other
+-- question — "this looked like a perfect hit, why did nothing record?" — so the
+-- History view can explain a non-arm (too-extrapolated / too-wide / too-low /
+-- disabled …) instead of just showing a blank. One row per episode
+-- (icao, body, closest_at_ms); the service flushes it once when the episode
+-- settles (goes stale), 'armed' being sticky over any later skip reason.
+CREATE TABLE IF NOT EXISTS arm_decisions (
+  icao          TEXT NOT NULL,
+  body          TEXT NOT NULL,
+  closest_at_ms INTEGER NOT NULL,
+  decided_at_ms INTEGER NOT NULL,
+  verdict       TEXT NOT NULL,     -- 'armed' | 'skipped'
+  reason        TEXT,              -- 'armed' | 'too-extrapolated' | 'too-wide' | 'too-low' | 'disabled' | …
+  sep_deg       REAL,
+  extrap_s      REAL,              -- dead-reckoning span at decision (too-extrapolated)
+  budget_s      REAL,             -- the trust-scaled freshness budget it was compared against
+  rig           TEXT,
+  PRIMARY KEY (icao, body, closest_at_ms)
+);
+CREATE INDEX IF NOT EXISTS idx_arm_decisions_closest ON arm_decisions(closest_at_ms DESC);
 `;
 
 export class HistoryStore {
@@ -254,6 +277,18 @@ export class HistoryStore {
         (armed_at_ms, rig, kind, body, icao, sep_deg, elev_deg, pre_roll_s, duration_s, re_arm)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+    // v0.60.0: one terminal arm DECISION per episode (armed or skipped-with-
+    // reason). REPLACE so a re-flush of the same episode overwrites cleanly.
+    this._armDecIns = this.db.prepare(`
+      INSERT OR REPLACE INTO arm_decisions
+        (icao, body, closest_at_ms, decided_at_ms, verdict, reason, sep_deg, extrap_s, budget_s, rig)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    // Fetch arm decisions in a time window (for the consolidated history join).
+    this._armDecInWindow = this.db.prepare(
+      `SELECT icao, body, closest_at_ms, verdict, reason, sep_deg, extrap_s, budget_s, rig
+       FROM arm_decisions WHERE closest_at_ms >= ?`,
+    );
   }
 
   /**
@@ -274,6 +309,28 @@ export class HistoryStore {
         a.reArm ? 1 : 0,
       );
     } catch { /* arm logging is best-effort */ }
+  }
+
+  /**
+   * Record the TERMINAL arm decision for one transit episode — armed, or
+   * skipped with the reason it was declined. Best-effort; never throws into
+   * the tick loop. One row per (icao, body, closest_at_ms).
+   * @param {{ icao:string, body:string, closestAtMs:number, decidedAtMs:number,
+   *   verdict:'armed'|'skipped', reason?:string, sepDeg?:number, extrapS?:number,
+   *   budgetS?:number, rig?:string }} d
+   */
+  recordArmDecision(d) {
+    if (!d || !d.icao || !d.body || !Number.isFinite(d.closestAtMs)) return;
+    try {
+      this._armDecIns.run(
+        String(d.icao).toLowerCase(), d.body, d.closestAtMs, d.decidedAtMs ?? d.closestAtMs,
+        d.verdict === 'armed' ? 'armed' : 'skipped', d.reason ?? null,
+        Number.isFinite(d.sepDeg) ? d.sepDeg : null,
+        Number.isFinite(d.extrapS) ? d.extrapS : null,
+        Number.isFinite(d.budgetS) ? d.budgetS : null,
+        d.rig ?? null,
+      );
+    } catch { /* arm-decision logging is best-effort */ }
   }
 
   /** Mark an ICAO as having appeared at ≥ 30° elevation. Idempotent. */
@@ -996,6 +1053,33 @@ export class HistoryStore {
       return 'faded';
     };
 
+    // Arm decisions in the same window, matched to each episode by (icao, body)
+    // + nearest closest_at_ms (a transit's ETA wobbles a few seconds tick-to-
+    // tick, so an exact join would miss). v0.60.0.
+    const ARM_MATCH_TOL_MS = 120_000;
+    const armRows = this._armDecInWindow.all(since);
+    const armByKey = new Map();
+    for (const a of armRows) {
+      const k = `${String(a.icao).toLowerCase()}|${a.body}`;
+      (armByKey.get(k) ?? armByKey.set(k, []).get(k)).push(a);
+    }
+    const matchArmDecision = (icao, body, closestAtMs) => {
+      if (!icao || !Number.isFinite(closestAtMs)) return null;
+      const list = armByKey.get(`${String(icao).toLowerCase()}|${body}`);
+      if (!list) return null;
+      let best = null, bestGap = ARM_MATCH_TOL_MS;
+      for (const a of list) {
+        const gap = Math.abs(a.closest_at_ms - closestAtMs);
+        if (gap <= bestGap) { best = a; bestGap = gap; }
+      }
+      if (!best) return null;
+      return {
+        verdict: best.verdict, reason: best.reason,
+        sepDeg: best.sep_deg, extrapS: best.extrap_s, budgetS: best.budget_s,
+        rig: best.rig,
+      };
+    };
+
     const consolidated = Array.from(byKey.values()).map(ep => {
       const earliest = ep.rows.reduce((a, b) =>
         a.recorded_at_ms < b.recorded_at_ms ? a : b);
@@ -1024,6 +1108,7 @@ export class HistoryStore {
         outcome: classify(ep.stages),
         sepConfirmed: imminentRows.length > 0,
         leadTimeMs: base.closest_at_ms - earliest.recorded_at_ms,
+        armDecision: matchArmDecision(base.icao, base.body, base.closest_at_ms),
       };
     });
 

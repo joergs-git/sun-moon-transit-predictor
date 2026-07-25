@@ -877,6 +877,19 @@
           <label>Min elevation °<input name="sharpcap.minElevationDeg" type="number" step="any" min="0" max="90">
             <small class="field-hint">Don't trigger when the target is below this (telescope can't see it). 0 = off.</small></label>
 
+          <!-- ── Freshness / signal-gap trust (v0.60.0) — how far a projection may
+                  be dead-reckoned past the last real ADS-B fix before we refuse to
+                  arm. The budget scales with how CENTRAL the predicted hit is, so a
+                  precisely-predicted mid-disc transit still records through a short
+                  signal gap while a marginal graze from a stale fix does not. ── -->
+          <div class="sc-subhead">Signal-gap trust <span class="sc-subhead-hint">— how long a lost ADS-B signal may be dead-reckoned before we stop arming</span></div>
+          <label>Freshness budget — edge (s)<input name="sharpcap.maxExtrapolationS" type="number" step="any" min="0">
+            <small class="field-hint">Base budget for a projection that only <b>grazes</b> the disc edge (sep ≈ Max sep °): how many seconds past the last real ADS-B fix we still trust the dead-reckoned path. Default <b>120 s</b>. <b>0 disables the gate entirely</b> (arm on any-age projection — most captures, most ghosts).</small></label>
+          <label>Freshness budget — centre (s)<input name="sharpcap.maxExtrapolationHardS" type="number" step="any" min="0">
+            <small class="field-hint">Budget for a <b>dead-centre</b> predicted hit (sep ≤ Centre sep °). The budget scales linearly between edge and centre by the projected separation, so a precise mid-disc transit records through a longer signal gap. Default <b>300 s</b> (5 min). Raise (e.g. 420) to also capture single-fix long extrapolations — at the cost of more "armed but never transited" clips.</small></label>
+          <label>Centre sep °<input name="sharpcap.centerSepDeg" type="number" step="any" min="0" max="10">
+            <small class="field-hint">At or under this projected separation the <b>full centre budget</b> applies. Default <b>0.1°</b> — comfortably inside the ~0.27° disc radius, i.e. a solid mid-disc hit.</small></label>
+
           <!-- ── Main rig — the implicit "main" target promoted from
                   the top-level sharpcap.{host,port,…} block (v0.30.1).
                   Per-rig overrides for Pre/Post/drift/etc. of the main

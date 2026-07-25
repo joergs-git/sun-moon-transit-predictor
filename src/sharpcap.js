@@ -24,12 +24,21 @@ const DEFAULT_DEDUP_MS = 60_000;    // suppress identical (icao|body) re-trigger
 // Tick-based arming (armForCandidate): "rather over-record than miss a shot".
 const DEFAULT_MAX_SEP_DEG = 0.5;    // arm any candidate projected within this sep
 const DEFAULT_MAX_PRE_ROLL_S = 85;  // keep pre-roll under the listener's 90 s cap
-// Freshness gate (v0.46.3): don't arm when the projection extrapolates more than
-// this many seconds from the aircraft's last real ADS-B fix to closest approach.
-// The "never miss in an ADS-B gap" fallback can otherwise re-arm from a position
-// last seen minutes ago — over that much dead-reckoning a jet's path is unreliable
-// and the capture fires on a transit that never happens. 0 disables the gate.
-const DEFAULT_MAX_EXTRAP_S = 120;
+// Freshness gate (v0.46.3, trust-scaled v0.60.0): don't arm when the projection
+// extrapolates too far from the aircraft's last real ADS-B fix to closest
+// approach. The "never miss in an ADS-B gap" fallback can otherwise re-arm from
+// a position last seen minutes ago — over that much dead-reckoning a jet's path
+// is unreliable and the capture fires on a transit that never happens.
+//
+// The budget is NOT a flat cap: how far we trust a dead-reckoned projection
+// scales with how central the predicted hit is. A projection that lands
+// dead-centre on the disc (sep ≤ centerSepDeg) earns the full HARD budget; one
+// grazing the band edge (sep = maxSepDeg) only gets the BASE budget. So a
+// precisely-predicted mid-disc transit still records through a short signal gap,
+// while a marginal graze from a stale fix stays rejected. 0 (base) disables it.
+const DEFAULT_MAX_EXTRAP_S = 120;         // BASE budget — a band-edge projection
+const DEFAULT_MAX_EXTRAP_HARD_S = 300;    // HARD budget — a dead-centre projection
+const DEFAULT_CENTER_SEP_DEG = 0.1;       // at/under this sep → full HARD budget
 // Arming early (to never miss a lost-tracking case) means the predicted
 // closest-approach TIME is less accurate the further out we are — for a
 // candidate that then goes stale the estimate can drift 30 s+. Widen the
@@ -61,6 +70,9 @@ const DEFAULT_REARM_SHIFT_S = 12;
  * @property {'radio'|'candidate'|'imminent'} [triggerOnStage]
  * @property {number}  [minElevationDeg]   - skip if body/aircraft is too low (0 = off)
  * @property {string[]} [bodies]           - which bodies to record (default Sun + Moon)
+ * @property {number}  [maxExtrapolationS] - BASE freshness budget (s), band-edge hit (0 = gate off)
+ * @property {number}  [maxExtrapolationHardS] - HARD freshness budget (s), dead-centre hit
+ * @property {number}  [centerSepDeg]      - sep at/under which the HARD budget applies in full
  */
 
 /**
@@ -259,24 +271,53 @@ export class SharpCapTrigger {
     const maxSepDeg = Number.isFinite(this.config.maxSepDeg)
       ? this.config.maxSepDeg : DEFAULT_MAX_SEP_DEG;
     if (Number.isFinite(c.closestApproachSepDeg) && c.closestApproachSepDeg > maxSepDeg) {
-      return { sent: false, reason: 'too-wide' };
+      return { sent: false, reason: 'too-wide', sepDeg: c.closestApproachSepDeg, maxSepDeg };
     }
 
     const minEl = this.config.minElevationDeg;
     if (Number.isFinite(minEl) && minEl > 0) {
       const el = c.aircraftAtClosest?.elevationDeg ?? c.bodyAtClosest?.elevationDeg;
-      if (Number.isFinite(el) && el < minEl) return { sent: false, reason: 'too-low' };
+      if (Number.isFinite(el) && el < minEl) {
+        return { sent: false, reason: 'too-low', elevDeg: el, minEl };
+      }
     }
 
-    // Freshness gate (v0.46.3) — see DEFAULT_MAX_EXTRAP_S. Reject a projection
-    // extrapolated too far from the last real ADS-B fix to closest approach;
-    // a long dead-reckoning is exactly the "armed but never transited" case.
-    const maxExtrapS = Number.isFinite(this.config.maxExtrapolationS)
+    // Freshness gate (v0.46.3, trust-scaled v0.60.0) — see DEFAULT_MAX_EXTRAP_S.
+    // Reject a projection extrapolated too far from the last real ADS-B fix to
+    // closest approach; a long dead-reckoning is the "armed but never transited"
+    // case. The budget scales with how central the predicted hit is: a dead-
+    // centre projection (sep ≤ centerSepDeg) is trusted out to the HARD budget,
+    // a band-edge one only to the BASE budget. So a precisely-predicted mid-disc
+    // hit records through a short signal gap; a marginal graze from a stale fix
+    // does not. baseExtrapS = 0 disables the gate entirely.
+    const baseExtrapS = Number.isFinite(this.config.maxExtrapolationS)
       ? this.config.maxExtrapolationS : DEFAULT_MAX_EXTRAP_S;
     const lastFixMs = c.aircraft?.receivedAtMs;
-    if (maxExtrapS > 0 && Number.isFinite(lastFixMs)
-        && (c.closestApproachAtMs - lastFixMs) / 1000 > maxExtrapS) {
-      return { sent: false, reason: 'too-extrapolated' };
+    const extrapS = Number.isFinite(lastFixMs)
+      ? (c.closestApproachAtMs - lastFixMs) / 1000 : null;
+    if (baseExtrapS > 0 && Number.isFinite(extrapS)) {
+      const hardExtrapS = Number.isFinite(this.config.maxExtrapolationHardS)
+        ? this.config.maxExtrapolationHardS : DEFAULT_MAX_EXTRAP_HARD_S;
+      const centerSepDeg = Number.isFinite(this.config.centerSepDeg)
+        ? this.config.centerSepDeg : DEFAULT_CENTER_SEP_DEG;
+      // tightnessFrac: 1 at/under centre, 0 at the band edge. The wider HARD
+      // budget only kicks in when it exceeds BASE and we have a real sep;
+      // otherwise this collapses to the flat BASE cap (old behaviour).
+      let budgetS = baseExtrapS;
+      if (hardExtrapS > baseExtrapS && Number.isFinite(c.closestApproachSepDeg)) {
+        const span = maxSepDeg - centerSepDeg;
+        const frac = span > 0
+          ? Math.min(1, Math.max(0, (maxSepDeg - c.closestApproachSepDeg) / span))
+          : 1;
+        budgetS = baseExtrapS + (hardExtrapS - baseExtrapS) * frac;
+      }
+      if (extrapS > budgetS) {
+        return {
+          sent: false, reason: 'too-extrapolated',
+          extrapS: Math.round(extrapS), budgetS: Math.round(budgetS),
+          sepDeg: c.closestApproachSepDeg,
+        };
+      }
     }
 
     const preBufferS = Number.isFinite(this.config.preBufferS) ? this.config.preBufferS : DEFAULT_PRE_BUFFER_S;

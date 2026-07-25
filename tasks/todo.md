@@ -753,3 +753,36 @@ polls, bottom-right corner, as small as possible.
 - [x] Verified visually (25×25 px QR, no overlap with the AIRCRAFT list); 205
       node tests + scheduler harness pass.
 Note: 1 px/module is the smallest; if a phone can't read it we can bump the scale.
+
+---
+
+# Capture-trigger: differentiated arming + self-explanatory arm decisions (v0.60.0)
+
+Trigger: a mid-disc-precise transit (RYR14WN, sep 0.124°) did not arm and the UI
+gave no reason. Root cause: the flat 120 s freshness gate rejected a 301 s single-
+fix dead-reckoning, and non-arms were never recorded anywhere.
+
+- [x] Trust-scaled freshness gate (`src/sharpcap.js`): extrapolation budget scales
+      with projected-sep tightness, `maxExtrapolationS` (edge) → `maxExtrapolationHardS`
+      (dead-centre, default 300 s), centre at `centerSepDeg` (0.1°). `armForCandidate`
+      returns `extrapS`/`budgetS`/`sepDeg` on every reject; too-wide/too-low enriched.
+- [x] `arm_decisions` table + `recordArmDecision` (`src/store.js`); consolidatedHistory
+      joins it per episode (±2 min tolerant match) → `armDecision` on each row.
+- [x] Service (`src/service.js`): per-episode decision tracking (armed sticky, transient
+      reasons ignored), flushed AFTER closest approach (+90 s) so the arm-window verdict
+      wins over an early `too-early`; exposed live in `state.sharpcap.decisions`.
+- [x] UI (`web/app.js` + `style.css`): arm badge in Live status + History OUTCOME cell
+      (`⚡ armed` / `⏱ stale fix` / `↔ too wide` / `⛰ too low` / `○ trigger off`) with
+      the concrete numbers in the tooltip.
+- [x] Settings (`web/index.html`): "Signal-gap trust" group exposes all three knobs.
+- [x] Tests: trust-scaling (sharpcap), decision persistence + join (store), config
+      defaults (service-config). 330 tests pass.
+
+## Results
+- Under the chosen "generous" defaults (edge 120 s → centre 300 s), RYR14WN's 301 s
+  single-fix projection lands at budget 278 s (sep 0.124° → 88% of the range) → still
+  NOT armed, by ~23 s. This is correct: it was dead-reckoned the FULL 5 min from one
+  fix. The difference is the History/Live badge now SAYS so.
+- Tight hits with gaps under budget now arm where the old flat 120 s cap rejected them.
+- To arm RYR14WN-class single-fix projections, raise "Freshness budget — centre" to
+  ~360 s (Settings) — accepts more "armed but never transited" clips.

@@ -70,6 +70,43 @@ describe('HistoryStore', () => {
     }
   });
 
+  it('attaches the terminal arm decision to the consolidated history (v0.60.0)', () => {
+    const store = new HistoryStore(':memory:');
+    try {
+      const nowMs = 1_700_000_000_000;
+      // A predicted-only episode (radio → candidate, never imminent) — exactly
+      // the "why did nothing record?" case the arm decision explains.
+      const a = makeCandidate({ icao: '4ca8d5', body: 'Sun', sepDeg: 0.12, closestInMs: 0 });
+      a.closestApproachAtMs = nowMs - 20 * 60_000;
+      store.recordEvent('radio',     a, null, a.closestApproachAtMs - 300_000);
+      store.recordEvent('candidate', a, null, a.closestApproachAtMs - 300_000 + 2000);
+      // Its arm decision: declined as too-extrapolated. closest_at_ms wobbles a
+      // few seconds vs the history row — the ±2 min tolerant join must still match.
+      store.recordArmDecision({
+        icao: '4CA8D5', body: 'Sun', closestAtMs: a.closestApproachAtMs + 4000,
+        decidedAtMs: a.closestApproachAtMs, verdict: 'skipped', reason: 'too-extrapolated',
+        sepDeg: 0.12, extrapS: 301, budgetS: 278, rig: 'main',
+      });
+
+      const rows = store.consolidatedHistory({ nowMs, limit: 10 });
+      const row = rows.find(r => r.icao === '4ca8d5');
+      expect(row).toBeTruthy();
+      expect(row.outcome).toBe('predicted');
+      expect(row.armDecision).toMatchObject({
+        verdict: 'skipped', reason: 'too-extrapolated', extrapS: 301, budgetS: 278, rig: 'main',
+      });
+
+      // An episode with no decision recorded → armDecision is null (not an error).
+      const b = makeCandidate({ icao: 'bbb222', body: 'Moon', sepDeg: 0.3, closestInMs: 0 });
+      b.closestApproachAtMs = nowMs - 40 * 60_000;
+      store.recordEvent('candidate', b, null, b.closestApproachAtMs);
+      const rowB = store.consolidatedHistory({ nowMs, limit: 10 }).find(r => r.icao === 'bbb222');
+      expect(rowB.armDecision).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
   it('classifies episodes (graduated / faded / surprise) from recorded stages', () => {
     const store = new HistoryStore(':memory:');
     try {
