@@ -314,30 +314,52 @@ describe('SharpCapTrigger', () => {
     it('skips a candidate wider than maxSepDeg', async () => {
       const t = new SharpCapTrigger({ enabled: true, host: 'pc', maxSepDeg: 0.5 });
       const res = await t.armForCandidate(armCand({ closestApproachSepDeg: 1.2 }), NOW);
-      expect(res).toEqual({ sent: false, reason: 'too-wide' });
+      expect(res).toMatchObject({ sent: false, reason: 'too-wide', sepDeg: 1.2, maxSepDeg: 0.5 });
     });
 
     it('skips below the elevation gate', async () => {
       const t = new SharpCapTrigger({ enabled: true, host: 'pc', minElevationDeg: 30 });
       const res = await t.armForCandidate(
         armCand({ aircraftAtClosest: { elevationDeg: 12 } }), NOW);
-      expect(res).toEqual({ sent: false, reason: 'too-low' });
+      expect(res).toMatchObject({ sent: false, reason: 'too-low', elevDeg: 12, minEl: 30 });
     });
 
     it('skips an over-extrapolated projection (freshness gate, v0.46.3)', async () => {
       const { netImpl } = makeFakeNet({ replyLine: '{"ok":true}\n' });
       const t = new SharpCapTrigger(
-        { enabled: true, host: 'pc', maxExtrapolationS: 120 },
+        // hardMax=base disables the tightness scaling → a flat 120 s cap.
+        { enabled: true, host: 'pc', maxExtrapolationS: 120, maxExtrapolationHardS: 120 },
         { netImpl, logger: { info: () => {}, warn: () => {}, error: () => {} } },
       );
       // Last real fix 500 s before closest → 500 s of dead-reckoning → rejected.
       const stale = await t.armForCandidate(
         armCand({ closestApproachAtMs: NOW + 20_000, aircraft: { receivedAtMs: NOW + 20_000 - 500_000 } }), NOW);
-      expect(stale).toEqual({ sent: false, reason: 'too-extrapolated' });
+      expect(stale).toMatchObject({ sent: false, reason: 'too-extrapolated', budgetS: 120 });
+      expect(stale.extrapS).toBeGreaterThan(480);
       // A fresh fix (≈ now, 20 s to closest) sails through the gate.
       const fresh = await t.armForCandidate(
         armCand({ closestApproachAtMs: NOW + 20_000, aircraft: { receivedAtMs: NOW } }), NOW);
       expect(fresh.sent).toBe(true);
+    });
+
+    it('trust-scales the freshness budget: a dead-centre hit records through a gap a graze would not (v0.60.0)', async () => {
+      const opts = { netImpl: makeFakeNet({ replyLine: '{"ok":true}\n' }).netImpl,
+        logger: { info: () => {}, warn: () => {}, error: () => {} } };
+      // Band [center 0.05 .. edge 0.30], base 120 s → hard 300 s. A projection
+      // dead-reckoned 200 s from the last fix, arriving 20 s out.
+      const cfg = { enabled: true, host: 'pc', maxSepDeg: 0.3, centerSepDeg: 0.05,
+        maxExtrapolationS: 120, maxExtrapolationHardS: 300, leadDriftFrac: 0 };
+      const fixOld = { closestApproachAtMs: NOW + 20_000, aircraft: { receivedAtMs: NOW + 20_000 - 200_000 } };
+
+      // Dead-centre (sep 0.05°) → full 300 s budget → 200 s gap arms.
+      const center = await new SharpCapTrigger({ ...cfg }, opts)
+        .armForCandidate(armCand({ ...fixOld, closestApproachSepDeg: 0.05 }), NOW);
+      expect(center.sent).toBe(true);
+
+      // Band-edge graze (sep 0.30°) → only the 120 s base budget → 200 s gap rejected.
+      const graze = await new SharpCapTrigger({ ...cfg }, opts)
+        .armForCandidate(armCand({ ...fixOld, closestApproachSepDeg: 0.30 }), NOW);
+      expect(graze).toMatchObject({ sent: false, reason: 'too-extrapolated', budgetS: 120 });
     });
 
     it('keeps the dedup slot on a listener-level rejection (busy etc.) so we do NOT TCP-storm', async () => {

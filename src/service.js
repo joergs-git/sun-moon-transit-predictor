@@ -243,7 +243,16 @@ export const DEFAULT_CONFIG = {
     // approach. The fallback re-arm can otherwise fire off a position last seen
     // minutes ago (signal lost / long coast) — unreliable dead-reckoning that
     // produced "armed but never transited". 0 disables. See src/sharpcap.js.
+    //
+    // v0.60.0: this is now the BASE budget — the tolerance for a projection that
+    // only grazes the band edge. A dead-centre predicted hit (sep ≤ centerSepDeg)
+    // is trusted further, out to maxExtrapolationHardS, scaling linearly with the
+    // projected separation. So a precisely-predicted mid-disc transit still
+    // records through a short signal gap, while a marginal graze from a stale fix
+    // stays rejected. Set maxExtrapolationS = 0 to disable the gate entirely.
     maxExtrapolationS: 120,
+    maxExtrapolationHardS: 300,   // HARD budget (s) for a dead-centre hit
+    centerSepDeg: 0.1,            // sep (°) at/under which the HARD budget applies in full
     // Arming early means the predicted closest-approach time is less certain,
     // so widen the recording window by leadDriftFrac × secondsToClosest on each
     // side (capped at maxDriftS). v0.41.0: cut from 0.5/45 s on measured data —
@@ -809,6 +818,41 @@ export async function runService({
   const SHARPCAP_ARMED_MAX = 200;
   const sharpcapArmedLog = [];
 
+  // v0.60.0 — per-episode ARM DECISION tracking, keyed by `${icao}|${body}`
+  // (matches the lifecycle key). Each tick, armSharpcapForCandidates() folds the
+  // armForCandidate() result into the live decision here; when the episode goes
+  // stale the terminal decision is flushed to store.recordArmDecision() (once)
+  // and surfaced in state.sharpcap.decisions so BOTH the Live and History views
+  // can explain why a transit did or did NOT record. 'armed' is sticky: once a
+  // capture fired, later dedup/skip ticks never overwrite it. Reasons that are
+  // pure per-rig config noise (body-filtered, disabled) or transient (too-early,
+  // no-candidate, deduped) never become the terminal verdict on their own.
+  /** @type {Map<string, {icao:string, body:string, closestAtMs:number, decidedAtMs:number,
+   *   verdict:'armed'|'skipped', reason:string, sepDeg:number|null, extrapS:number|null,
+   *   budgetS:number|null, rig:string|null}>} */
+  const armDecisions = new Map();
+  const ARM_DECISION_TRANSIENT = new Set(['too-early', 'no-candidate', 'deduped', 'body-filtered', 'disabled']);
+  function noteArmDecision(c, res, rigName, nowMs) {
+    if (!c?.icao || !c?.body || !Number.isFinite(c.closestApproachAtMs)) return;
+    const key = `${c.icao}|${c.body}`;
+    const prev = armDecisions.get(key);
+    if (prev?.verdict === 'armed') return;   // armed is terminal-sticky
+    const armed = res.sent === true;
+    // Skip reasons that carry no terminal meaning on their own — unless we have
+    // nothing recorded yet, keep the previous (more informative) reason.
+    if (!armed && prev && ARM_DECISION_TRANSIENT.has(res.reason)) return;
+    armDecisions.set(key, {
+      icao: c.icao, body: c.body, closestAtMs: c.closestApproachAtMs, decidedAtMs: nowMs,
+      verdict: armed ? 'armed' : 'skipped',
+      reason: armed ? 'armed' : (res.reason ?? 'skipped'),
+      sepDeg: Number.isFinite(res.sepDeg) ? res.sepDeg
+        : (Number.isFinite(c.closestApproachSepDeg) ? c.closestApproachSepDeg : null),
+      extrapS: Number.isFinite(res.extrapS) ? res.extrapS : null,
+      budgetS: Number.isFinite(res.budgetS) ? res.budgetS : null,
+      rig: rigName ?? null,
+    });
+  }
+
   // Short Pushover when a capture is armed: the key params + ETA to closest
   // approach + the −pre/+post recording window. Best-effort; never blocks.
   function notifySharpcapTrigger(candidate, res, rig, trigCfg) {
@@ -845,6 +889,9 @@ export async function runService({
       for (const { name, trigger } of sharpcapTargets) {
         if (!trigger.enabled) continue;
         trigger.armForCandidate(c, nowMs).then((res) => {
+          // Fold this rig's verdict into the per-episode decision (armed or the
+          // reason it was declined) for the Live/History "why?" badges. v0.60.0.
+          noteArmDecision(c, res, name, nowMs);
           if (res.sent) {
             // Persistent arm history (v0.41.0) — every fired arm, re-arms
             // flagged, so the stats report can show arms/day over time.
@@ -2182,6 +2229,16 @@ export async function runService({
         if (!Number.isFinite(v) || v < 0) throw new Error('sharpcap.maxExtrapolationS must be ≥ 0 (0 = off)');
         config.sharpcap.maxExtrapolationS = v;
       }
+      if ('maxExtrapolationHardS' in s) {
+        const v = Number(s.maxExtrapolationHardS);
+        if (!Number.isFinite(v) || v < 0) throw new Error('sharpcap.maxExtrapolationHardS must be ≥ 0');
+        config.sharpcap.maxExtrapolationHardS = v;
+      }
+      if ('centerSepDeg' in s) {
+        const v = Number(s.centerSepDeg);
+        if (!Number.isFinite(v) || v < 0 || v > 10) throw new Error('sharpcap.centerSepDeg must be between 0 and 10');
+        config.sharpcap.centerSepDeg = v;
+      }
       if ('maxCaptureS' in s) {
         const v = Number(s.maxCaptureS);
         if (!Number.isFinite(v) || v <= 0 || v > 120) throw new Error('sharpcap.maxCaptureS must be > 0 and ≤ 120 (listener hard cap)');
@@ -3468,6 +3525,22 @@ export async function runService({
         pendingOutcomes.delete(pk);
       }
     }
+    // v0.60.0: flush each episode's TERMINAL arm decision once its closest
+    // approach is safely in the past, then drop it from the live map. We flush
+    // AFTER closest (not on the stale transition) deliberately: a contact that
+    // fades early goes stale minutes before closest, but the arming path keeps
+    // re-evaluating it through the pre-roll window (via the stale-fallback list),
+    // so the most informative verdict — e.g. 'too-extrapolated' rather than the
+    // early 'too-early' — is only final once that window has passed. 'armed' is
+    // already sticky, so an early successful arm survives regardless.
+    const ARM_DECISION_FLUSH_DELAY_MS = 90_000;   // > post-roll + a margin
+    for (const [dk, dec] of armDecisions) {
+      const closest = dec.closestAtMs ?? dec.decidedAtMs;
+      if (nowMs - closest > ARM_DECISION_FLUSH_DELAY_MS) {
+        store?.recordArmDecision(dec);
+        armDecisions.delete(dk);
+      }
+    }
 
     // Active-target body filter (v0.39.4): state.lifecycle is the single list
     // the web UI, e-paper AND buzzer all read, so filtering it by the selected
@@ -3629,6 +3702,9 @@ export async function runService({
       body: scBodies.join('+'),
       armedCount: sharpcapArmedCount,
       armed: sharpcapArmedLog.slice(),
+      // Live per-episode arm decisions (armed / skipped-with-reason) so the Live
+      // table can badge WHY a candidate did or didn't arm this tick. v0.60.0.
+      decisions: Array.from(armDecisions.values()),
       targets: sharpcapTargets
         .filter((t) => t.trigger.enabled)
         .map((t) => ({ name: t.name, body: (t.trigger.config.bodies ?? []).join('+') })),

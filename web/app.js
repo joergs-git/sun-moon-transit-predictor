@@ -310,6 +310,58 @@ function armedBolt(armed) {
     : '';
 }
 
+// v0.60.0 — per-episode arm decisions from state.sharpcap.decisions (live) and
+// e.armDecision (history). Turns the raw verdict/reason into a self-explanatory
+// badge so a NON-arm is never a silent blank: the operator sees WHY nothing
+// recorded, with the concrete numbers in the tooltip.
+let sharpcapDecisions = [];
+const ARM_REASON_LABELS = {
+  armed:             { icon: '⚡', label: 'armed',      cls: 'arm-armed', title: 'A SharpCap capture was armed for this transit.' },
+  'too-extrapolated':{ icon: '⏱', label: 'stale fix',  cls: 'arm-skip',  title: 'Not armed: the closest-approach projection was dead-reckoned too far past the last real ADS-B fix (signal gap). A tighter, more central hit earns a longer budget — see the numbers.' },
+  'too-wide':        { icon: '↔', label: 'too wide',   cls: 'arm-skip',  title: 'Not armed: the projected closest separation was wider than the capture band (maxSepDeg).' },
+  'too-low':         { icon: '⛰', label: 'too low',    cls: 'arm-skip',  title: 'Not armed: the aircraft was below the elevation floor (minElevationDeg) at closest approach.' },
+  'too-late':        { icon: '⌛', label: 'too late',   cls: 'arm-skip',  title: 'Not armed: the pipeline only saw this after the post-roll window had already passed.' },
+  disabled:          { icon: '○', label: 'trigger off', cls: 'arm-skip', title: 'Not armed: no SharpCap rig was enabled for this body.' },
+  skipped:           { icon: '○', label: 'not armed',  cls: 'arm-skip',  title: 'Not armed for this transit.' },
+};
+// Build the tooltip detail line (concrete numbers) for a decision.
+function armDecisionDetail(d) {
+  const bits = [];
+  if (Number.isFinite(d.sepDeg)) bits.push(`sep ${d.sepDeg.toFixed(2)}°`);
+  if (d.reason === 'too-extrapolated' && Number.isFinite(d.extrapS) && Number.isFinite(d.budgetS)) {
+    bits.push(`dead-reckoned ${fmtMinSec(d.extrapS)} (budget ${fmtMinSec(d.budgetS)})`);
+  }
+  if (d.rig) bits.push(`rig ${d.rig}`);
+  return bits.join(' · ');
+}
+function fmtMinSec(sec) {
+  if (!Number.isFinite(sec)) return '?';
+  const s = Math.round(sec);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+// Render the arm badge for a decision object ({verdict, reason, …}) or null.
+function armBadge(d) {
+  if (!d || !d.reason) return '';
+  const meta = ARM_REASON_LABELS[d.reason] ?? ARM_REASON_LABELS.skipped;
+  const detail = armDecisionDetail(d);
+  const title = detail ? `${meta.title} (${detail})` : meta.title;
+  return `<span class="arm-badge ${meta.cls}" title="${title.replace(/"/g, '&quot;')}">${meta.icon} ${meta.label}</span>`;
+}
+// Match a live decision to a row by icao + body + closest time (±2 min), same
+// tolerance as isArmed(). Returns the decision object or null.
+function liveArmDecision(icao, body, closestMs) {
+  if (!icao || !Number.isFinite(closestMs) || !sharpcapDecisions.length) return null;
+  const hex = String(icao).toLowerCase();
+  let best = null, bestGap = ARMED_TOL_MS;
+  for (const d of sharpcapDecisions) {
+    if (String(d.icao ?? '').toLowerCase() !== hex || d.body !== body) continue;
+    const gap = Math.abs((d.closestAtMs ?? 0) - closestMs);
+    if (gap <= bestGap) { best = d; bestGap = gap; }
+  }
+  return best;
+}
+
 function visCell(elDeg, armed = false) {
   const bolt = armedBolt(armed);
   const v = visInfo(elDeg);
@@ -879,10 +931,14 @@ function renderTracking(state) {
     const isSky = e.candidate?.isSky === true;
     const bodyIcon = isSky ? '✦' : (e.body === 'Sun' ? '☀' : '🌙');
     const elDeg = e.candidate?.aircraftAtClosest?.elevationDeg;
+    // v0.60.0: live arm decision badge next to the status, so the operator sees
+    // in real time whether a capture armed — and if not, why (stale fix / too
+    // wide / too low / trigger off), with the numbers in the tooltip.
+    const armCell = armBadge(liveArmDecision(e.icao, e.body, e.closestApproachAtMs));
     tr.innerHTML = `
       ${visCell(elDeg, isArmed(e.icao, e.body, e.closestApproachAtMs))}
       <td class="body-${e.body} td-icon" title="${e.body}">${bodyIcon}</td>
-      <td><span class="status status-${e.status}" title="${statusTip}">${meta.icon} ${statusLabel}</span></td>
+      <td><span class="status status-${e.status}" title="${statusTip}">${meta.icon} ${statusLabel}</span>${armCell}</td>
       <td class="${etaSoon ? 'eta-soon' : ''}">${eta}</td>
       <td>${fmtTime(e.closestApproachAtMs)}</td>
       <td>${sepCellLive(e)}</td>
@@ -948,9 +1004,13 @@ function historyTr(e, absIdx) {
   tr.dataset.source = 'history';
   tr.dataset.index = String(absIdx);
   const oc = e.outcome ? OUTCOME_LABELS[e.outcome] : null;
-  const outcomeCell = oc
+  // v0.60.0: append the arm decision badge (armed / why-not) so a non-arm is
+  // never a silent blank. Persisted per episode, so it survives across sessions.
+  const armCell = armBadge(e.armDecision);
+  const outcomeInner = oc
     ? `<span class="outcome outcome-${e.outcome}" title="${oc.title}">${oc.icon} ${oc.label}</span>`
     : '<span class="outcome outcome-none" title="Episode not yet classified — still in flight, or the window has no companion stages to compare against.">—</span>';
+  const outcomeCell = armCell ? `${outcomeInner}${armCell}` : outcomeInner;
   // leadTimeMs is set by the server's consolidated view; fall back to
   // computing it ourselves so a partial response still renders cleanly.
   const leadMs = Number.isFinite(e.leadTimeMs)
@@ -1354,6 +1414,7 @@ async function pollState() {
     // Refresh the armed-episode list BEFORE rendering the tables so the ⚡
     // markers reflect the latest tick.
     sharpcapArmedLog = Array.isArray(state.sharpcap?.armed) ? state.sharpcap.armed : [];
+    sharpcapDecisions = Array.isArray(state.sharpcap?.decisions) ? state.sharpcap.decisions : [];
     lastWifiAp = state.wifiAp ?? null;    // for the Settings → Network pane (v0.51.0)
     renderActiveTarget(state);
     renderSkyPlan(state);

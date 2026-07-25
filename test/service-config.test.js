@@ -29,4 +29,17 @@ describe('mergeConfig', () => {
     expect(cfg.display.quickRefreshS).toBe(DEFAULT_CONFIG.display.quickRefreshS);
     expect(cfg.tracker).toEqual(DEFAULT_CONFIG.tracker);
   });
+
+  it('carries the trust-scaled freshness knobs and keeps user overrides (v0.60.0)', () => {
+    // Defaults present so an existing service.json without them still gets the
+    // graduated gate (band-edge 120 s → dead-centre 300 s, centre at 0.1°).
+    expect(DEFAULT_CONFIG.sharpcap.maxExtrapolationS).toBe(120);
+    expect(DEFAULT_CONFIG.sharpcap.maxExtrapolationHardS).toBe(300);
+    expect(DEFAULT_CONFIG.sharpcap.centerSepDeg).toBe(0.1);
+    // A partial sharpcap block keeps the new defaults while the user's own value wins.
+    const cfg = mergeConfig({ sharpcap: { maxExtrapolationHardS: 420 } });
+    expect(cfg.sharpcap.maxExtrapolationHardS).toBe(420);
+    expect(cfg.sharpcap.maxExtrapolationS).toBe(120);
+    expect(cfg.sharpcap.centerSepDeg).toBe(0.1);
+  });
 });
