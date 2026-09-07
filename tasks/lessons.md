@@ -166,3 +166,18 @@
   extending a safety / money / hardware path, add alongside; don't refactor under
   time pressure.
 - **Applies to:** sharpcap.js, capture trigger, any tested critical path.
+
+## [2026-09-07] — A lone red cron run is a network incident until proven otherwise
+- **Mistake/Risk:** A scheduled `transit-alerts` run failed with `fetch failed`
+  on all three Celestrak TLE fetches. Tempting to hunt for a code bug.
+- **Root cause:** Transient egress problem on the GitHub runner (TCP/DNS level,
+  ~10 s per attempt — not our 15 s abort). Four prior runs and a manual dry-run
+  7 h later were green. The worker had no retry, so one hiccup lost the run.
+- **Rule:** For a failed cron job: (1) `gh run list` — were the previous runs
+  green? (2) read the exact error: bare `fetch failed` = network layer,
+  `HTTP 4xx/5xx` = the remote, `aborted` = our timeout; (3) reproduce with
+  `gh workflow run … -f dry_run=true` before touching code. Any worker that
+  depends on a single external endpoint needs retry-with-backoff and must log
+  `e.cause.code`, otherwise the next outage is undiagnosable.
+- **Applies to:** alerts/notify.js, any GitHub Actions cron worker, any
+  `fetch()` to Celestrak / Pushover / Supabase.
