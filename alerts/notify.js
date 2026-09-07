@@ -48,11 +48,32 @@ const DRY_RUN = process.env.DRY_RUN === '1';
 
 const log = (...a) => console.log('[alerts]', ...a);
 
+// Celestrak is a single, un-mirrored endpoint and the GitHub runner's egress
+// occasionally can't reach it for a few seconds (a 2026-09-07 run lost all
+// three TLEs to a bare "fetch failed" — TCP/DNS-level, not our 15 s abort).
+// Losing every TLE fails the whole run, so each fetch is retried with a short
+// backoff before the satellite is given up. Worst case per satellite is about
+// TLE_RETRY_DELAYS_MS total + 3×15 s, far below the job's 60 min budget.
+const TLE_RETRY_DELAYS_MS = [10_000, 30_000];
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
 async function fetchTle(catnr) {
   const url = `https://celestrak.org/NORAD/elements/gp.php?CATNR=${catnr}&FORMAT=tle`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.text();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.text();
+    } catch (e) {
+      // undici hides the real reason (ECONNRESET, ETIMEDOUT, ENOTFOUND, …)
+      // in e.cause — surface it so the next outage is diagnosable from the log.
+      const why = e?.cause?.code ?? e?.cause?.message ?? e?.message ?? String(e);
+      if (attempt >= TLE_RETRY_DELAYS_MS.length) throw new Error(why);
+      const delay = TLE_RETRY_DELAYS_MS[attempt];
+      log(`TLE ${catnr} attempt ${attempt + 1} failed (${why}) — retrying in ${delay / 1000}s`);
+      await sleep(delay);
+    }
+  }
 }
 
 /** Supabase PostgREST call with the service key. Throws on non-2xx. */
