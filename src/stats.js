@@ -8,6 +8,8 @@
 // distributions into concrete suggested defaults (pre/post-roll, drift margin,
 // elevation floor) — see deriveRecommendations().
 
+import { SITE_TZ_NAME } from './timezone.js';
+
 const DAY_MS = 24 * 3600 * 1000;
 const ALL_WINDOW_MS = 3650 * DAY_MS;            // ~10 years = "all time"
 
@@ -215,6 +217,7 @@ export function buildReport(store, { nowMs = Date.now(), windowMs = ALL_WINDOW_M
   const peakBand = byElevation.length ? byElevation.slice().sort((a, b) => b.count - a.count)[0] : null;
   const timing = {
     n: sunElevs.length,
+    tz: SITE_TZ_NAME,          // zone the byHour bins are in (the Pi's system zone, v0.60.2)
     byHour,
     peakHour,
     byElevation,
@@ -499,7 +502,7 @@ export function formatText(r) {
     p(`→ ${tm.lowSunPct}% of candidates occur with the body BELOW 30° (low = morning/evening); median height ${DEG(tm.medianSunElevDeg)}.`);
     // Compact 24-hour line + the busiest hours.
     const hmax = Math.max(...tm.byHour);
-    p(`By local hour (peak ${tm.peakHour != null ? String(tm.peakHour).padStart(2, '0') + ':00' : 'n/a'}):`);
+    p(`By local hour${tm.tz ? ` (${tm.tz})` : ''} (peak ${tm.peakHour != null ? String(tm.peakHour).padStart(2, '0') + ':00' : 'n/a'}):`);
     p('  ' + tm.byHour.map((n) => (n === 0 ? '·' : '▁▂▃▄▅▆▇█'[Math.min(7, Math.round((n / (hmax || 1)) * 7))])).join('') + '   (00→23 h)');
     const topHours = tm.byHour.map((n, h) => ({ h, n })).filter((x) => x.n).sort((a, b) => b.n - a.n).slice(0, 3);
     if (topHours.length) p('  busiest: ' + topHours.map((x) => `${String(x.h).padStart(2, '0')}:00 (${x.n})`).join(' · '));

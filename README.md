@@ -96,6 +96,8 @@ curl -s localhost:8080/data/aircraft.json | grep -o '"hex"' | wc -l  # planes se
 
 **Is the predictor itself ok?** `systemctl status stp.service` · `journalctl -u stp.service -n 50` — a repeating `aircraft.json HTTP …` there means it can't reach dump1090.
 
+**Pi shows the wrong time (e-paper clock, Pushover plan alerts, Stats "best hours" off by an hour)?** The predictions are UTC-based and unaffected, but the Pi formats its own clock strings in its **system timezone** — which Raspberry Pi Imager copied from the machine you flashed the card on, not from where the Pi lives now. Set the observatory's zone once and restart: `sudo timedatectl set-timezone Europe/Lisbon && sudo systemctl restart stp.service` (or `--timezone=…` on the installer). The web UI header clock gets a dotted underline + tooltip whenever the Pi's zone differs from your browser's.
+
 ---
 
 ## At a glance

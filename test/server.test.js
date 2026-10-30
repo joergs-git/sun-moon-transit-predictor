@@ -118,6 +118,9 @@ describe('HTTP server', () => {
     expect(body.perBody.Moon.length).toBe(24);
     expect(body.total).toEqual(new Array(24).fill(0));
     expect(body.peak).toEqual({ Sun: null, Moon: null, all: null });
+    // v0.60.2: the bins are in the Pi's zone — the response must name it.
+    expect(typeof body.tz.name).toBe('string');
+    expect(Number.isFinite(body.tz.offsetMin)).toBe(true);
   });
 
   it('serves the static index.html on /', async () => {

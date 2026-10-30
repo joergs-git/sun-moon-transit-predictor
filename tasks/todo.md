@@ -786,3 +786,32 @@ fix dead-reckoning, and non-arms were never recorded anywhere.
 - Tight hits with gaps under budget now arm where the old flat 120 s cap rejected them.
 - To arm RYR14WN-class single-fix projections, raise "Freshness budget — centre" to
   ~360 s (Settings) — accepts more "armed but never transited" clips.
+
+---
+
+# Site timezone: Portugal install showed German time (v0.60.2)
+
+User: second installation in Portugal; the Pi shows German time — do predictions
+suffer? Audit first, then the smallest correction.
+- [x] Audit: all astronomy is UTC-epoch based (geometry.js `whenUtc`, sgp4
+      `unixToJulian`, iss.js) → predictions are NOT affected by the system zone.
+- [x] Found the zone-dependent spots: e-paper clock (render.py `time.localtime`),
+      Pushover plan-alert `toLocaleString()` (no zone named), `/api/hourstats` +
+      stats `byHour` ("observatory local" = Pi zone), systemd timer times, journal.
+      Web UI formats everything in the BROWSER zone (header clock included).
+- [x] `src/timezone.js`: `siteTimezone()`, `fmtSiteTime()` + 6 tests.
+- [x] Plan alerts name the zone; `state.siteTz`; `/api/hourstats.tz`; stats `timing.tz`
+      and "By local hour (Europe/…)" in the text report.
+- [x] UI: header clock tooltip names the Pi zone; dotted underline + fix hint on an
+      offset mismatch (offset compared, not name → Berlin vs Paris never warns).
+      Stats "best hours" hint appends the zone. No layout/colour change.
+- [x] Installer step 3b: reports the system zone every run; `--timezone=ZONE` /
+      `STP_TIMEZONE` applies it via timedatectl before the service restart.
+- [x] Docs: README FAQ, display/README, wiki Setup + FAQ + Reference.
+
+## Results
+- Root cause on the box: Raspberry Pi Imager copies the flashing machine's zone
+  (Europe/Berlin); nothing in the install ever checked it. One-line fix on the Pi:
+  `sudo timedatectl set-timezone Europe/Lisbon && sudo systemctl restart stp.service`
+  (Madeira: `Atlantic/Madeira`, Azores: `Atlantic/Azores`).
+- 336 tests pass.

@@ -81,6 +81,13 @@ h1 { font-size: 18px; margin: 0; }
   border-radius: 3px;
   background: var(--panel);
 }
+/* The Pi's zone differs from this browser's (v0.60.2): a quiet dotted
+   underline — the tooltip carries the explanation. Colour untouched. */
+.clock.tz-mismatch {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
 
 /* Buttons. Used for the Settings toggle in the header and the modal actions.
    Same look across both so the affordance is consistent. */
