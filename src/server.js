@@ -6,6 +6,7 @@ import { promises as fs } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import { buildReport, formatText, formatCsv } from './stats.js';
 import { fetchActiveTles, findBodyTransits } from './sattransit.js';
+import { siteTimezone } from './timezone.js';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -248,14 +249,18 @@ export function createHttpServer(opts) {
         // hour-of-day histogram, split by Sun/Moon, over imminent-confirmed
         // transits that passed < sepDeg AND were ≥ minElevationDeg up
         // (same usable definition as /api/rangestats + /api/usable). Hours
-        // are server-local (the Pi sits at the observatory).
+        // are server-local (the Pi sits at the observatory) — `tz` names that
+        // zone so the UI can label the bins (v0.60.2).
         const sepDeg = Math.min(5, Math.max(0.05, Number(url.searchParams.get('sepDeg') ?? '0.5')));
         const minEl = Math.min(90, Math.max(0, Number(url.searchParams.get('minElevationDeg') ?? '30')));
         const windowDays = Math.min(3650, Math.max(1, Number(url.searchParams.get('windowDays') ?? '3650')));
-        return jsonResponse(res, 200, store.hourStats({
-          sepBelowDeg: sepDeg, minElevationDeg: minEl,
-          windowMs: windowDays * 24 * 3600_000,
-        }));
+        return jsonResponse(res, 200, {
+          ...store.hourStats({
+            sepBelowDeg: sepDeg, minElevationDeg: minEl,
+            windowMs: windowDays * 24 * 3600_000,
+          }),
+          tz: siteTimezone(),
+        });
       }
       if (url.pathname === '/api/history') {
         const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') ?? '100')));

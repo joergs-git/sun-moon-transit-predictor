@@ -5,7 +5,8 @@ A standalone, browserless readout for the Sun-Moon Transit Predictor on a
 
 It shows, updating in near-real time, a fixed three-paragraph layout:
 
-1. **Header** (two lines) — line 1: big bold **clock** + **date**; line 2:
+1. **Header** (two lines) — line 1: big bold **clock** + **date** (the Pi's
+   system timezone — set it to the site's with `sudo timedatectl set-timezone …`); line 2:
    **place** + **GPS**; and a compact **Sky-now** (Sun/Moon elevation) tucked
    into the **top-right corner**. The live counts moved down to the aircraft
    heading.

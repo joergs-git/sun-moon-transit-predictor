@@ -38,6 +38,7 @@ import { PushoverClient } from './pushover.js';
 import { createHttpServer } from './server.js';
 import { SharpCapTrigger } from './sharpcap.js';
 import { HistoryStore } from './store.js';
+import { fmtSiteTime, siteTimezone } from './timezone.js';
 import { buildReport } from './stats.js';
 import { extrapolate, findTransits } from './tracker.js';
 import { filterAircraft } from './aircraftclass.js';
@@ -994,7 +995,9 @@ export async function runService({
       : (row.missArcmin >= 60 ? `${(row.missArcmin / 60).toFixed(2)}°` : `${Math.round(row.missArcmin)}′`);
     const leadH = row.leadMs / 3600_000;
     const leadTxt = leadH >= 48 ? `${(leadH / 24).toFixed(1)} d` : `${leadH.toFixed(1)} h`;
-    const when = new Date(row.atMs).toLocaleString();
+    // Always name the zone (v0.60.2): the Pi formats in ITS system zone, which
+    // is only the observatory's zone if timedatectl was set at the site.
+    const when = fmtSiteTime(row.atMs);
     const url = config.pushover?.url || undefined;
     return pushover.send({
       title: `🛰 ${row.satTag} ${typeLabel}: ${row.targetName}`,
@@ -1452,6 +1455,11 @@ export async function runService({
     observer,
     version: PKG_VERSION,
     nowMs: Date.now(),
+    // The Pi's (= site's) timezone + current UTC offset (v0.60.2), so the UI
+    // can tell the operator when the browser and the Pi disagree. All
+    // predictions are UTC-based; only server-side wall-clock strings and
+    // hour bins depend on this zone.
+    siteTz: siteTimezone(),
     lastUpdateMs: 0,
     aircraftCount: 0,
     bodies: {},

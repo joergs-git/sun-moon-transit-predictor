@@ -1452,6 +1452,7 @@ async function pollState() {
         `(${state.observer.latitudeDeg.toFixed(4)}°, ${state.observer.longitudeDeg.toFixed(4)}°, ` +
         `${state.observer.elevationM} m)`;
     }
+    renderSiteTz(state.siteTz);
   } catch (e) {
     const status = $('#status');
     status.textContent = `disconnected: ${e.message ?? e}`;
@@ -1647,6 +1648,7 @@ async function pollHourstats() {
     set('#hs-sep', `${d.sepBelowDeg ?? 0.5}°`);
     set('#hs-el', `${d.minElevationDeg ?? VIS_AMBER_DEG}°`);
     set('#hs-n', String(d.n ?? 0));
+    set('#hs-tz', d.tz?.name ? ` (${d.tz.name})` : '');   // v0.60.2: name the bins' zone
     const peak = d.peak ?? {};
     set('#hs-peak-sun', fmtPeakHour(peak.Sun));
     set('#hs-peak-moon', fmtPeakHour(peak.Moon));
@@ -1700,6 +1702,36 @@ async function pollLearning() {
 function tickClock() {
   const now = new Date();
   $('#clock').textContent = now.toLocaleTimeString();
+}
+
+// Browser vs Pi timezone (v0.60.2). Every time in this UI is formatted in
+// the BROWSER's zone; the Pi formats its own strings (e-paper clock,
+// Pushover plan alerts, Stats "best hours") in ITS system zone. A Pi imaged
+// in one country and running in another keeps the old zone, so when the
+// two offsets differ the clock gets a dotted underline and the tooltip
+// names both zones plus the one-line fix. Compared by OFFSET, not name, so
+// Europe/Berlin vs Europe/Paris (same wall clock) never warns.
+let browserTzName = null;
+try { browserTzName = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { /* ignore */ }
+function fmtUtcOffset(offsetMin) {
+  const sign = offsetMin < 0 ? '−' : '+';
+  const abs = Math.abs(offsetMin);
+  const h = Math.floor(abs / 60), m = abs % 60;
+  return `UTC${sign}${h}${m ? ':' + String(m).padStart(2, '0') : ''}`;
+}
+function renderSiteTz(tz) {
+  const el = $('#clock');
+  if (!el || !tz || typeof tz.name !== 'string' || !Number.isFinite(tz.offsetMin)) return;
+  const browserOffsetMin = -new Date().getTimezoneOffset();
+  const mismatch = browserOffsetMin !== tz.offsetMin;
+  el.classList.toggle('tz-mismatch', mismatch);
+  const pi = `${tz.name} (${fmtUtcOffset(tz.offsetMin)})`;
+  el.title = mismatch
+    ? `Local wall-clock time of THIS browser (${browserTzName ?? fmtUtcOffset(browserOffsetMin)}). `
+      + `⚠ The Pi runs in ${pi} — its e-paper clock, Pushover plan alerts and the Stats `
+      + `"best hours" use that zone. If the Pi is at the observatory, fix it there: `
+      + `sudo timedatectl set-timezone <zone> && sudo systemctl restart stp.service`
+    : `Local wall-clock time, ticking once per second · Pi timezone ${pi}.`;
 }
 
 // Header SharpCap trigger readout next to the clock: armed body + how many

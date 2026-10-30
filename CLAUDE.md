@@ -42,6 +42,11 @@ MILESTONES.md   one table row per release (M<n> (v<x.y.z>) | summary | done)
   by rig (Scopes) not "General".
 - The Pi service is **offline by default**; the only network touch for TLEs is
   `scripts/refresh-tle.js` via systemd timer. Keep it that way.
+- **Time zones:** compute in UTC epoch ms only (never `getHours()`/`new Date(y,m,d)`
+  in prediction code). Server-side wall-clock strings must name their zone
+  (`fmtSiteTime` in `src/timezone.js`); the Pi's system zone is assumed to be the
+  observatory's (`timedatectl`, installer `--timezone=`). The web UI formats in the
+  browser's zone and flags a Pi/browser offset mismatch on the header clock.
 
 ## Alert service (alerts/) — GitHub Actions ops
 

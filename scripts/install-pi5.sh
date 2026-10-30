@@ -8,6 +8,7 @@
 #   bash scripts/install-pi5.sh --no-auto-update  # skip the nightly timer
 #   bash scripts/install-pi5.sh --with-display     # also set up the e-paper panel
 #   bash scripts/install-pi5.sh --without-wifi-ap  # skip the off-road WiFi AP
+#   bash scripts/install-pi5.sh --timezone=Europe/Lisbon  # set the Pi's zone to the site's
 #
 # Off-road WiFi AP failover is the DEFAULT for an interactive install and is
 # auto-enabled when NetworkManager is already active; opt out with
@@ -29,6 +30,9 @@
 #                        auto (default on interactively / when NM already active).
 #   STP_WIFI_COUNTRY     WiFi regulatory country (ISO code, e.g. DE/GB/US); set on
 #                        every install. Only defaults to DE when none is set yet.
+#   STP_TIMEZONE         IANA zone of the OBSERVATORY (e.g. Europe/Lisbon). Applied
+#                        via timedatectl when set; otherwise the current zone is only
+#                        reported. Same as --timezone=ZONE.
 #
 # What it does:
 #   1. Ensures Node.js >= 22 (installed from NodeSource if missing).
@@ -82,7 +86,8 @@ for arg in "$@"; do
     --with-display)      WITH_DISPLAY=1 ;;
     --with-wifi-ap)      WITH_WIFI_AP=1; WIFI_AP_EXPLICIT=1 ;;
     --without-wifi-ap)   WITH_WIFI_AP=0; WIFI_AP_EXPLICIT=1 ;;
-    -h|--help)           sed -n '2,36p' "$0"; exit 0 ;;
+    --timezone=*)        STP_TIMEZONE="${arg#*=}" ;;
+    -h|--help)           sed -n '2,49p' "$0"; exit 0 ;;
     *) echo "Unknown arg: $arg" >&2; exit 2 ;;
   esac
 done
@@ -226,6 +231,31 @@ if [ ! -f "$SERVICE_FILE_LOCAL" ] || [ "$OVERWRITE_CONFIG" -eq 1 ]; then
 EOF
 else
   log "Keeping existing $SERVICE_FILE_LOCAL (re-run with --overwrite to replace)."
+fi
+
+# ---------------------------------------------------------------------------
+# 3b. Site timezone (v0.60.2). Every prediction is computed in UTC, but all
+#     server-side wall-clock strings and hour bins (Pushover plan alerts, the
+#     e-paper clock, the "best hours" stats, journal timestamps) use the Pi's
+#     SYSTEM zone — which Raspberry Pi Imager copies from the machine the card
+#     was flashed on, not from where the Pi ends up. Honour STP_TIMEZONE /
+#     --timezone=ZONE when given; otherwise only REPORT the current zone so a
+#     box that travelled (imaged in Germany, running in Portugal) is noticed.
+#     Runs BEFORE the service (re)start in step 4 so Node picks the zone up.
+# ---------------------------------------------------------------------------
+CUR_TZ="$(timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo unknown)"
+if [ -n "${STP_TIMEZONE:-}" ]; then
+  if [ -f "/usr/share/zoneinfo/$STP_TIMEZONE" ]; then
+    if sudo_run timedatectl set-timezone "$STP_TIMEZONE"; then
+      log "System timezone set to $STP_TIMEZONE (was $CUR_TZ)"
+    else
+      log "WARN: could not set the timezone — run manually: sudo timedatectl set-timezone $STP_TIMEZONE"
+    fi
+  else
+    log "WARN: unknown timezone '$STP_TIMEZONE' (not in /usr/share/zoneinfo) — keeping $CUR_TZ"
+  fi
+else
+  log "System timezone: $CUR_TZ — must be the OBSERVATORY's zone (change with --timezone=Europe/Lisbon or STP_TIMEZONE)"
 fi
 
 # ---------------------------------------------------------------------------
