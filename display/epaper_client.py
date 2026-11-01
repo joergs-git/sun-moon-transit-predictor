@@ -271,7 +271,7 @@ def run(panel, once=False):
             if conn_ok:
                 # Live readout — with THIS Pi's AP banner overlaid when hosting.
                 img = render.render_state(state, display_cfg, source_url=source_url,
-                                          ap_override=local_ap)
+                                          ap_override=local_ap, web_url=config.AP_WEB_URL)
             elif local_ap:
                 # Data source down AND we are hosting the AP → the actionable
                 # "connect to this device" screen instead of a dead-end offline.

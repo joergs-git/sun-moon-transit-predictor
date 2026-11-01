@@ -41,11 +41,15 @@ nearby traffic even when nothing currently qualifies as a Real candidate.
   and open that web UI on a phone. As small as the URL allows (1 px/module). If
   the source is loopback (a single-Pi setup reading its own `localhost`), the
   host is swapped for this Pi's real **LAN IP** so the QR still opens the local
-  web UI. Omitted only if the `qrcode` lib is absent.
+  web UI. The same address (`192.168.1.50:8081`) is printed in **tiny text
+  immediately left of the QR** (v0.60.3), so the Pi's IP can simply be typed
+  when scanning is impractical — it stays even if the `qrcode` lib is absent
+  (then only the QR is omitted).
 - **Off-road AP onboarding (lockout-proof)** — when this Pi is hosting its
   own WiFi access point (no home network in range), the panel always shows how
   to join **this** device: the **SSID + password** (derived per-device — it is
-  never `12345678`) and a one-tap **WiFi-join QR**. This is read from the
+  never `12345678`), a one-tap **WiFi-join QR**, and (v0.60.3) the AP web
+  address (`10.42.0.1:8081`) tiny on the banner's bottom line. This is read from the
   **local** service, so it appears even when the configured **Data source** is a
   remote antenna that is unreachable off-road — where the panel would otherwise
   show only `SERVER OFFLINE`. If the source is up, the join banner overlays the

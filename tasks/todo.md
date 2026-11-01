@@ -815,3 +815,15 @@ suffer? Audit first, then the smallest correction.
   `sudo timedatectl set-timezone Europe/Lisbon && sudo systemctl restart stp.service`
   (Madeira: `Atlantic/Madeira`, Azores: `Atlantic/Azores`).
 - 336 tests pass.
+
+---
+
+# E-paper: Pi IP address next to the QR (v0.60.3)
+
+User: the panel shows the QR to connect, but the Pi's IP address is missing —
+tiny, bottom-left next to the QR is enough.
+- [x] `_host_port(url)` helper; `_draw_qr` prints the encoded web address in
+      10 px left of the mini QR (white box behind, drawn even without qrcode lib).
+- [x] AP mode: `_draw_ap_banner(web_url=)` prints `10.42.0.1:8081` right-aligned on
+      the banner's bottom line; client passes `config.AP_WEB_URL`.
+- [x] display/README, MILESTONES, version bump. Dry-run renders checked visually.
