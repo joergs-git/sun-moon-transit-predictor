@@ -181,3 +181,22 @@
   `e.cause.code`, otherwise the next outage is undiagnosable.
 - **Applies to:** alerts/notify.js, any GitHub Actions cron worker, any
   `fetch()` to Celestrak / Pushover / Supabase.
+
+## [2026-10-30] — "Wrong time" on a travelling Pi is an environment fact, not a code bug
+- **Mistake/Risk:** A second installation (Portugal) showed German time. Tempting
+  to hunt the predictor for local-time maths; the audit found none — every
+  prediction runs on UTC epoch ms. The Pi simply still had the zone Raspberry Pi
+  Imager copied from the flashing machine (`Europe/Berlin`), and nothing in the
+  install or the UI ever said which zone the server-side strings were in.
+- **Root cause:** Server-formatted wall clocks (Pushover plan alerts, e-paper
+  clock, "best hours" bins) silently inherited `TZ` with no label, so a wrong
+  zone looked like a calculation error.
+- **Rule:** When a user reports wrong times: (1) `timedatectl` on the box and
+  the browser's zone BEFORE reading code; (2) prediction code must never use
+  `getHours()` / `new Date(y,m,d)` / `toLocaleString()` — UTC epoch ms only;
+  (3) any server-side time string must name its zone (`fmtSiteTime` in
+  `src/timezone.js`), and anything that bins by "local hour" must say which
+  zone (`tz` field). The UI compares browser vs Pi UTC offset and warns.
+- **Applies to:** src/service.js alerts, src/store.js hourStats, src/stats.js,
+  display/render.py clock, scripts/install-pi5.sh (`--timezone=`), any new
+  installation away from the home site.
