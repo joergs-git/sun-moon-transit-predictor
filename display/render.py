@@ -1,6 +1,6 @@
 """
 Pillow renderer for the 4.2" e-paper panel (400×300, 1-bit black/white).
-v0.56.5
+v0.60.3
 
 render_state() turns an /api/state snapshot into a PIL Image. The layout is
 deliberately monospace so columns self-align, and fixed into three paragraphs.
@@ -730,10 +730,28 @@ def _qr_url(url):
     return url
 
 
-def _draw_ap_banner(draw, ap):
+def _host_port(url):
+    """'192.168.1.50:8081' from an http URL — scheme and path dropped, port kept
+    (v0.60.3). This is what a phone needs TYPED when scanning the QR is not an
+    option (camera busy, glare on the panel). '' when nothing usable."""
+    if not url:
+        return ""
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        if not host:
+            return ""
+        return "%s:%d" % (host, parts.port) if parts.port else host
+    except Exception:
+        return ""
+
+
+def _draw_ap_banner(draw, ap, web_url=None):
     """Bottom-left banner shown while the Pi hosts its off-road onboarding AP
     (v0.51.0): the WiFi name + password to join. The QR to its right encodes the
-    same WIFI: payload, so a phone can join with one tap instead of typing."""
+    same WIFI: payload, so a phone can join with one tap instead of typing.
+    `web_url` (v0.60.3): the AP-gateway web address, drawn tiny on the banner's
+    bottom line, right-aligned — the address to open once joined."""
     ssid = ap.get("ssid") or ""
     pw = ap.get("password") or ""
     by0 = HEIGHT - 40
@@ -743,6 +761,9 @@ def _draw_ap_banner(draw, ap):
     draw.text((3, by0 + 2), "WIFI AP — join to set up", font=_font(11, bold=True), fill=BLACK)
     draw.text((3, by0 + 15), "SSID: %s" % ssid, font=_font(12, bold=True), fill=BLACK)
     draw.text((3, by0 + 27), "Pass: %s   (scan QR →)" % pw, font=_font(12, bold=True), fill=BLACK)
+    addr = _host_port(web_url)
+    if addr:
+        _right(draw, bx1 - 3, by0 + 29, addr, _font(10))
 
 
 def _draw_qr(draw, data, is_wifi=False):
@@ -751,37 +772,50 @@ def _draw_qr(draw, data, is_wifi=False):
     passed through verbatim (one-tap join of the onboarding AP).
 
     As small as the data allows — one panel pixel per QR module. A white quiet
-    zone is painted behind it so a phone can read it off the e-paper. No-op if the
-    qrcode lib is missing or no usable data could be derived."""
-    if not _HAVE_QR:
-        return
+    zone is painted behind it so a phone can read it off the e-paper. The QR is
+    omitted if the qrcode lib is missing or no usable data could be derived.
+
+    For the web-URL QR the encoded address (`192.168.1.50:8081`) is also drawn
+    in tiny text immediately LEFT of the code on the bottom edge (v0.60.3), so
+    the Pi's IP is readable without scanning — and even when there is no QR at
+    all. The WiFi QR carries no label here; the AP banner shows its address."""
+    label = ""
     if not is_wifi:
         data = _qr_url(data)
-    if not data:
-        return
-    try:
-        qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L,
-                           box_size=1, border=0)
-        qr.add_data(data)
-        qr.make(fit=True)
-        m = qr.get_matrix()
-    except Exception:
-        return
-    n = len(m)
-    if not n:
-        return
-    quiet = 3                       # white quiet-zone pixels around the code
-    x1, y1 = WIDTH - 2, HEIGHT - 2  # bottom-right anchor
-    x0, y0 = x1 - n, y1 - n         # 1 px / module
-    draw.rectangle((x0 - quiet, y0 - quiet, x1 + quiet, y1 + quiet), fill=WHITE)
-    for r in range(n):
-        row = m[r]
-        for c in range(n):
-            if row[c]:
-                draw.point((x0 + c, y0 + r), fill=BLACK)
+        label = _host_port(data)
+    x_right = WIDTH - 3             # label anchor when no QR gets drawn
+    m = None
+    if _HAVE_QR and data:
+        try:
+            qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L,
+                               box_size=1, border=0)
+            qr.add_data(data)
+            qr.make(fit=True)
+            m = qr.get_matrix()
+        except Exception:
+            m = None
+    n = len(m) if m else 0
+    if n:
+        quiet = 3                       # white quiet-zone pixels around the code
+        x1, y1 = WIDTH - 2, HEIGHT - 2  # bottom-right anchor
+        x0, y0 = x1 - n, y1 - n         # 1 px / module
+        draw.rectangle((x0 - quiet, y0 - quiet, x1 + quiet, y1 + quiet), fill=WHITE)
+        for r in range(n):
+            row = m[r]
+            for c in range(n):
+                if row[c]:
+                    draw.point((x0 + c, y0 + r), fill=BLACK)
+        x_right = x0 - quiet - 3        # just left of the quiet zone
+    if label:
+        f = _font(10)
+        w = draw.textlength(label, font=f)
+        ly = HEIGHT - 14
+        # White box behind the text so it never collides with a list row.
+        draw.rectangle((x_right - w - 2, ly - 1, x_right, HEIGHT - 1), fill=WHITE)
+        draw.text((x_right - w, ly), label, font=f, fill=BLACK)
 
 
-def render_state(state, display_cfg=None, source_url=None, ap_override=None):
+def render_state(state, display_cfg=None, source_url=None, ap_override=None, web_url=None):
     """Render a full /api/state snapshot to a 1-bit PIL Image.
 
     Fixed three-paragraph grid (not configurable — `display_cfg` is accepted for
@@ -790,12 +824,14 @@ def render_state(state, display_cfg=None, source_url=None, ap_override=None):
       2) primary block — the nearest tracked plane in detail (ETA/SEP big) + FOV
       3) bottom block  — Sky-now + the next tracked planes
     `source_url` (the host this panel polls) is encoded as a tiny QR in the
-    bottom-right corner so you can open that web UI on a phone.
+    bottom-right corner so you can open that web UI on a phone; its IP:port is
+    printed tiny next to the QR (v0.60.3).
 
     `ap_override` (v0.56.4): the LOCAL Pi's wifiAp block, read straight from the
     local service. When THIS Pi is hosting its off-road AP, its join banner must
     show even if `state` came from a REMOTE data source (whose own wifiAp is
     about a different box). So the local AP always wins over `state.wifiAp` here.
+    `web_url` (v0.60.3): the AP-gateway web address shown on the join banner.
     """
     img = Image.new("1", (WIDTH, HEIGHT), WHITE)
     draw = ImageDraw.Draw(img)
@@ -811,7 +847,7 @@ def render_state(state, display_cfg=None, source_url=None, ap_override=None):
     # remote host still surfaces THIS Pi's own join credentials (v0.56.4).
     ap = ap_override or state.get("wifiAp") or {}
     if ap.get("active") and ap.get("qr"):
-        _draw_ap_banner(draw, ap)
+        _draw_ap_banner(draw, ap, web_url=web_url)
         _draw_qr(draw, ap["qr"], is_wifi=True)
     else:
         _draw_qr(draw, source_url)
